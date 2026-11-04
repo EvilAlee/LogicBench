@@ -54,8 +54,11 @@ jobs:
 
             sleep 1
             import -window root /tmp/logicbench-m2.png
-            echo "SCREENSHOT_DATA_BEGIN"
-            base64 -w0 /tmp/logicbench-m2.png
-            echo
-            echo "SCREENSHOT_DATA_END"
           '
+      - name: Upload M2 window screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: logicbench-m2-window
+          path: /tmp/logicbench-m2.png
+          if-no-files-found: error
+          retention-days: 14
