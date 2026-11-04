@@ -5,6 +5,7 @@ import io.github.evilalee.gatelab.model.Gate;
 import io.github.evilalee.gatelab.model.GateType;
 import io.github.evilalee.gatelab.model.InputPin;
 import io.github.evilalee.gatelab.model.OutputProbe;
+import io.github.evilalee.gatelab.model.Pin;
 import io.github.evilalee.gatelab.model.Value;
 import org.junit.jupiter.api.Test;
 
@@ -12,11 +13,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SimulatorTest {
     @Test
-    void norLatchCanSetHoldAndReset() {
+    void unknownNorLatchCanSetHoldAndResetWithoutFalseOscillation() {
         Circuit circuit = new Circuit();
         InputPin set = new InputPin("set");
         InputPin reset = new InputPin("reset");
@@ -37,47 +39,96 @@ class SimulatorTest {
         circuit.connect(qBarGate.output(), qBar.input());
 
         Simulator simulator = new Simulator(circuit);
-        simulator.setInputValue(set, Value.ONE);
+        simulator.setInputValue(set, Value.ZERO);
         simulator.setInputValue(reset, Value.ZERO);
+
+        // Building the topology seeds gate drivers to X, not an arbitrary zero.
+        assertEquals(Value.X, simulator.getNetValue(qGate.output()));
+        assertEquals(Value.X, simulator.getNetValue(qBarGate.output()));
+        simulator.settle();
+        assertEquals(Value.X, q.value());
+        assertEquals(Value.X, qBar.value());
+        assertFalse(simulator.isOscillating());
+
+        simulator.setInputValue(set, Value.ONE);
         simulator.settle();
         assertEquals(Value.ONE, q.value());
         assertEquals(Value.ZERO, qBar.value());
+        assertFalse(simulator.isOscillating());
 
         simulator.setInputValue(set, Value.ZERO);
         simulator.settle();
-        assertEquals(Value.ONE, simulator.getProbeValue(q));
-        assertEquals(Value.ZERO, simulator.getProbeValue(qBar));
+        assertEquals(Value.ONE, q.value());
+        assertEquals(Value.ZERO, qBar.value());
+        assertFalse(simulator.isOscillating());
 
         simulator.setInputValue(reset, Value.ONE);
         simulator.settle();
         assertEquals(Value.ZERO, q.value());
         assertEquals(Value.ONE, qBar.value());
+        assertFalse(simulator.isOscillating());
     }
 
     @Test
-    void threeInverterRingReturnsAtTheTickLimitAndReportsOscillation() {
+    void nandAndTwoInverterRingSettlesWithZeroControlThenOscillatesWithOne() {
         Circuit circuit = new Circuit();
-        List<Gate> gates = new ArrayList<>();
-        for (int index = 0; index < 3; index++) {
-            Gate gate = new Gate("not" + index, GateType.NOT, 1);
-            gates.add(gate);
-            circuit.addComponent(gate);
-        }
-        for (int index = 0; index < gates.size(); index++) {
-            Gate current = gates.get(index);
-            Gate next = gates.get((index + 1) % gates.size());
-            circuit.connect(current.output(), next.input(0));
-        }
+        InputPin control = new InputPin("control");
+        Gate nand = new Gate("nand", GateType.NAND, 2);
+        Gate firstInverter = new Gate("not1", GateType.NOT, 1);
+        Gate secondInverter = new Gate("not2", GateType.NOT, 1);
+
+        circuit.addComponent(control);
+        circuit.addComponent(nand);
+        circuit.addComponent(firstInverter);
+        circuit.addComponent(secondInverter);
+
+        circuit.connect(secondInverter.output(), nand.input(0));
+        circuit.connect(control.output(), nand.input(1));
+        circuit.connect(nand.output(), firstInverter.input(0));
+        circuit.connect(firstInverter.output(), secondInverter.input(0));
 
         int tickLimit = 32;
         Simulator simulator = new Simulator(circuit, tickLimit);
+        simulator.setInputValue(control, Value.ZERO);
         simulator.settle();
 
+        assertFalse(simulator.isOscillating());
+        assertEquals(Value.ONE, simulator.getNetValue(nand.output()));
+        assertEquals(Value.ZERO, simulator.getNetValue(firstInverter.output()));
+        assertEquals(Value.ONE, simulator.getNetValue(secondInverter.output()));
+
+        simulator.setInputValue(control, Value.ONE);
+        simulator.settle();
         assertTrue(simulator.isOscillating());
         assertEquals(tickLimit, simulator.ticksUsed());
+    }
 
+    @Test
+    void longBufferChainUsesASizeScaledDefaultTickLimit() {
+        Circuit circuit = new Circuit();
+        InputPin input = new InputPin("input");
+        OutputProbe output = new OutputProbe("output");
+        circuit.addComponent(input);
+
+        Pin previousOutput = input.output();
+        int gateCount = 500;
+        for (int index = 0; index < gateCount; index++) {
+            Gate buffer = new Gate("buffer" + index, GateType.BUFFER, 1);
+            circuit.addComponent(buffer);
+            circuit.connect(previousOutput, buffer.input(0));
+            previousOutput = buffer.output();
+        }
+
+        circuit.addComponent(output);
+        circuit.connect(previousOutput, output.input());
+
+        Simulator simulator = new Simulator(circuit);
+        simulator.setInputValue(input, Value.ONE);
         simulator.settle();
-        assertTrue(simulator.isOscillating(), "pending oscillation events must survive settle()");
+
+        assertEquals(Value.ONE, output.value());
+        assertFalse(simulator.isOscillating());
+        assertEquals(gateCount, simulator.ticksUsed());
     }
 
     @Test

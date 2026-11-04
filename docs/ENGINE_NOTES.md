@@ -30,9 +30,11 @@ The legacy gate evaluator supports AND, OR, NAND, NOR, XOR, and NOT. If any inpu
 
 The JavaScript engine is frame-oriented rather than event-driven. It does not model a per-gate propagation delay: all combinational devices are revisited within the same resolveCircuit() call, with a 20-pass cap. Sequential devices use remembered clock levels to detect rising or falling edges; their state is sampled and committed in batches, with an outer 50-pass bound.
 
-The Java engine uses discrete logical ticks. Initially all gates are scheduled. During a tick, scheduled gates evaluate from the current net snapshot; changed output drivers are applied together at the end of that tick. A changed net schedules gates attached to its input pins for the next tick. This gives each gate one logical tick of propagation delay without wall-clock timing. settle() stops when the event queue is empty or the configurable tick limit is reached. On reaching the limit with work still queued, it sets the oscillating flag and returns.
+The Java engine uses discrete logical ticks. Initially all gates are scheduled. During a tick, scheduled gates evaluate from the current net snapshot; changed output drivers are applied together at the end of that tick. A changed net schedules gates attached to its input pins for the next tick. This gives each gate one logical tick of propagation delay without wall-clock timing. settle() stops when the event queue is empty or the tick limit is reached. On reaching the limit with work still queued, it sets the oscillating flag and returns; pending events remain available to a later settle() call.
 
-New gate output drivers are seeded to ZERO when a topology is first built. This deterministic initial drive allows the required three-inverter feedback ring to evolve through alternating ticks instead of remaining at an all-X fixed point. Unconnected input sources default to X. Un-driven nets resolve to X.
+The initial-state policy deliberately leaves ambiguity unknown. Whenever topology is built or rebuilt, each gate output driver is seeded to X and all gates are still scheduled for the first tick. InputPin drivers retain their externally assigned values. Undriven nets and nets whose only drivers are X remain X. A gate can establish a concrete output only after evaluating its current inputs.
+
+The default settle budget scales with circuit size: it is the greater of 256 ticks or four ticks per gate plus 32 ticks. The explicit Simulator(Circuit, int) overload continues to use exactly the caller-provided cap. This gives long acyclic chains enough propagation ticks while retaining a bounded return for feedback oscillators.
 
 ## Driver conflicts
 
