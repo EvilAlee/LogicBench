@@ -53,7 +53,12 @@ jobs:
             fi
 
             sleep 1
-            import -window root /tmp/logicbench-m2.png
+            window_id=$(xwininfo -root -tree | awk '/"LogicBench"/ {print $1; exit}')
+            if [[ -z "$window_id" ]]; then
+              cat /tmp/logicbench-launch.log
+              exit 1
+            fi
+            import -window "$window_id" /tmp/logicbench-m2.png
           '
       - name: Upload M2 window screenshot
         uses: actions/upload-artifact@v4
