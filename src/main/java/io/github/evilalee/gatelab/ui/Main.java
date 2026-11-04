@@ -4,7 +4,6 @@ import com.formdev.flatlaf.FlatLightLaf;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
-import javax.swing.DefaultListSelectionModel;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
@@ -18,6 +17,7 @@ import javax.swing.JTree;
 import javax.swing.UIManager;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreePath;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Container;
@@ -140,9 +140,9 @@ public final class Main {
         JTree tree = new JTree(root);
         tree.setRootVisible(true);
         tree.setShowsRootHandles(true);
-        tree.expandRow(0);
-        tree.expandRow(1);
-        tree.expandRow(2);
+        tree.expandPath(new TreePath(root.getPath()));
+        tree.expandPath(new TreePath(gates.getPath()));
+        tree.expandPath(new TreePath(pins.getPath()));
 
         JScrollPane explorer = new JScrollPane(tree);
         explorer.setBorder(BorderFactory.createTitledBorder("Component Explorer"));
@@ -155,7 +155,6 @@ public final class Main {
             }
         };
         JTable attributes = new JTable(attributesModel);
-        attributes.setSelectionModel(new DefaultListSelectionModel());
         attributes.setFillsViewportHeight(true);
         attributes.setRowHeight(22);
         attributes.getTableHeader().setReorderingAllowed(false);
