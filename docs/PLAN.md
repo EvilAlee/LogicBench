@@ -95,11 +95,11 @@ Nets are NOT stored; they are rebuilt on load.
 | M7 | Persistence | Save/load round-trips a circuit; undo/redo works across all edits |
 | M8 | Polish | Input-count attribute, SVG export, then flip-flops |
 
-## 10. Open questions (decide in PRs, record here)
-- Conflicting drivers: ERROR value or X?
+## 10. Decisions log
+- Conflicting drivers on one net resolve to X (M1).
+- Engine is pin-graph based. Wire geometry (segments, junctions, coincident
+  endpoints) is translated into pin connections by a layer above the engine (M5).
+
+## 10b. Open questions
 - Final gate sizes (narrow vs wide)
 - Flip-flops: built-in components or built from gates only?
-
-## 11. Process
-Branch per milestone, PR per task, `main` always green.
-See AGENTS.md for agent rules.
