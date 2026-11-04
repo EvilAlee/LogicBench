@@ -77,9 +77,11 @@ Nets are NOT stored; they are rebuilt on load.
 - Toolbar row of tool icons: Edit, Poke, then the common gates.
 - Left column: component tree (top), attribute table (bottom).
 - Right: canvas with grid dots. No status bar.
-- Tools: Edit (select, move, drag from pin to wire), Poke (toggle inputs), Add (pick a component in the tree, click to place).
+- Tools: Edit (select, move, drag from pin to wire), Poke (toggle inputs),
+  Add (pick a component in the tree, click to place).
 - Keys: arrows rotate the preview or selection, Delete removes, Ctrl+Z / Ctrl+Y undo and redo.
-- Wire colors (tune to screenshots): ONE bright green, ZERO dark green, X blue, error red. Inputs are square pins, outputs are circular LEDs.
+- Wire colors (tune to screenshots): ONE bright green, ZERO dark green,
+  X blue, error red. Inputs are square pins, outputs are circular LEDs.
 
 ## 9. Milestones and acceptance criteria
 | # | Milestone | Done when |
