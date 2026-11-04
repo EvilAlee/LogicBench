@@ -1,0 +1,26 @@
+name: Java engine tests
+
+on:
+  push:
+    paths:
+      - "LogicBench/**"
+      - ".github/workflows/gradle.yml"
+  pull_request:
+    paths:
+      - "LogicBench/**"
+      - ".github/workflows/gradle.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+          cache-dependency-path: LogicBench/**/*.gradle.kts
+      - name: Run headless engine tests
+        working-directory: LogicBench
+        run: ./gradlew --no-daemon test
