@@ -20,6 +20,6 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: gradle
-          cache-dependency-path: **/*.gradle.kts
+          cache-dependency-path: "**/*.gradle.kts"
       - name: Run headless engine tests
         run: ./gradlew --no-daemon test
