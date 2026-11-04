@@ -1,5 +1,8 @@
 name: M2 screenshot capture
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
@@ -67,3 +70,16 @@ jobs:
           path: /tmp/logicbench-m2.png
           if-no-files-found: error
           retention-days: 14
+
+      - name: Commit screenshot for the pull request
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p docs/screenshots
+          cp /tmp/logicbench-m2.png docs/screenshots/m2-window.png
+          git add docs/screenshots/m2-window.png
+          if ! git diff --cached --quiet; then
+            git commit -m "Add M2 window screenshot"
+            git push origin "HEAD:${GITHUB_REF}"
+          fi
