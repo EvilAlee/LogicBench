@@ -95,11 +95,18 @@ Nets are NOT stored; they are rebuilt on load.
 | M7 | Persistence | Save/load round-trips a circuit; undo/redo works across all edits |
 | M8 | Polish | Input-count attribute, SVG export, then flip-flops |
 
-## 10. Open questions (decide in PRs, record here)
-- Conflicting drivers: ERROR value or X?
+## 10. Decisions log
+- Conflicting drivers on one net resolve to X (M1).
+- Engine is pin-graph based. Wire geometry (segments, junctions, coincident
+  endpoints) is translated into pin connections by a layer above the engine (M5).
+- Gate output drivers seed to X whenever the topology is built or rebuilt;
+  undriven nets remain X, while all gates are scheduled on the first tick.
+- The default settle budget is `max(256, 4 * gateCount + 32)` ticks. The
+  explicit tick-limit constructor overload retains its exact caller-supplied cap.
+- A cross-coupled NOR latch with S=R=ZERO is a stable unknown state (Q=Qbar=X),
+  not an oscillation. Setting S or R then drives the corresponding set/reset
+  state; returning both controls low holds the established state.
+
+## 10b. Open questions
 - Final gate sizes (narrow vs wide)
 - Flip-flops: built-in components or built from gates only?
-
-## 11. Process
-Branch per milestone, PR per task, `main` always green.
-See AGENTS.md for agent rules.
