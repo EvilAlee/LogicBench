@@ -24,7 +24,14 @@ import java.util.Set;
  * net after that gate's tick; affected gates are scheduled for the next tick.
  */
 public final class Simulator {
+    /**
+     * Minimum default tick budget for small circuits. Larger circuits receive
+     * a budget derived from their gate count.
+     */
     public static final int DEFAULT_TICK_LIMIT = 256;
+
+    private static final int TICKS_PER_GATE = 4;
+    private static final int TICK_LIMIT_OVERHEAD = 32;
 
     private final Circuit circuit;
     private final int tickLimit;
@@ -38,7 +45,7 @@ public final class Simulator {
     private int ticks;
 
     public Simulator(Circuit circuit) {
-        this(circuit, DEFAULT_TICK_LIMIT);
+        this(Objects.requireNonNull(circuit, "circuit"), calculateDefaultTickLimit(circuit));
     }
 
     public Simulator(Circuit circuit, int tickLimit) {
@@ -47,6 +54,15 @@ public final class Simulator {
             throw new IllegalArgumentException("tick limit must be at least one");
         }
         this.tickLimit = tickLimit;
+    }
+
+    private static int calculateDefaultTickLimit(Circuit circuit) {
+        long gateCount = circuit.components().stream()
+                .filter(Gate.class::isInstance)
+                .count();
+        long scaledLimit = gateCount * TICKS_PER_GATE + TICK_LIMIT_OVERHEAD;
+        return (int) Math.min(Integer.MAX_VALUE,
+                Math.max((long) DEFAULT_TICK_LIMIT, scaledLimit));
     }
 
     public void setInputValue(InputPin input, Value value) {
@@ -179,9 +195,8 @@ public final class Simulator {
             if (component instanceof Gate gate) {
                 scheduledGates.add(gate);
                 activeGateOutputs.add(gate.output());
-                // A deterministic initial drive lets feedback loops evolve
-                // through ticks instead of remaining inert at an all-X fixed point.
-                gateOutputValues.putIfAbsent(gate.output(), Value.ZERO);
+                // A topology rebuild must not invent a concrete power-up state.
+                gateOutputValues.put(gate.output(), Value.X);
             }
         }
         gateOutputValues.keySet().retainAll(activeGateOutputs);
