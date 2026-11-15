@@ -1,0 +1,14 @@
+{
+  "gates": [
+    { "id": "and",    "svg": "svg/and.svg",    "width": 30, "height": 40, "inputs": [ {"x":0,"y":10}, {"x":0,"y":30} ], "output": {"x":30,"y":20} },
+    { "id": "or",     "svg": "svg/or.svg",     "width": 30, "height": 40, "inputs": [ {"x":0,"y":10}, {"x":0,"y":30} ], "output": {"x":30,"y":20} },
+    { "id": "nand",   "svg": "svg/nand.svg",   "width": 40, "height": 40, "inputs": [ {"x":0,"y":10}, {"x":0,"y":30} ], "output": {"x":40,"y":20} },
+    { "id": "nor",    "svg": "svg/nor.svg",    "width": 40, "height": 40, "inputs": [ {"x":0,"y":10}, {"x":0,"y":30} ], "output": {"x":40,"y":20} },
+    { "id": "xor",    "svg": "svg/xor.svg",    "width": 40, "height": 40, "inputs": [ {"x":0,"y":10}, {"x":0,"y":30} ], "output": {"x":40,"y":20} },
+    { "id": "xnor",   "svg": "svg/xnor.svg",   "width": 50, "height": 40, "inputs": [ {"x":0,"y":10}, {"x":0,"y":30} ], "output": {"x":50,"y":20} },
+    { "id": "not",    "svg": "svg/not.svg",    "width": 30, "height": 20, "inputs": [ {"x":0,"y":10} ], "output": {"x":30,"y":10} },
+    { "id": "buffer", "svg": "svg/buffer.svg", "width": 20, "height": 20, "inputs": [ {"x":0,"y":10} ], "output": {"x":20,"y":10} },
+    { "id": "input",  "svg": "svg/input.svg",  "width": 20, "height": 20, "inputs": [], "output": {"x":20,"y":10} },
+    { "id": "output", "svg": "svg/output.svg", "width": 20, "height": 20, "inputs": [ {"x":0,"y":10} ], "output": null }
+  ]
+}
