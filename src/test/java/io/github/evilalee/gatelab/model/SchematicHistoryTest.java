@@ -90,7 +90,7 @@ class SchematicHistoryTest {
         schematic.move(first.id(), 20, 30);
         schematic.move(second.id(), 120, 130);
         assertTrue(history.commit(schematic));
-        assertEquals(2, history.undoDepth());
+        assertEquals(1, history.undoDepth(), "the new move is one step and discards the wire redo");
         history.undo(schematic);
         assertEquals(0, schematic.components().getFirst().x());
         assertEquals(100, schematic.components().get(1).x());
@@ -114,7 +114,7 @@ class SchematicHistoryTest {
     }
 
     @Test
-    void inputValuesAreNotRestoredFromHistoryAndSurvivingInputsKeepTheirValues() {
+    void inputValuesAreNotHistoryStateAndSurvivingInputsKeepTheirCurrentValue() {
         Schematic schematic = new Schematic(DEFINITIONS);
         SchematicHistory history = new SchematicHistory();
         PlacedComponent input = schematic.add("input", 0, 0, Facing.EAST);
@@ -123,11 +123,11 @@ class SchematicHistoryTest {
         history.begin(schematic);
         schematic.add("and", 100, 0, Facing.EAST);
         history.commit(schematic);
-        schematic.setInputValue(input.id(), false);
+        schematic.setInputValue(input.id(), true);
         history.undo(schematic);
-        assertFalse(schematic.inputValue(input.id()));
+        assertTrue(schematic.inputValue(input.id()));
         history.redo(schematic);
-        assertFalse(schematic.inputValue(input.id()));
+        assertTrue(schematic.inputValue(input.id()));
     }
 
     @Test
