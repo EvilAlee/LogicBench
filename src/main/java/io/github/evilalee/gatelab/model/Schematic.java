@@ -193,14 +193,30 @@ public final class Schematic {
             Set<WireSegment> movingWires,
             List<WireSegment> baseWires) {
         List<Connectivity.PinPosition> beforePins = pinPositions();
-        Map<PinKey, Integer> beforeNetIds = netIds(beforePins, wires);
+        List<WireSegment> originalWires = List.copyOf(wires);
+        Map<String, PlacedComponent> originalComponents = new HashMap<>();
+        for (PlacedComponent component : components) {
+            if (replacements.containsKey(component.id())) {
+                originalComponents.put(component.id(), component);
+            }
+        }
+        Map<PinKey, Integer> beforeNetIds = netIds(beforePins, originalWires);
         List<PinMove> pinsToLink = attachedPinsToFollow(
-                replacements, movingWires, beforePins, wires);
+                replacements, movingWires, beforePins, originalWires);
 
         replaceComponents(replacements);
         wires.clear();
         wires.addAll(baseWires);
         List<Connectivity.PinPosition> afterPins = pinPositions();
+
+        if (!hasNoNewShorts(afterPins, wires, beforeNetIds)) {
+            // If the moved pins themselves land on unrelated old nets, even the M4
+            // no-link fallback would be electrically unsafe; reject that placement.
+            replaceComponents(originalComponents);
+            wires.clear();
+            wires.addAll(originalWires);
+            return false;
+        }
 
         boolean linksFollowed = true;
         for (PinMove pinMove : pinsToLink) {
@@ -742,11 +758,23 @@ public final class Schematic {
     /** Returns each placed component pin at its M3-rotated world coordinate. */
     public List<Connectivity.PinPosition> pinPositions() {
         List<Connectivity.PinPosition> pins = new ArrayList<>();
-        Map<PinKey, Connectivity.PinPosition> indexed = new HashMap<>();
         for (PlacedComponent component : components) {
-            newPinsFor(component, indexed);
+            GateDef definition = requireKnownType(component.typeId());
+            for (int index = 0; index < definition.inputs().size(); index++) {
+                GateGeometry.Offset offset = GateGeometry.pinOffset(
+                        definition, definition.inputs().get(index), component.facing());
+                pins.add(new Connectivity.PinPosition(
+                        component.id(), "in" + index,
+                        component.x() + offset.x(), component.y() + offset.y()));
+            }
+            if (definition.output() != null) {
+                GateGeometry.Offset offset = GateGeometry.outputOffset(
+                        definition, component.facing());
+                pins.add(new Connectivity.PinPosition(
+                        component.id(), "out",
+                        component.x() + offset.x(), component.y() + offset.y()));
+            }
         }
-        pins.addAll(indexed.values());
         return List.copyOf(pins);
     }
 
