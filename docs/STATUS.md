@@ -9,7 +9,7 @@
 
 ## In progress
 - M4: placed-component Schematic, canvas add/select/move/rotate/delete interactions
-  - Branch: m4-placement   PR: pending
+  - Branch: m4-placement   PR: #8
 
 ## Next
 - M5 wiring → M6 live simulation → M7 persistence + undo/redo → M8 polish
