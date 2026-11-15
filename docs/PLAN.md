@@ -89,11 +89,21 @@ Nets are NOT stored; they are rebuilt on load. Persistence is deferred to M7.
 - Conflicting drivers on one net resolve to X.
 
 ## 7. Wiring
-- Wires are horizontal or vertical segments between grid points.
-- Endpoints connect when they coincide with a pin or another endpoint.
-- An endpoint landing on another wire's interior splits that wire (junction).
-- Dragging from a pin starts a wire; the path is routed orthogonally using the
-  ported routing algorithm. Deleting a wire triggers a net rebuild.
+- Wires are normalized horizontal or vertical segments between grid points.
+- Connectivity is derived from segment geometry and component-pin positions;
+  nets are not stored in the schematic.
+- Segment endpoints and component pins are graph nodes. A node on a segment
+  interior joins that segment, including T-junctions and pins placed on wires.
+- Two segments that cross without a pin or endpoint at the crossing remain
+  separate. Collinear overlapping segments join.
+- A junction dot is shown where the segment-degree contribution is at least
+  three (an endpoint contributes one, an interior point contributes two).
+- Dragging from a pin or wire point draws an L path: the first cursor axis
+  chooses the first segment direction, then the other axis reaches the target.
+  No A* router is used in M5.
+- Wires are independent of components. Moving a selection moves its selected
+  wires, but moving a component alone does not move wires connected to it
+  (v1 limitation).
 
 ## 8. UI spec (Logisim Evolution layout)
 - Menu bar: File, Edit, Project, Simulate, Window, Help (only implemented items enabled).
@@ -141,6 +151,13 @@ Nets are NOT stored; they are rebuilt on load. Persistence is deferred to M7.
   Left=WEST, Up=NORTH), rather than cycling relative to the current facing.
 - M7 undo/redo will wrap mutations at the Schematic API boundary; UI gestures
   call Schematic methods instead of editing the component collection directly.
+- M5 wires are geometric orthogonal `WireSegment` values stored by the
+  Schematic; connectivity is derived from their geometry and rotated component
+  pin positions.
+- A crossing without a pin or segment endpoint is not a connection; T-junctions,
+  pins on segment interiors, and collinear overlaps join their nets.
+- M5 uses a simple axis-first L route, not A* routing. Wires do not follow
+  components when those components move; only selected wires move with a selection.
 
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)
