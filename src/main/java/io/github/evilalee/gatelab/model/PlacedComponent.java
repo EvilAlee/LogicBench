@@ -1,5 +1,6 @@
 package io.github.evilalee.gatelab.model;
 
+import java.util.Map;
 import java.util.Objects;
 
 /** One component instance positioned by its fixed origin pin on the schematic. */
@@ -8,9 +9,15 @@ public record PlacedComponent(
         String typeId,
         int x,
         int y,
-        Facing facing) {
+        Facing facing,
+        Map<String, String> attributes) {
 
     public static final int GRID_SPACING = 10;
+
+    /** Backwards-compatible constructor for components without non-default attributes. */
+    public PlacedComponent(String id, String typeId, int x, int y, Facing facing) {
+        this(id, typeId, x, y, facing, Map.of());
+    }
 
     public PlacedComponent {
         id = requireText(id, "id");
@@ -18,6 +25,11 @@ public record PlacedComponent(
         Objects.requireNonNull(facing, "facing");
         requireGridCoordinate(x, "x");
         requireGridCoordinate(y, "y");
+        attributes = Map.copyOf(Objects.requireNonNull(attributes, "attributes"));
+        for (Map.Entry<String, String> entry : attributes.entrySet()) {
+            requireText(entry.getKey(), "attribute key");
+            requireText(entry.getValue(), "attribute value");
+        }
     }
 
     private static String requireText(String value, String name) {
