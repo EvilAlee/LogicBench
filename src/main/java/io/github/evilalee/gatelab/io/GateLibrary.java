@@ -32,6 +32,7 @@ public final class GateLibrary {
     private final List<GateDef> definitions;
     private final Map<String, GateDef> byId;
     private final Map<String, List<GateDef>> byFamily;
+    private final List<String> familyOrder;
     private final Map<String, GateDef> defaultByFamily;
 
     private GateLibrary(List<GateDef> definitions) {
@@ -60,7 +61,9 @@ public final class GateLibrary {
             defaults.put(entry.getKey(), chooseDefault(entry.getKey(), familyVariants));
         }
         byId = Map.copyOf(ids);
-        byFamily = Map.copyOf(immutableFamilies);
+        byFamily = java.util.Collections.unmodifiableMap(
+                new LinkedHashMap<>(immutableFamilies));
+        familyOrder = List.copyOf(immutableFamilies.keySet());
         defaultByFamily = Map.copyOf(defaults);
     }
 
@@ -75,7 +78,7 @@ public final class GateLibrary {
 
     /** Component families in first-entry order, once each. */
     public List<String> families() {
-        return List.copyOf(byFamily.keySet());
+        return familyOrder;
     }
 
     /** The catalogue variants available for a family. */

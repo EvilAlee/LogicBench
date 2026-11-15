@@ -381,7 +381,11 @@ public final class CanvasPanel extends JPanel {
         try {
             String normalized = ComponentAttributeRegistry.normalizeValue(family, key, value);
             if (key.equals("facing")) {
-                toolFacingByFamily.put(family, Facing.valueOf(normalized));
+                Facing selectedFacing = Facing.valueOf(normalized);
+                toolFacingByFamily.put(family, selectedFacing);
+                if (activeTool == Tool.ADD && family.equals(previewTypeId)) {
+                    previewFacing = selectedFacing;
+                }
             } else {
                 Map<String, String> changed = new LinkedHashMap<>(
                         toolAttributesByFamily.getOrDefault(family, Map.of()));
