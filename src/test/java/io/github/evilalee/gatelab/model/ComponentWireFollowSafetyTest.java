@@ -178,9 +178,10 @@ class ComponentWireFollowSafetyTest {
                 int previousUndoDepth = history.undoDepth();
                 history.begin(schematic);
 
+                String gateId = circuit.gates()
+                        .get(random.nextInt(circuit.gates().size())).id();
                 PlacedComponent gate = schematic.components().stream()
-                        .filter(component -> component.id().equals(
-                                circuit.gates().get(random.nextInt(circuit.gates().size())).id()))
+                        .filter(component -> component.id().equals(gateId))
                         .findFirst().orElseThrow();
                 boolean linksFollowed;
                 int operation = random.nextInt(3);

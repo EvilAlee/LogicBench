@@ -226,7 +226,7 @@ public final class Schematic {
 
     /** Changes one component's facing and safely follows its stationary connections. */
     public boolean setFacing(String id, Facing facing) {
-        return setAttribute(id, "facing", Objects.requireNonNull(facing, "facing").name());
+        return setFacing(List.of(id), Objects.requireNonNull(facing, "facing"));
     }
 
     /** Changes the facing of a complete component selection in one validated gesture. */

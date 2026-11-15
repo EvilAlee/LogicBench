@@ -132,9 +132,9 @@ class ComponentAttributeTest {
     @Test
     void threeInputAndVariantCompilesToAThreeInputEngineGate() {
         Schematic schematic = new Schematic(DEFINITIONS);
-        PlacedComponent first = schematic.add("input", 50, -20, Facing.EAST);
-        PlacedComponent second = schematic.add("input", 50, 0, Facing.EAST);
-        PlacedComponent third = schematic.add("input", 50, 20, Facing.EAST);
+        PlacedComponent first = schematic.add("input", 70, -20, Facing.EAST);
+        PlacedComponent second = schematic.add("input", 70, 0, Facing.EAST);
+        PlacedComponent third = schematic.add("input", 70, 20, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
         PlacedComponent output = schematic.add("output", 160, 0, Facing.EAST);
         assertTrue(schematic.setAttribute(gate.id(), "inputs", "3"));
