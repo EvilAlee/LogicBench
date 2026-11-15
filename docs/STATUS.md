@@ -9,7 +9,7 @@
 - M6: live schematic simulation, Poke tool, value-colored wires, I/O digits and oscillation reporting
 
 ## In progress
-- M7a: versioned `.logicbench.json` Save/Open, unsaved-change prompts and modification tracking
+- M7a: versioned `.lbc` Save/Open (legacy `.logicbench.json` remains readable), unsaved-change prompts and modification tracking
   - Branch: m7a-saveload
 
 ## Next

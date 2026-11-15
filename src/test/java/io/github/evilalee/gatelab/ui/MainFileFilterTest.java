@@ -9,19 +9,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MainFileFilterTest {
     @Test
-    void chooserAcceptsTheCompoundLogicBenchExtension() {
+    void chooserAcceptsCurrentAndLegacySchematicExtensions() {
         var filter = Main.schematicFileFilter();
 
+        assertTrue(filter.accept(new File("SRlatch.lbc")));
+        assertTrue(filter.accept(new File("SRlatch.LBC")));
         assertTrue(filter.accept(new File("SRlatch.logicbench.json")));
         assertTrue(filter.accept(new File("SRlatch.LOGICBENCH.JSON")));
     }
 
     @Test
-    void chooserRejectsJsonFilesWithOtherExtensions() {
+    void chooserRejectsUnrelatedExtensions() {
         var filter = Main.schematicFileFilter();
 
         assertFalse(filter.accept(new File("SRlatch.json")));
         assertFalse(filter.accept(new File("SRlatch.logicbench.json.bak")));
-        assertFalse(filter.accept(new File("SRlatch.lbc")));
+        assertFalse(filter.accept(new File("SRlatch.lbc.bak")));
     }
 }

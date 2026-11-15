@@ -287,7 +287,9 @@ public final class Main {
         return new FileFilter() {
             @Override
             public boolean accept(File file) {
-                return file.isDirectory() || hasSchematicExtension(file.getName());
+                return file.isDirectory()
+                        || hasSchematicExtension(file.getName(), SchematicJson.FILE_EXTENSION)
+                        || hasSchematicExtension(file.getName(), SchematicJson.LEGACY_FILE_EXTENSION);
             }
 
             @Override
@@ -298,7 +300,11 @@ public final class Main {
     }
 
     static boolean hasSchematicExtension(String fileName) {
-        String extension = SchematicJson.FILE_EXTENSION;
+        return hasSchematicExtension(fileName, SchematicJson.FILE_EXTENSION)
+                || hasSchematicExtension(fileName, SchematicJson.LEGACY_FILE_EXTENSION);
+    }
+
+    private static boolean hasSchematicExtension(String fileName, String extension) {
         return fileName != null
                 && fileName.length() >= extension.length()
                 && fileName.regionMatches(

@@ -22,7 +22,8 @@ import java.util.Set;
 /** Versioned JSON text format for editable LogicBench schematics. */
 public final class SchematicJson {
     public static final int CURRENT_VERSION = 1;
-    public static final String FILE_EXTENSION = ".logicbench.json";
+    public static final String FILE_EXTENSION = ".lbc";
+    public static final String LEGACY_FILE_EXTENSION = ".logicbench.json";
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
