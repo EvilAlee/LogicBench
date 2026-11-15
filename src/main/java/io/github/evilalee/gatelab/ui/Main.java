@@ -6,9 +6,11 @@ import io.github.evilalee.gatelab.io.SchematicJson;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JFrame;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.KeyStroke;
@@ -163,7 +165,29 @@ public final class Main {
         file.add(exit);
         menuBar.add(file);
 
-        menuBar.add(menuWithDisabledItems("Edit", "Undo", "Redo", "Cut", "Copy", "Paste"));
+        JMenu edit = new JMenu("Edit");
+        JMenuItem undo = new JMenuItem("Undo");
+        undo.setAccelerator(KeyStroke.getKeyStroke(
+                KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK));
+        undo.addActionListener(event -> canvas.undo());
+        JMenuItem redo = new JMenuItem("Redo");
+        redo.setAccelerator(KeyStroke.getKeyStroke(
+                KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK));
+        redo.addActionListener(event -> canvas.redo());
+        edit.add(undo);
+        edit.add(redo);
+        edit.addSeparator();
+        for (String label : new String[]{"Cut", "Copy", "Paste"}) {
+            JMenuItem placeholder = new JMenuItem(label);
+            placeholder.setEnabled(false);
+            edit.add(placeholder);
+        }
+        canvas.setHistoryStateListener(() -> {
+            undo.setEnabled(canvas.canUndo());
+            redo.setEnabled(canvas.canRedo());
+        });
+        installUndoRedoBindings(frame, canvas);
+        menuBar.add(edit);
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
         JMenu simulate = menuWithDisabledItems("Simulate", "Tick Once", "Ticks Enabled");
         JMenuItem reset = new JMenuItem("Reset");
@@ -174,6 +198,31 @@ public final class Main {
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
         menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
         return menuBar;
+    }
+
+    private static void installUndoRedoBindings(JFrame frame, CanvasPanel canvas) {
+        javax.swing.InputMap input = frame.getRootPane().getInputMap(
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
+        javax.swing.ActionMap actions = frame.getRootPane().getActionMap();
+        input.put(KeyStroke.getKeyStroke(
+                KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK), "logicbench-undo");
+        input.put(KeyStroke.getKeyStroke(
+                KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK), "logicbench-redo");
+        input.put(KeyStroke.getKeyStroke(
+                KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                "logicbench-redo");
+        actions.put("logicbench-undo", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                canvas.undo();
+            }
+        });
+        actions.put("logicbench-redo", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                canvas.redo();
+            }
+        });
     }
 
     private static JMenuItem fileItem(
