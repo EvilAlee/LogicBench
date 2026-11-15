@@ -627,6 +627,15 @@ public final class Main {
             combo = new JComboBox<>(attribute.options().toArray(
                     CanvasPanel.AttributeOption[]::new));
             combo.setSelectedItem(attribute.selected());
+            combo.getInputMap(JComponent.WHEN_FOCUSED).put(
+                    KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+                    "cancel-attribute-edit");
+            combo.getActionMap().put("cancel-attribute-edit", new AbstractAction() {
+                @Override
+                public void actionPerformed(java.awt.event.ActionEvent event) {
+                    cancelCellEditing();
+                }
+            });
             combo.addActionListener(event -> fireEditingStopped());
             return combo;
         }
