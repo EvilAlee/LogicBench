@@ -22,7 +22,9 @@ import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.KeyEvent;
@@ -35,6 +37,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -50,6 +53,10 @@ public final class CanvasPanel extends JPanel {
     private static final int GALLERY_HEADER_BOTTOM = 40;
     private static final int GALLERY_ROW_MARGIN = 20;
     private static final int GALLERY_COLUMN_SPACING = 165;
+    private static final int DIRTY_REGION_MARGIN = 6;
+    private static final long PAINT_STATS_INTERVAL_NANOS = 1_000_000_000L;
+    private static final boolean PAINT_STATS_ENABLED =
+            Boolean.getBoolean("logicbench.paintStats");
 
     public enum Tool {
         EDIT,
@@ -73,6 +80,18 @@ public final class CanvasPanel extends JPanel {
 
     private final int galleryFirstOriginY;
     private final int galleryRowPitch;
+    private BufferedImage gridImage;
+    private int gridCacheWidth = -1;
+    private int gridCacheHeight = -1;
+    private long gridCacheScaleBits = Long.MIN_VALUE;
+    private long gridCacheTranslateXBits = Long.MIN_VALUE;
+    private long gridCacheTranslateYBits = Long.MIN_VALUE;
+    private long gridCacheRebuildCount;
+    private long paintStatsWindowStartNanos;
+    private long paintStatsPaintCount;
+    private long paintStatsTotalNanos;
+    private long paintStatsMinNanos = Long.MAX_VALUE;
+    private long paintStatsMaxNanos;
     private boolean showPinMarkers = true;
     private boolean spaceDown;
     private boolean panning;
@@ -176,22 +195,24 @@ public final class CanvasPanel extends JPanel {
 
     /** Returns the canvas to the selection tool. */
     public void setEditMode() {
+        Rectangle oldPreviewBounds = previewScreenBounds();
         previewTypeId = null;
         activeTool = Tool.EDIT;
         resetGesture();
         toolModeListener.accept(activeTool);
         requestFocusInWindow();
-        repaint();
+        repaintIfPresent(oldPreviewBounds);
     }
 
     /** Selects the inert Poke tool; no input interaction is implemented in M4. */
     public void setPokeMode() {
+        Rectangle oldPreviewBounds = previewScreenBounds();
         previewTypeId = null;
         activeTool = Tool.POKE;
         resetGesture();
         toolModeListener.accept(activeTool);
         requestFocusInWindow();
-        repaint();
+        repaintIfPresent(oldPreviewBounds);
     }
 
     /** One-shot tree drag/drop placement, sharing the same grid-snapped origin rule. */
@@ -310,7 +331,9 @@ public final class CanvasPanel extends JPanel {
                 if (activeTool == Tool.ADD) {
                     gesture = Gesture.ADD_CLICK;
                     gestureStartScreen = event.getPoint();
+                    Rectangle oldPreviewBounds = previewScreenBounds();
                     pointerFromScreen(event.getPoint());
+                    repaintUnion(oldPreviewBounds, previewScreenBounds());
                 } else if (activeTool == Tool.EDIT) {
                     beginEditGesture(event);
                 }
@@ -328,23 +351,26 @@ public final class CanvasPanel extends JPanel {
                 }
 
                 if (activeTool == Tool.ADD) {
+                    Rectangle oldPreviewBounds = previewScreenBounds();
                     pointerFromScreen(event.getPoint());
                     updateGestureMovement(event.getPoint());
-                    repaint();
+                    repaintUnion(oldPreviewBounds, previewScreenBounds());
                     return;
                 }
                 if (activeTool == Tool.EDIT) {
+                    Rectangle oldGestureBounds = gestureVisualScreenBounds();
                     pointerFromScreen(event.getPoint());
                     updateGestureMovement(event.getPoint());
-                    repaint();
+                    repaintUnion(oldGestureBounds, gestureVisualScreenBounds());
                 }
             }
 
             @Override
             public void mouseMoved(MouseEvent event) {
                 if (activeTool == Tool.ADD) {
+                    Rectangle oldPreviewBounds = previewScreenBounds();
                     pointerFromScreen(event.getPoint());
-                    repaint();
+                    repaintUnion(oldPreviewBounds, previewScreenBounds());
                 }
             }
 
@@ -363,8 +389,9 @@ public final class CanvasPanel extends JPanel {
                 if (activeTool == Tool.ADD && gesture == Gesture.ADD_CLICK) {
                     updateGestureMovement(event.getPoint());
                     if (!gestureMoved && previewTypeId != null) {
+                        Rectangle previewBounds = previewScreenBounds();
                         placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
-                        repaint();
+                        repaintIfPresent(previewBounds);
                     }
                     resetGesture();
                     return;
@@ -396,9 +423,12 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void beginEditGesture(MouseEvent event) {
+        Rectangle oldSelectionBounds = selectionScreenBounds();
         Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
         gestureStartWorldX = world.x;
         gestureStartWorldY = world.y;
+        pointerWorldX = world.x;
+        pointerWorldY = world.y;
         gestureStartScreen = event.getPoint();
         gestureMoved = false;
 
@@ -413,6 +443,7 @@ public final class CanvasPanel extends JPanel {
             }
             notifySelectionChanged();
             gesture = Gesture.NONE;
+            repaintUnion(oldSelectionBounds, selectionScreenBounds());
             return;
         }
 
@@ -424,7 +455,7 @@ public final class CanvasPanel extends JPanel {
             additiveMarquee = shift;
             gesture = Gesture.SELECT_RECTANGLE;
             moveStartComponents = Map.of();
-            repaint();
+            repaintUnion(oldSelectionBounds, marqueeScreenBounds());
             return;
         }
 
@@ -439,6 +470,7 @@ public final class CanvasPanel extends JPanel {
             starting.put(component.id(), component);
         }
         moveStartComponents = Map.copyOf(starting);
+        repaintUnion(oldSelectionBounds, selectionScreenBounds());
     }
 
     private void updateGestureMovement(Point currentScreen) {
@@ -453,6 +485,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void finishEditGesture(MouseEvent event) {
+        Rectangle oldGestureBounds = gestureVisualScreenBounds();
         pointerFromScreen(event.getPoint());
         updateGestureMovement(event.getPoint());
 
@@ -478,7 +511,7 @@ public final class CanvasPanel extends JPanel {
         }
 
         resetGesture();
-        repaint();
+        repaintUnion(oldGestureBounds, selectionScreenBounds());
     }
 
     private static GateGeometry.Bounds selectionRectangle(
@@ -514,30 +547,33 @@ public final class CanvasPanel extends JPanel {
 
     private void setFacing(Facing facing) {
         if (activeTool == Tool.ADD) {
+            Rectangle oldPreviewBounds = previewScreenBounds();
             previewFacing = facing;
-            repaint();
+            repaintUnion(oldPreviewBounds, previewScreenBounds());
             return;
         }
         if (selectedIds.isEmpty()) {
             return;
         }
+        Rectangle oldSelectionBounds = selectionScreenBounds();
         for (PlacedComponent component : selectedComponents()) {
             schematic.setFacing(component.id(), facing);
         }
         notifySelectionChanged();
-        repaint();
+        repaintUnion(oldSelectionBounds, selectionScreenBounds());
     }
 
     private void deleteSelection() {
         if (selectedIds.isEmpty() || activeTool == Tool.ADD) {
             return;
         }
+        Rectangle oldSelectionBounds = selectionScreenBounds();
         for (String id : List.copyOf(selectedIds)) {
             schematic.remove(id);
         }
         selectedIds.clear();
         notifySelectionChanged();
-        repaint();
+        repaintIfPresent(oldSelectionBounds);
     }
 
     private List<PlacedComponent> selectedComponents() {
@@ -564,6 +600,7 @@ public final class CanvasPanel extends JPanel {
 
     @Override
     protected void paintComponent(Graphics graphics) {
+        long paintStartedNanos = PAINT_STATS_ENABLED ? System.nanoTime() : 0L;
         super.paintComponent(graphics);
 
         Graphics2D g2 = (Graphics2D) graphics.create();
@@ -578,33 +615,105 @@ public final class CanvasPanel extends JPanel {
             }
         } finally {
             g2.dispose();
+            if (PAINT_STATS_ENABLED) {
+                recordPaintDuration(System.nanoTime() - paintStartedNanos);
+            }
         }
     }
 
-    private void paintGrid(Graphics2D graphics) {
-        double scale = transform.scale();
-        double screenSpacing = WORLD_GRID_SPACING * scale;
-        int stride = Math.max(1, (int) Math.ceil(
-                MIN_SCREEN_GRID_SPACING / screenSpacing));
-        double worldStep = WORLD_GRID_SPACING * stride;
+    /** Blits a client-side software-rendered grid; only view changes rebuild it. */
+    private void paintGrid(Graphics graphics) {
+        ensureGridCache();
+        if (gridImage != null) {
+            graphics.drawImage(gridImage, 0, 0, null);
+        }
+    }
 
-        Point2D.Double worldTopLeft = transform.screenToWorld(0.0, 0.0);
-        Point2D.Double worldBottomRight = transform.screenToWorld(
-                getWidth(), getHeight());
-        double firstX = Math.ceil(worldTopLeft.x / worldStep) * worldStep;
-        double firstY = Math.ceil(worldTopLeft.y / worldStep) * worldStep;
+    private void ensureGridCache() {
+        int width = getWidth();
+        int height = getHeight();
+        if (width <= 0 || height <= 0) {
+            gridImage = null;
+            return;
+        }
 
-        int dotSize = screenSpacing >= 8.0 ? 2 : 1;
-        graphics.setColor(new Color(205, 209, 214));
+        long scaleBits = Double.doubleToLongBits(transform.scale());
+        long translateXBits = Double.doubleToLongBits(transform.translateX());
+        long translateYBits = Double.doubleToLongBits(transform.translateY());
+        if (gridImage != null && gridCacheWidth == width && gridCacheHeight == height
+                && gridCacheScaleBits == scaleBits
+                && gridCacheTranslateXBits == translateXBits
+                && gridCacheTranslateYBits == translateYBits) {
+            return;
+        }
 
-        for (double worldY = firstY; worldY <= worldBottomRight.y; worldY += worldStep) {
-            Point2D.Double rowStart = transform.worldToScreen(firstX, worldY);
-            int screenY = (int) Math.round(rowStart.y);
-            for (double worldX = firstX; worldX <= worldBottomRight.x; worldX += worldStep) {
-                Point2D.Double point = transform.worldToScreen(worldX, worldY);
-                int screenX = (int) Math.round(point.x);
-                graphics.fillOval(screenX, screenY, dotSize, dotSize);
+        BufferedImage rebuilt = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D gridGraphics = rebuilt.createGraphics();
+        try {
+            gridGraphics.setColor(Color.WHITE);
+            gridGraphics.fillRect(0, 0, width, height);
+            gridGraphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_OFF);
+
+            double scale = transform.scale();
+            double screenSpacing = WORLD_GRID_SPACING * scale;
+            int stride = Math.max(1, (int) Math.ceil(
+                    MIN_SCREEN_GRID_SPACING / screenSpacing));
+            double worldStep = WORLD_GRID_SPACING * stride;
+
+            Point2D.Double worldTopLeft = transform.screenToWorld(0.0, 0.0);
+            Point2D.Double worldBottomRight = transform.screenToWorld(width, height);
+            double firstX = Math.ceil(worldTopLeft.x / worldStep) * worldStep;
+            double firstY = Math.ceil(worldTopLeft.y / worldStep) * worldStep;
+
+            int dotSize = screenSpacing >= 8.0 ? 2 : 1;
+            gridGraphics.setColor(new Color(205, 209, 214));
+            for (double worldY = firstY; worldY <= worldBottomRight.y; worldY += worldStep) {
+                int screenY = (int) Math.round(transform.worldToScreen(firstX, worldY).y);
+                for (double worldX = firstX; worldX <= worldBottomRight.x; worldX += worldStep) {
+                    int screenX = (int) Math.round(transform.worldToScreen(worldX, worldY).x);
+                    gridGraphics.fillRect(screenX, screenY, dotSize, dotSize);
+                }
             }
+        } finally {
+            gridGraphics.dispose();
+        }
+
+        gridImage = rebuilt;
+        gridCacheWidth = width;
+        gridCacheHeight = height;
+        gridCacheScaleBits = scaleBits;
+        gridCacheTranslateXBits = translateXBits;
+        gridCacheTranslateYBits = translateYBits;
+        gridCacheRebuildCount++;
+    }
+
+    long gridCacheRebuildCount() {
+        return gridCacheRebuildCount;
+    }
+
+    private void recordPaintDuration(long durationNanos) {
+        long now = System.nanoTime();
+        if (paintStatsWindowStartNanos == 0L) {
+            paintStatsWindowStartNanos = now;
+        }
+        paintStatsPaintCount++;
+        paintStatsTotalNanos += durationNanos;
+        paintStatsMinNanos = Math.min(paintStatsMinNanos, durationNanos);
+        paintStatsMaxNanos = Math.max(paintStatsMaxNanos, durationNanos);
+
+        if (now - paintStatsWindowStartNanos >= PAINT_STATS_INTERVAL_NANOS) {
+            double averageMs = paintStatsTotalNanos / (double) paintStatsPaintCount / 1_000_000.0;
+            double minimumMs = paintStatsMinNanos / 1_000_000.0;
+            double maximumMs = paintStatsMaxNanos / 1_000_000.0;
+            System.err.printf(Locale.ROOT,
+                    "LogicBench paintStats: n=%d avg=%.3f ms min=%.3f ms max=%.3f ms%n",
+                    paintStatsPaintCount, averageMs, minimumMs, maximumMs);
+            paintStatsWindowStartNanos = now;
+            paintStatsPaintCount = 0L;
+            paintStatsTotalNanos = 0L;
+            paintStatsMinNanos = Long.MAX_VALUE;
+            paintStatsMaxNanos = 0L;
         }
     }
 
@@ -613,6 +722,11 @@ public final class CanvasPanel extends JPanel {
         try {
             worldGraphics.translate(transform.translateX(), transform.translateY());
             worldGraphics.scale(transform.scale(), transform.scale());
+
+            Rectangle screenClip = screenGraphics.getClipBounds();
+            if (screenClip == null) {
+                screenClip = new Rectangle(0, 0, getWidth(), getHeight());
+            }
 
             int moveDeltaX = gesture == Gesture.MOVE_SELECTION && gestureMoved
                     ? snapToGrid(pointerWorldX - gestureStartWorldX) : 0;
@@ -624,13 +738,17 @@ public final class CanvasPanel extends JPanel {
                 boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
                 int x = component.x() + (moving ? moveDeltaX : 0);
                 int y = component.y() + (moving ? moveDeltaY : 0);
+                GateDef definition = gateLibrary.get(component.typeId());
+                if (!screenClip.intersects(componentScreenBounds(
+                        definition, component.facing(), x, y, DIRTY_REGION_MARGIN))) {
+                    continue;
+                }
 
                 if (moving) {
                     worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.72f));
                 } else {
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                 }
-                GateDef definition = gateLibrary.get(component.typeId());
                 gateRenderer.render(
                         worldGraphics, definition, component.facing(), x, y);
                 worldGraphics.setComposite(AlphaComposite.SrcOver);
@@ -642,13 +760,18 @@ public final class CanvasPanel extends JPanel {
             }
 
             if (activeTool == Tool.ADD && previewTypeId != null) {
-                worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
-                gateRenderer.render(worldGraphics, gateLibrary.get(previewTypeId),
-                        previewFacing, previewX, previewY);
-                worldGraphics.setComposite(AlphaComposite.SrcOver);
+                GateDef previewDefinition = gateLibrary.get(previewTypeId);
+                if (screenClip.intersects(componentScreenBounds(
+                        previewDefinition, previewFacing, previewX, previewY, DIRTY_REGION_MARGIN))) {
+                    worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
+                    gateRenderer.render(worldGraphics, previewDefinition,
+                            previewFacing, previewX, previewY);
+                    worldGraphics.setComposite(AlphaComposite.SrcOver);
+                }
             }
 
-            if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
+            if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved
+                    && screenClip.intersects(marqueeScreenBounds())) {
                 paintMarquee(worldGraphics);
             }
         } finally {
@@ -671,6 +794,101 @@ public final class CanvasPanel extends JPanel {
                     bounds.width(), bounds.height());
         } finally {
             g2.dispose();
+        }
+    }
+
+    private Rectangle previewScreenBounds() {
+        if (previewTypeId == null) {
+            return null;
+        }
+        return componentScreenBounds(
+                gateLibrary.get(previewTypeId), previewFacing,
+                previewX, previewY, DIRTY_REGION_MARGIN);
+    }
+
+    private Rectangle componentScreenBounds(
+            PlacedComponent component, int deltaX, int deltaY, int margin) {
+        GateDef definition = gateLibrary.get(component.typeId());
+        return componentScreenBounds(definition, component.facing(),
+                component.x() + deltaX, component.y() + deltaY, margin);
+    }
+
+    private Rectangle componentScreenBounds(
+            GateDef definition, Facing facing, int originX, int originY, int margin) {
+        GateGeometry.Bounds relative = GateGeometry.bounds(definition, facing);
+        return worldBoundsToScreen(new GateGeometry.Bounds(
+                originX + relative.x(), originY + relative.y(),
+                relative.width(), relative.height()), margin);
+    }
+
+    private Rectangle selectionScreenBounds() {
+        Rectangle result = null;
+        for (PlacedComponent component : selectedComponents()) {
+            result = union(result, componentScreenBounds(component, 0, 0, DIRTY_REGION_MARGIN));
+        }
+        return result;
+    }
+
+    private Rectangle movingSelectionScreenBounds() {
+        int deltaX = gestureMoved ? snapToGrid(pointerWorldX - gestureStartWorldX) : 0;
+        int deltaY = gestureMoved ? snapToGrid(pointerWorldY - gestureStartWorldY) : 0;
+        Rectangle result = null;
+        for (PlacedComponent component : moveStartComponents.values()) {
+            result = union(result, componentScreenBounds(
+                    component, deltaX, deltaY, DIRTY_REGION_MARGIN));
+        }
+        return result;
+    }
+
+    private Rectangle marqueeScreenBounds() {
+        if (gesture != Gesture.SELECT_RECTANGLE) {
+            return null;
+        }
+        return worldBoundsToScreen(selectionRectangle(
+                gestureStartWorldX, gestureStartWorldY,
+                pointerWorldX, pointerWorldY), DIRTY_REGION_MARGIN);
+    }
+
+    private Rectangle gestureVisualScreenBounds() {
+        return switch (gesture) {
+            case MOVE_SELECTION -> movingSelectionScreenBounds();
+            case SELECT_RECTANGLE -> marqueeScreenBounds();
+            default -> null;
+        };
+    }
+
+    private Rectangle worldBoundsToScreen(GateGeometry.Bounds bounds, int margin) {
+        double scale = transform.scale();
+        double left = bounds.x() * scale + transform.translateX();
+        double top = bounds.y() * scale + transform.translateY();
+        double right = (bounds.x() + bounds.width()) * scale + transform.translateX();
+        double bottom = (bounds.y() + bounds.height()) * scale + transform.translateY();
+        int x = (int) Math.floor(Math.min(left, right)) - margin;
+        int y = (int) Math.floor(Math.min(top, bottom)) - margin;
+        int maxX = (int) Math.ceil(Math.max(left, right)) + margin;
+        int maxY = (int) Math.ceil(Math.max(top, bottom)) + margin;
+        return new Rectangle(x, y, Math.max(1, maxX - x), Math.max(1, maxY - y));
+    }
+
+    private static Rectangle union(Rectangle first, Rectangle second) {
+        if (first == null) {
+            return second == null ? null : new Rectangle(second);
+        }
+        if (second == null) {
+            return new Rectangle(first);
+        }
+        Rectangle result = new Rectangle(first);
+        result.add(second);
+        return result;
+    }
+
+    private void repaintUnion(Rectangle first, Rectangle second) {
+        repaintIfPresent(union(first, second));
+    }
+
+    private void repaintIfPresent(Rectangle dirty) {
+        if (dirty != null && !dirty.isEmpty()) {
+            repaint(dirty);
         }
     }
 

@@ -41,6 +41,14 @@ public final class Main {
     }
 
     public static void main(String[] args) {
+        // Set these before Swing/AWT initializes; command-line -D values take precedence.
+        if (System.getProperty("swing.volatileImageBufferEnabled") == null) {
+            System.setProperty("swing.volatileImageBufferEnabled", "false");
+        }
+        if (System.getProperty("sun.java2d.pmoffscreen") == null) {
+            System.setProperty("sun.java2d.pmoffscreen", "false");
+        }
+
         boolean galleryMode = Arrays.asList(args).contains("--gallery");
         javax.swing.SwingUtilities.invokeLater(() -> showWindow(galleryMode));
     }
