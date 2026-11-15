@@ -54,6 +54,54 @@ class SchematicTest {
     }
 
     @Test
+    void modificationCounterTracksEverySuccessfulMutationButNotQueries() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        assertEquals(0, schematic.modificationCount());
+
+        PlacedComponent input = schematic.add("input", 0, 0, Facing.EAST);
+        assertEquals(1, schematic.modificationCount());
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        assertEquals(2, schematic.modificationCount());
+
+        schematic.move(input.id(), 10, 0);
+        assertEquals(3, schematic.modificationCount());
+        schematic.setFacing(gate.id(), Facing.SOUTH);
+        assertEquals(4, schematic.modificationCount());
+
+        schematic.setInputValue(input.id(), true);
+        assertEquals(5, schematic.modificationCount());
+        schematic.toggleInput(input.id());
+        assertEquals(6, schematic.modificationCount());
+        schematic.setInputValue(input.id(), true);
+        assertEquals(7, schematic.modificationCount());
+        assertTrue(schematic.resetInputs());
+        assertEquals(8, schematic.modificationCount());
+
+        WireSegment wire = new WireSegment(0, 0, 20, 0);
+        assertTrue(schematic.addWire(wire));
+        assertEquals(9, schematic.modificationCount());
+        List<WireSegment> moved = schematic.moveWires(List.of(wire), 10, 0);
+        assertEquals(List.of(new WireSegment(10, 0, 30, 0)), moved);
+        assertEquals(10, schematic.modificationCount());
+        assertTrue(schematic.removeWire(moved.getFirst()));
+        assertEquals(11, schematic.modificationCount());
+        assertTrue(schematic.remove(gate.id()));
+        assertEquals(12, schematic.modificationCount());
+        assertTrue(schematic.remove(input.id()));
+        assertEquals(13, schematic.modificationCount());
+
+        schematic.components();
+        schematic.wires();
+        schematic.pinPositions();
+        schematic.componentAt(0, 0);
+        schematic.wireAt(0, 0, 1);
+        assertFalse(schematic.remove("missing"));
+        assertFalse(schematic.resetInputs());
+        assertFalse(schematic.addWire(wire));
+        assertEquals(13, schematic.modificationCount());
+    }
+
+    @Test
     void pointHitTestingUsesRotatedBoundsForEveryFacing() {
         for (GateDef definition : DEFINITIONS) {
             for (Facing facing : Facing.values()) {

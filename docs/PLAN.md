@@ -75,10 +75,11 @@ SVG must exist as a classpath resource and parse successfully with JSVG.
 \`GateLibrary\` validates the catalogue once at startup and exposes immutable
 definitions in file order.
 
-### Circuit file (*.gatelab.json)
-\`version\`, \`components[]\` { \`id\`, \`type\`, \`x\`, \`y\`, \`facing\`, \`attrs\` },
-\`wires[]\` { \`x1\`, \`y1\`, \`x2\`, \`y2\` }.
-Nets are NOT stored; they are rebuilt on load. Persistence is deferred to M7.
+### Schematic file (*.logicbench.json)
+Version 1 JSON contains `version`, `components[]` with `id`, `type`, `x`,
+`y`, `facing` and input-only `high`, plus `wires[]` with `x1`, `y1`,
+`x2`, `y2`. Nets and simulation results are not stored; they are rebuilt
+from the components and wire geometry after loading.
 
 ## 6. Simulation (ENGINE_NOTES.md is authoritative)
 - Values: ZERO, ONE, X.
@@ -126,7 +127,7 @@ Nets are NOT stored; they are rebuilt on load. Persistence is deferred to M7.
 | M4 | Placement | Place, select, move, rotate, delete gates; positions snap to grid |
 | M5 | Wiring | Draw orthogonal wires between pins; junctions work; nets rebuild correctly |
 | M6 | Live simulation | Poke toggles inputs; wires and outputs recolor immediately |
-| M7 | Persistence | Save/load round-trips a circuit; undo/redo works across all edits |
+| M7a | Save/Open | Versioned .logicbench.json round-trips components, wires and input values |\n| M7b | Undo/redo | Undo/redo works across all schematic edits |
 | M8 | Polish | Input-count attribute, variable-input rendering, SVG export, then flip-flops |
 
 ## 10. Decisions log
@@ -166,3 +167,6 @@ Nets are NOT stored; they are rebuilt on load. Persistence is deferred to M7.
 - M6 rebuilds a fresh engine Circuit and settles it after each schematic mutation or input change. The previous settled gate-output snapshot seeds the fresh simulator to preserve feedback-latch hold state; ordinary engine startup still defaults gate outputs to X.
 - Input switch state is retained per component in Schematic (default LOW), survives rebuilds, and Simulate > Reset clears every input.
 - Live wire and pin indicators use ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255). X is blue; selected wires use a translucent orange halo.
+
+- M7a stores only component placement/facing, input HIGH flags and geometric wire segments in version 1 `.logicbench.json`; netlists and simulation snapshots are rebuilt after load.
+- The Schematic modification counter advances once for each successful document mutation and is used by the UI to track the last saved revision.
