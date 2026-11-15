@@ -167,8 +167,9 @@ from the components and wire geometry after loading.
   to the old connection points instead of stretching existing wires. Old wires
   remain as stubs. Links use orthogonal grid routing that avoids every other wire
   and pin coordinate; only the old and new pin endpoints may touch existing geometry.
-  The larger displacement axis is preferred first (horizontal on ties), but routes
-  detour around occupied points to prevent accidental nets.
+  If the destination is already on a wire or another pin, no extra link is added.
+  The larger displacement axis is preferred first (horizontal on ties), with detours
+  around occupied points to prevent accidental nets.
 
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)

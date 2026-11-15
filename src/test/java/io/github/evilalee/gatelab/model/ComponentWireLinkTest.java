@@ -93,7 +93,7 @@ class ComponentWireLinkTest {
     }
 
     @Test
-    void pinTouchingTheInteriorOfAStationaryWireGetsAConnectingLink() {
+    void movingOntoTheSameStationaryWireDoesNotAddAnotherLink() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent input = schematic.add("input", 0, -10, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
@@ -102,12 +102,9 @@ class ComponentWireLinkTest {
 
         schematic.moveSelection(Set.of(gate.id()), Set.of(), 20, 0);
 
-        WireSegment link = new WireSegment(70, -10, 90, -10);
-        assertTrue(schematic.wires().contains(link),
-                "the T-connected pin must receive a link even though it touched the wire interior");
-        assertConnected(schematic,
-                pin(schematic, input, "out"),
-                pin(schematic, gate, "in0"));
+        assertEquals(List.of(trunk), schematic.wires(),
+                "the moved pin already lands on the existing net; no duplicate stud is needed");
+        assertConnected(schematic, pin(schematic, input, "out"), pin(schematic, gate, "in0"));
     }
 
     @Test
@@ -170,8 +167,11 @@ class ComponentWireLinkTest {
                 pin(schematic, fixture.output(), "in0"));
         assertEquals(outputBefore, pin(schematic, fixture.gate(), "out"),
                 "the output pin is the fixed origin");
-        assertEquals(wiresBefore + 3, schematic.wires().size(),
-                "two moved input pins add their deduplicated L paths; the fixed output adds none");
+        assertTrue(schematic.wires().size() > wiresBefore,
+                "the moved inputs receive safe links; the fixed output pin adds none");
+        assertNotConnected(schematic,
+                pin(schematic, fixture.gate(), "in0"),
+                pin(schematic, fixture.gate(), "in1"));
     }
 
     @Test
@@ -231,8 +231,13 @@ class ComponentWireLinkTest {
 
         schematic.setFacing(List.of(first.id(), second.id()), Facing.NORTH);
 
-        assertEquals(wiresBefore + 8, schematic.wires().size(),
-                "both inputs on both selected gates move and receive two-segment links");
+        assertTrue(schematic.wires().size() > wiresBefore,
+                "all moved pins receive safe links, detouring where another route occupies a point");
+        for (PlacedComponent component : List.of(first, second)) {
+            assertNotConnected(schematic,
+                    pin(schematic, component, "in0"),
+                    pin(schematic, component, "in1"));
+        }
         for (PlacedComponent component : List.of(first, second)) {
             for (String pinId : List.of("in0", "in1")) {
                 Connectivity.PinPosition currentPin = pin(schematic, component, pinId);
