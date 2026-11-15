@@ -20,6 +20,7 @@ public final class Schematic {
     private final List<WireSegment> wires = new ArrayList<>();
     private final Map<String, Boolean> inputValues = new HashMap<>();
     private final List<Runnable> changeListeners = new ArrayList<>();
+    private long modificationCount;
     private long nextComponentNumber = 1;
 
     public Schematic(Collection<GateDef> definitions) {
@@ -102,6 +103,11 @@ public final class Schematic {
     /** Returns an immutable snapshot in paint order (oldest first, newest on top). */
     public List<PlacedComponent> components() {
         return List.copyOf(components);
+    }
+
+    /** Number of successful schematic mutations; queries never change this value. */
+    public long modificationCount() {
+        return modificationCount;
     }
 
     public void addChangeListener(Runnable listener) {
@@ -351,6 +357,7 @@ public final class Schematic {
     }
 
     private void notifyChanged() {
+        modificationCount++;
         for (Runnable listener : List.copyOf(changeListeners)) {
             listener.run();
         }
