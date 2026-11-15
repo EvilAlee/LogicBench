@@ -76,38 +76,30 @@ class ComponentWireFollowSafetyTest {
     @Test
     void failedCandidateSearchFallsBackWithoutAddingAnyLinks() {
         Schematic schematic = new Schematic(DEFINITIONS);
-        PlacedComponent input = schematic.add("input", 0, 10, Facing.EAST);
+        PlacedComponent input = schematic.add("input", 0, -10, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
-        schematic.addWire(0, 10, 100, 10);
-        List<PlacedComponent> beforeComponents = schematic.components();
-        List<WireSegment> beforeWires = schematic.wires();
-        Map<PinKey, Integer> beforeNets = netIds(schematic);
+        schematic.addWire(0, -10, 70, -10);
 
-        // Put stationary pins at every possible candidate-route grid point.
-        // The original input wire and all moved gate-pin destinations are exempt.
-        Set<Connectivity.Point> exempt = new HashSet<>();
-        for (int x = 80; x <= 100; x += 10) {
-            exempt.add(new Connectivity.Point(x, 10));
-        }
-        for (Connectivity.Point point : List.of(
-                new Connectivity.Point(100, 10),
-                new Connectivity.Point(140, 10),
-                new Connectivity.Point(140, 20),
-                new Connectivity.Point(140, 30))) {
-            exempt.add(point);
-        }
-        for (int x = 80; x <= 160; x += 10) {
-            for (int y = -20; y <= 70; y += 10) {
+        // Occupy every grid point that any of the bounded L/Z candidates can use.
+        // Do not occupy the original source-net stub, existing pins, or new pins.
+        Set<Connectivity.Point> exempt = Set.of(
+                new Connectivity.Point(70, -10),
+                new Connectivity.Point(70, 10),
+                new Connectivity.Point(100, 0),
+                new Connectivity.Point(110, 10),
+                new Connectivity.Point(110, 30));
+        for (int x = 50; x <= 130; x += 10) {
+            for (int y = -50; y <= 50; y += 10) {
                 Connectivity.Point point = new Connectivity.Point(x, y);
-                if (!exempt.contains(point)) {
+                boolean onOriginalSourceStub = y == -10 && x <= 70;
+                if (!exempt.contains(point) && !onOriginalSourceStub) {
                     schematic.add("output", point.x(), point.y(), Facing.EAST);
                 }
             }
         }
-        beforeComponents = schematic.components();
-        beforeWires = schematic.wires();
-        beforeNets = netIds(schematic);
 
+        List<WireSegment> beforeWires = schematic.wires();
+        Map<PinKey, Integer> beforeNets = netIds(schematic);
         Schematic.MoveResult result = schematic.moveSelection(
                 Set.of(gate.id()), Set.of(), 40, 20);
 
@@ -119,7 +111,7 @@ class ComponentWireFollowSafetyTest {
                 "the safe no-link fallback still commits a move when the destination geometry is safe");
         assertNoNewShorts(schematic, beforeNets);
         assertFalse(isConnected(schematic,
-                new PinKey(input.id(), "out"), new PinKey(gate.id(), "in1")),
+                new PinKey(input.id(), "out"), new PinKey(gate.id(), "in0")),
                 "the fallback leaves the original wire behind rather than connecting via an unsafe route");
     }
 
@@ -192,8 +184,8 @@ class ComponentWireFollowSafetyTest {
         PlacedComponent inputB = schematic.add("input", 0, 10, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
         PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
-        schematic.addWire(0, -10, 100, -10);
-        schematic.addWire(0, 10, 100, 10);
+        schematic.addWire(0, -10, 70, -10);
+        schematic.addWire(0, 10, 70, 10);
         schematic.addWire(100, 0, 100, -40);
         schematic.addWire(100, -40, 180, -40);
         schematic.addWire(180, -40, 180, 0);
