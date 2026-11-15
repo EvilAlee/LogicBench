@@ -28,6 +28,8 @@ import java.awt.Dimension;
 import java.awt.Insets;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.Arrays;
 
 /** Swing application entry point for the LogicBench desktop window. */
@@ -190,13 +192,12 @@ public final class Main {
         tree.expandPath(new TreePath(pins.getPath()));
         tree.addTreeSelectionListener(event -> {
             TreePath path = tree.getSelectionPath();
-            if (path == null) {
-                return;
-            }
-            Object node = path.getLastPathComponent();
-            if (node instanceof DefaultMutableTreeNode treeNode
-                    && treeNode.getUserObject() instanceof ComponentTreeItem item) {
-                canvas.enterAddMode(item.typeId());
+            enterAddModeForPath(canvas, path);
+        });
+        tree.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                enterAddModeForPath(canvas, tree.getPathForLocation(event.getX(), event.getY()));
             }
         });
         tree.setTransferHandler(new TransferHandler() {
@@ -236,6 +237,17 @@ public final class Main {
         splitPane.setBorder(BorderFactory.createEmptyBorder());
         splitPane.setMinimumSize(new Dimension(230, 200));
         return splitPane;
+    }
+
+    private static void enterAddModeForPath(CanvasPanel canvas, TreePath path) {
+        if (path == null) {
+            return;
+        }
+        Object node = path.getLastPathComponent();
+        if (node instanceof DefaultMutableTreeNode treeNode
+                && treeNode.getUserObject() instanceof ComponentTreeItem item) {
+            canvas.enterAddMode(item.typeId());
+        }
     }
 
     private static String treeLabel(String id) {

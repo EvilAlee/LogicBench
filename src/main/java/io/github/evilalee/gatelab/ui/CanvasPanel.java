@@ -155,7 +155,12 @@ public final class CanvasPanel extends JPanel {
         if (galleryMode) {
             return;
         }
-        previewTypeId = gateLibrary.get(typeId).id();
+        String resolvedTypeId = gateLibrary.get(typeId).id();
+        if (activeTool == Tool.ADD && resolvedTypeId.equals(previewTypeId)) {
+            requestFocusInWindow();
+            return;
+        }
+        previewTypeId = resolvedTypeId;
         previewFacing = Facing.EAST;
         selectedIds.clear();
         notifySelectionChanged();
