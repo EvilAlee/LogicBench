@@ -2,6 +2,8 @@ package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.WireSegment;
+import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.model.Facing;
 import org.junit.jupiter.api.Test;
 
 import java.awt.Point;
@@ -49,6 +51,29 @@ class CanvasWiringTest {
         assertEquals(List.of(expected.get(1)), canvas.schematic().wires(),
                 "deleting a selected wire leaves the other unselected segment intact");
         assertTrue(canvas.selectedWires().isEmpty());
+    }
+
+    @Test
+    void pokeTogglesOnlyInputsAndIgnoresOtherComponents() {
+        CanvasPanel canvas = new CanvasPanel();
+        canvas.setSize(900, 700);
+        var input = canvas.schematic().add("input", 100, 100, Facing.EAST);
+        canvas.schematic().add("and", 200, 100, Facing.EAST);
+        canvas.setPokeMode();
+
+        Point inputCenter = screen(canvas, 90, 100);
+        press(canvas, inputCenter);
+        release(canvas, inputCenter);
+        assertEquals(Value.ONE, canvas.simulationResult().inputValues().get(input.id()));
+
+        Point gateCenter = screen(canvas, 185, 100);
+        press(canvas, gateCenter);
+        release(canvas, gateCenter);
+        assertEquals(Value.ONE, canvas.simulationResult().inputValues().get(input.id()));
+
+        press(canvas, inputCenter);
+        release(canvas, inputCenter);
+        assertEquals(Value.ZERO, canvas.simulationResult().inputValues().get(input.id()));
     }
 
     @Test

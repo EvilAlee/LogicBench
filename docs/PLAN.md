@@ -162,3 +162,7 @@ Nets are NOT stored; they are rebuilt on load. Persistence is deferred to M7.
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)
 - Flip-flops: built-in components or built from gates only?
+
+- M6 rebuilds a fresh engine Circuit and settles it after each schematic mutation or input change. The previous settled gate-output snapshot seeds the fresh simulator to preserve feedback-latch hold state; ordinary engine startup still defaults gate outputs to X.
+- Input switch state is retained per component in Schematic (default LOW), survives rebuilds, and Simulate > Reset clears every input.
+- Live wire and pin indicators use ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255). X is blue; selected wires use a translucent orange halo.

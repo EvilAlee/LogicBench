@@ -8,6 +8,9 @@ import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
+import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
 
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
@@ -80,6 +83,8 @@ public final class CanvasPanel extends JPanel {
     private final GateLibrary gateLibrary;
     private final GateRenderer gateRenderer;
     private final Schematic schematic;
+    private SimulationResult simulationResult;
+    private long simulationRecomputeCount;
     private final Set<String> selectedIds = new LinkedHashSet<>();
     private final Set<WireSegment> selectedWires = new LinkedHashSet<>();
 
@@ -134,6 +139,8 @@ public final class CanvasPanel extends JPanel {
         this.gateLibrary = GateLibrary.load();
         this.gateRenderer = new GateRenderer(gateLibrary);
         this.schematic = new Schematic(gateLibrary.all());
+        this.schematic.addChangeListener(this::recomputeSimulation);
+        recomputeSimulation();
         this.galleryFirstOriginY = galleryMode ? galleryFirstOriginY(gateLibrary.all()) : 0;
         this.galleryRowPitch = galleryMode ? galleryRowPitch(gateLibrary.all()) : 0;
 
@@ -167,6 +174,20 @@ public final class CanvasPanel extends JPanel {
 
     public Schematic schematic() {
         return schematic;
+    }
+
+    public SimulationResult simulationResult() { return simulationResult; }
+
+    long simulationRecomputeCount() { return simulationRecomputeCount; }
+
+    private void recomputeSimulation() {
+        simulationResult = SchematicCompiler.compileAndSettle(schematic, simulationResult);
+        simulationRecomputeCount++;
+        repaint();
+    }
+
+    public void resetInputs() {
+        if (!schematic.resetInputs()) recomputeSimulation();
     }
 
     public List<WireSegment> selectedWires() {
@@ -220,7 +241,7 @@ public final class CanvasPanel extends JPanel {
         repaintIfPresent(oldTransientBounds);
     }
 
-    /** Selects the inert Poke tool; no input interaction is implemented in M4. */
+    /** Selects the input-poking tool. */
     public void setPokeMode() {
         Rectangle oldTransientBounds = union(
                 previewScreenBounds(), gestureVisualScreenBounds());
@@ -363,6 +384,8 @@ public final class CanvasPanel extends JPanel {
                     repaintUnion(oldPreviewBounds, previewScreenBounds());
                 } else if (activeTool == Tool.EDIT) {
                     beginEditGesture(event);
+                } else if (activeTool == Tool.POKE) {
+                    pokeAt(event.getPoint());
                 }
             }
 
@@ -466,6 +489,13 @@ public final class CanvasPanel extends JPanel {
         addMouseListener(mouseControls);
         addMouseMotionListener(mouseControls);
         addMouseWheelListener(mouseControls);
+    }
+
+    private void pokeAt(Point screenPoint) {
+        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        PlacedComponent hit = schematic.componentAt(
+                (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
+        if (hit != null && "input".equals(hit.typeId())) schematic.toggleInput(hit.id());
     }
 
     private void beginEditGesture(MouseEvent event) {
@@ -961,7 +991,7 @@ public final class CanvasPanel extends JPanel {
                 WireSegment rendered = moving
                         ? translateWire(wire, moveDeltaX, moveDeltaY) : wire;
                 if (screenClip.intersects(wireSegmentScreenBounds(rendered, 5))) {
-                    paintWireSegment(worldGraphics, rendered, selected);
+                    paintWireSegment(worldGraphics, rendered, simulationResult.valueOf(wire), selected);
                 }
             }
 
@@ -989,12 +1019,13 @@ public final class CanvasPanel extends JPanel {
                     paintSelectionOutline(worldGraphics, definition,
                             component.facing(), x, y);
                 }
+                Value signal = componentSignal(component);
+                if (signal != null) paintSignalDigit(screenGraphics, definition,
+                        component.facing(), x, y, signal);
             }
 
-            Connectivity.Result topology = Connectivity.analyze(
-                    schematic.pinPositions(), schematic.wires());
             worldGraphics.setColor(Color.BLACK);
-            for (Connectivity.Point junction : topology.junctions()) {
+            for (Connectivity.Point junction : simulationResult.topology().junctions()) {
                 Point2D.Double screen = transform.worldToScreen(junction.x(), junction.y());
                 if (screenClip.contains(screen.x, screen.y)) {
                     worldGraphics.fillOval(junction.x() - 3, junction.y() - 3, 6, 6);
@@ -1035,25 +1066,65 @@ public final class CanvasPanel extends JPanel {
         } finally {
             worldGraphics.dispose();
         }
+        if (simulationResult.oscillating()) {
+            Graphics2D status = (Graphics2D) screenGraphics.create();
+            try {
+                status.setColor(Color.RED);
+                status.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+                status.drawString("Oscillation detected", 12, 22);
+            } finally {
+                status.dispose();
+            }
+        }
     }
 
-    private void paintWireSegment(
-            Graphics2D graphics, WireSegment wire, boolean selected) {
+    private Value componentSignal(PlacedComponent component) {
+        return switch (component.typeId()) {
+            case "input" -> simulationResult.inputValues().getOrDefault(component.id(), Value.ZERO);
+            case "output" -> simulationResult.outputValues().getOrDefault(component.id(), Value.X);
+            default -> null;
+        };
+    }
+
+    private void paintSignalDigit(Graphics2D graphics, GateDef definition, Facing facing,
+            int originX, int originY, Value value) {
+        GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+        Point2D.Double center = transform.worldToScreen(
+                originX + bounds.x() + bounds.width() / 2.0,
+                originY + bounds.y() + bounds.height() / 2.0);
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            String digit = value == Value.X ? "x" : value == Value.ONE ? "1" : "0";
+            g2.setColor(valueColor(value));
+            g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+            java.awt.FontMetrics metrics = g2.getFontMetrics();
+            float left = (float) (center.x - metrics.stringWidth(digit) / 2.0);
+            float baseline = (float) (center.y
+                    + (metrics.getAscent() - metrics.getDescent()) / 2.0);
+            g2.drawString(digit, left, baseline);
+        } finally { g2.dispose(); }
+    }
+
+    private static Color valueColor(Value value) {
+        return switch (value) {
+            case ONE -> new Color(0, 210, 0);
+            case ZERO -> new Color(0, 100, 0);
+            case X -> new Color(0, 0, 255);
+        };
+    }
+
+    private void paintWireSegment(Graphics2D graphics, WireSegment wire, Value value, boolean selected) {
         Graphics2D g2 = (Graphics2D) graphics.create();
         try {
             if (selected) {
-                g2.setStroke(new BasicStroke(5.0f,
-                        BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g2.setColor(new Color(36, 112, 214));
+                g2.setStroke(new BasicStroke(9.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.setColor(new Color(255, 140, 0, 115));
                 g2.drawLine(wire.x1(), wire.y1(), wire.x2(), wire.y2());
             }
-            g2.setStroke(new BasicStroke(2.0f,
-                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g2.setColor(Color.BLACK);
+            g2.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.setColor(valueColor(value));
             g2.drawLine(wire.x1(), wire.y1(), wire.x2(), wire.y2());
-        } finally {
-            g2.dispose();
-        }
+        } finally { g2.dispose(); }
     }
 
     private void paintSelectionOutline(

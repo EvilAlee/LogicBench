@@ -39,6 +39,7 @@ public final class Simulator {
     private final List<NetState> nets = new ArrayList<>();
     private final Map<Pin, Value> gateOutputValues = new HashMap<>();
     private final Set<Gate> scheduledGates = new LinkedHashSet<>();
+    private Map<String, Value> initialGateOutputValues = Map.of();
 
     private long builtRevision = Long.MIN_VALUE;
     private boolean oscillating;
@@ -63,6 +64,28 @@ public final class Simulator {
         long scaledLimit = gateCount * TICKS_PER_GATE + TICK_LIMIT_OVERHEAD;
         return (int) Math.min(Integer.MAX_VALUE,
                 Math.max((long) DEFAULT_TICK_LIMIT, scaledLimit));
+    }
+
+    /** Restores prior settled outputs in a fresh schematic compile; normal startup remains X. */
+    public void setInitialGateOutputValues(Map<String, Value> values) {
+        if (builtRevision != Long.MIN_VALUE) {
+            throw new IllegalStateException("initial gate values must be supplied before topology is built");
+        }
+        Objects.requireNonNull(values, "values");
+        Map<String, Value> copy = new LinkedHashMap<>();
+        values.forEach((id, value) -> copy.put(
+                Objects.requireNonNull(id, "gate id"),
+                Objects.requireNonNull(value, "gate value")));
+        initialGateOutputValues = Map.copyOf(copy);
+    }
+
+    public Value getGateOutputValue(Gate gate) {
+        Objects.requireNonNull(gate, "gate");
+        if (!circuit.contains(gate)) {
+            throw new IllegalArgumentException("gate is not part of this circuit: " + gate.id());
+        }
+        ensureTopology();
+        return gateOutputValues.getOrDefault(gate.output(), Value.X);
     }
 
     public void setInputValue(InputPin input, Value value) {
@@ -196,7 +219,9 @@ public final class Simulator {
                 scheduledGates.add(gate);
                 activeGateOutputs.add(gate.output());
                 // A topology rebuild must not invent a concrete power-up state.
-                gateOutputValues.put(gate.output(), Value.X);
+                gateOutputValues.put(
+                        gate.output(),
+                        initialGateOutputValues.getOrDefault(gate.id(), Value.X));
             }
         }
         gateOutputValues.keySet().retainAll(activeGateOutputs);
