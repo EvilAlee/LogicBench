@@ -1,0 +1,1 @@
+Wires follow moves when a safe route exists; otherwise they stay behind.

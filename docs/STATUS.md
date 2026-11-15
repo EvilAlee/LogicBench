@@ -9,6 +9,9 @@
 - M6: live schematic simulation, Poke tool, value-colored wires, I/O digits and oscillation reporting
 
 ## In progress
+- M8b-v2: per-gesture validated wire-follow links with no-short fallback
+  - Branch: m8b-v2
+  - PR pending review
 - M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
   - Branch: m7b-undo
   - PR pending review
@@ -24,7 +27,8 @@
 - M6 rebuilds a fresh Circuit and Simulator on changes; prior gate drivers seed fresh feedback latch state.
 - Input state is stored per input in Schematic; default LOW.
 - ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255); selected wires use an orange translucent halo.
-- Component origin, rotation, 10-unit grid, and M5 wire independence remain unchanged.
+- Component origin, rotation, 10-unit grid, and geometric wire representation remain unchanged.
+- M8b-v2 validates every generated move/rotation link against the complete pre-gesture pin-net partition; if no safe route exists or any prior connection is lost, it discards all generated links, keeps stationary wires in place, and reports "Some wires could not follow".
 - M7b history snapshots contain only placed components and geometric wire segments; input poke values are not history state.
 - Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
 - New/Open clear history; Save leaves it intact.

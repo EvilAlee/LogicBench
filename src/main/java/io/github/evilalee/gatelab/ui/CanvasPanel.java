@@ -119,6 +119,7 @@ public final class CanvasPanel extends JPanel {
     private int previewY;
     private Consumer<List<PlacedComponent>> selectionListener = ignored -> { };
     private Consumer<Tool> toolModeListener = ignored -> { };
+    private Consumer<String> statusMessageListener = ignored -> { };
 
     private Gesture gesture = Gesture.NONE;
     private Point gestureStartScreen;
@@ -295,6 +296,10 @@ public final class CanvasPanel extends JPanel {
     public void setToolModeListener(Consumer<Tool> listener) {
         toolModeListener = listener == null ? ignored -> { } : listener;
         toolModeListener.accept(activeTool);
+    }
+
+    public void setStatusMessageListener(Consumer<String> listener) {
+        statusMessageListener = listener == null ? ignored -> { } : listener;
     }
 
     /** Enters repeated-click placement mode for a catalogue type. */
@@ -830,13 +835,12 @@ public final class CanvasPanel extends JPanel {
         if (gesture == Gesture.MOVE_SELECTION && gestureMoved) {
             int deltaX = snapToGrid(pointerWorldX - gestureStartWorldX);
             int deltaY = snapToGrid(pointerWorldY - gestureStartWorldY);
-            for (PlacedComponent starting : moveStartComponents.values()) {
-                schematic.move(starting.id(), starting.x() + deltaX, starting.y() + deltaY);
-            }
-            if (!moveStartWires.isEmpty()) {
-                selectedWires.clear();
-                selectedWires.addAll(schematic.moveWires(moveStartWires, deltaX, deltaY));
-            }
+            Schematic.MoveResult result = schematic.moveSelection(
+                    moveStartComponents.keySet(), moveStartWires, deltaX, deltaY);
+            selectedWires.clear();
+            selectedWires.addAll(result.movedWires());
+            statusMessageListener.accept(
+                    result.linksFollowed() ? "" : "Some wires could not follow");
             notifySelectionChanged();
             commitHistoryGesture();
         } else if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
@@ -903,9 +907,8 @@ public final class CanvasPanel extends JPanel {
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
         beginHistoryGesture();
-        for (PlacedComponent component : selectedComponents()) {
-            schematic.setFacing(component.id(), facing);
-        }
+        boolean linksFollowed = schematic.setFacing(selectedIds, facing);
+        statusMessageListener.accept(linksFollowed ? "" : "Some wires could not follow");
         commitHistoryGesture();
         notifySelectionChanged();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());
