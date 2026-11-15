@@ -165,8 +165,10 @@ from the components and wire geometry after loading.
 - M5 wire drawing uses a simple axis-first L route, not A* routing.
 - When components move or rotate, links are added from changed pin locations back
   to the old connection points instead of stretching existing wires. Old wires
-  remain as stubs. The link's first axis is the one with the larger absolute
-  displacement (horizontal first on ties); the second leg completes the L.
+  remain as stubs. Links use orthogonal grid routing that avoids every other wire
+  and pin coordinate; only the old and new pin endpoints may touch existing geometry.
+  The larger displacement axis is preferred first (horizontal on ties), but routes
+  detour around occupied points to prevent accidental nets.
 
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)

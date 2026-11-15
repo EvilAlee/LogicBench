@@ -535,24 +535,179 @@ public final class Schematic {
                 && point.y() >= wire.y1() && point.y() <= wire.y2();
     }
 
+    /**
+     * Links an old attachment point to its moved pin without crossing another net.
+     * Every occupied grid point is an obstacle because a route corner there would
+     * become an electrical junction in Connectivity.analyze.
+     */
     private void addConnectingPath(
             Connectivity.PinPosition oldPin, Connectivity.PinPosition newPin) {
-        int oldX = oldPin.x();
-        int oldY = oldPin.y();
-        int newX = newPin.x();
-        int newY = newPin.y();
-        long deltaX = Math.abs((long) newX - oldX);
-        long deltaY = Math.abs((long) newY - oldY);
-
-        if (deltaX == 0 || deltaY == 0) {
-            addWireIfAbsent(oldX, oldY, newX, newY);
-        } else if (deltaX >= deltaY) {
-            addWireIfAbsent(oldX, oldY, newX, oldY);
-            addWireIfAbsent(newX, oldY, newX, newY);
-        } else {
-            addWireIfAbsent(oldX, oldY, oldX, newY);
-            addWireIfAbsent(oldX, newY, newX, newY);
+        Connectivity.Point start = new Connectivity.Point(oldPin.x(), oldPin.y());
+        Connectivity.Point destination = new Connectivity.Point(newPin.x(), newPin.y());
+        if (hasAttachmentAt(destination, newPin)) {
+            // The destination already joins existing geometry; another link could short nets.
+            return;
         }
+        List<Connectivity.Point> route = findSafeOrthogonalRoute(start, destination);
+        for (WireSegment segment : compressRoute(route)) {
+            addWireIfAbsent(segment.x1(), segment.y1(), segment.x2(), segment.y2());
+        }
+    }
+
+    private boolean hasAttachmentAt(
+            Connectivity.Point point, Connectivity.PinPosition movingPin) {
+        if (wires.stream().anyMatch(wire -> contains(wire, point))) {
+            return true;
+        }
+        return pinPositions().stream().anyMatch(pin ->
+                pin.x() == point.x() && pin.y() == point.y()
+                        && !(pin.componentId().equals(movingPin.componentId())
+                        && pin.pinId().equals(movingPin.pinId())));
+    }
+
+    private List<Connectivity.Point> findSafeOrthogonalRoute(
+            Connectivity.Point start, Connectivity.Point destination) {
+        Set<Connectivity.Point> blocked = new HashSet<>();
+        for (WireSegment wire : wires) {
+            addWireGridPoints(wire, blocked);
+        }
+        for (Connectivity.PinPosition pin : pinPositions()) {
+            blocked.add(new Connectivity.Point(pin.x(), pin.y()));
+        }
+
+        // The old and new pin are the only permitted contacts with existing geometry.
+        blocked.remove(start);
+        blocked.remove(destination);
+
+        long minX = Math.min(start.x(), destination.x());
+        long maxX = Math.max(start.x(), destination.x());
+        long minY = Math.min(start.y(), destination.y());
+        long maxY = Math.max(start.y(), destination.y());
+        for (Connectivity.Point point : blocked) {
+            minX = Math.min(minX, point.x());
+            maxX = Math.max(maxX, point.x());
+            minY = Math.min(minY, point.y());
+            maxY = Math.max(maxY, point.y());
+        }
+
+        int spacing = PlacedComponent.GRID_SPACING;
+        minX -= spacing;
+        maxX += spacing;
+        minY -= spacing;
+        maxY += spacing;
+
+        int[][] directions = preferredRouteDirections(start, destination);
+        ArrayDeque<Connectivity.Point> pending = new ArrayDeque<>();
+        Map<Connectivity.Point, Connectivity.Point> previous = new HashMap<>();
+        pending.addLast(start);
+        previous.put(start, null);
+
+        while (!pending.isEmpty() && !previous.containsKey(destination)) {
+            Connectivity.Point current = pending.removeFirst();
+            for (int[] direction : directions) {
+                long nextX = (long) current.x() + (long) direction[0] * spacing;
+                long nextY = (long) current.y() + (long) direction[1] * spacing;
+                if (nextX < minX || nextX > maxX || nextY < minY || nextY > maxY
+                        || nextX < Integer.MIN_VALUE || nextX > Integer.MAX_VALUE
+                        || nextY < Integer.MIN_VALUE || nextY > Integer.MAX_VALUE) {
+                    continue;
+                }
+
+                Connectivity.Point next = new Connectivity.Point((int) nextX, (int) nextY);
+                if (blocked.contains(next) || previous.containsKey(next)) {
+                    continue;
+                }
+                previous.put(next, current);
+                pending.addLast(next);
+            }
+        }
+
+        if (!previous.containsKey(destination)) {
+            // Never create an accidental short just to force a visual connection.
+            return List.of();
+        }
+
+        List<Connectivity.Point> reversed = new ArrayList<>();
+        for (Connectivity.Point point = destination; point != null; point = previous.get(point)) {
+            reversed.add(point);
+        }
+        List<Connectivity.Point> route = new ArrayList<>(reversed.size());
+        for (int index = reversed.size() - 1; index >= 0; index--) {
+            route.add(reversed.get(index));
+        }
+        return List.copyOf(route);
+    }
+
+    private static void addWireGridPoints(
+            WireSegment wire, Set<Connectivity.Point> blocked) {
+        int spacing = PlacedComponent.GRID_SPACING;
+        if (wire.isHorizontal()) {
+            for (long x = wire.x1(); x <= wire.x2(); x += spacing) {
+                blocked.add(new Connectivity.Point((int) x, wire.y1()));
+            }
+        } else {
+            for (long y = wire.y1(); y <= wire.y2(); y += spacing) {
+                blocked.add(new Connectivity.Point(wire.x1(), (int) y));
+            }
+        }
+    }
+
+    private static int[][] preferredRouteDirections(
+            Connectivity.Point start, Connectivity.Point destination) {
+        int towardX = Integer.compare(destination.x(), start.x());
+        int towardY = Integer.compare(destination.y(), start.y());
+        int preferredX = towardX == 0 ? 1 : towardX;
+        int preferredY = towardY == 0 ? 1 : towardY;
+        long deltaX = Math.abs((long) destination.x() - start.x());
+        long deltaY = Math.abs((long) destination.y() - start.y());
+
+        List<int[]> directions = new ArrayList<>(4);
+        if (deltaX >= deltaY) {
+            addDirection(directions, preferredX, 0);
+            addDirection(directions, 0, preferredY);
+            addDirection(directions, -preferredX, 0);
+            addDirection(directions, 0, -preferredY);
+        } else {
+            addDirection(directions, 0, preferredY);
+            addDirection(directions, preferredX, 0);
+            addDirection(directions, 0, -preferredY);
+            addDirection(directions, -preferredX, 0);
+        }
+        return directions.toArray(int[][]::new);
+    }
+
+    private static void addDirection(List<int[]> directions, int deltaX, int deltaY) {
+        directions.add(new int[]{deltaX, deltaY});
+    }
+
+    private static List<WireSegment> compressRoute(List<Connectivity.Point> route) {
+        if (route.size() < 2) {
+            return List.of();
+        }
+
+        List<WireSegment> segments = new ArrayList<>();
+        Connectivity.Point segmentStart = route.getFirst();
+        Connectivity.Point previous = route.get(1);
+        int directionX = Integer.compare(previous.x(), segmentStart.x());
+        int directionY = Integer.compare(previous.y(), segmentStart.y());
+
+        for (int index = 2; index < route.size(); index++) {
+            Connectivity.Point current = route.get(index);
+            int nextDirectionX = Integer.compare(current.x(), previous.x());
+            int nextDirectionY = Integer.compare(current.y(), previous.y());
+            if (nextDirectionX != directionX || nextDirectionY != directionY) {
+                segments.add(new WireSegment(
+                        segmentStart.x(), segmentStart.y(), previous.x(), previous.y()));
+                segmentStart = previous;
+                directionX = nextDirectionX;
+                directionY = nextDirectionY;
+            }
+            previous = current;
+        }
+
+        segments.add(new WireSegment(
+                segmentStart.x(), segmentStart.y(), previous.x(), previous.y()));
+        return List.copyOf(segments);
     }
 
     private boolean addWireIfAbsent(int x1, int y1, int x2, int y2) {

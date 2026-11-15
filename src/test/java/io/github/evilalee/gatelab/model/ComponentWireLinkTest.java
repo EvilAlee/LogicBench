@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ComponentWireLinkTest {
@@ -44,6 +45,51 @@ class ComponentWireLinkTest {
                     .outputValues().get(fixture.output().id()),
                     "the moved gate must still simulate to the same output");
         }
+    }
+
+    @Test
+    void horizontalMoveDetoursAroundAStationaryPinInsteadOfShortingItsNet() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent input = schematic.add("input", 0, -10, Facing.EAST);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        PlacedComponent unrelatedInput = schematic.add("input", 80, -10, Facing.EAST);
+        connect(schematic, input, "out", gate, "in0");
+
+        schematic.move(gate.id(), 120, 0);
+
+        Connectivity.PinPosition movedPin = pin(schematic, gate, "in0");
+        assertConnected(schematic, pin(schematic, input, "out"), movedPin);
+        assertNotConnected(schematic, movedPin, pin(schematic, unrelatedInput, "out"));
+    }
+
+    @Test
+    void movingPinRoutesAroundAStationaryPinInsteadOfShortingItsNet() {
+        CircuitFixture fixture = completeAndCircuit();
+        Schematic schematic = fixture.schematic();
+        PlacedComponent unrelatedInput = schematic.add("input", 90, -10, Facing.EAST);
+
+        schematic.moveSelection(Set.of(fixture.gate().id()), Set.of(), 20, 10);
+
+        Connectivity.PinPosition movedPin = pin(schematic, fixture.gate(), "in0");
+        Connectivity.PinPosition unrelatedPin = pin(schematic, unrelatedInput, "out");
+        assertConnected(schematic, pin(schematic, fixture.inputA(), "out"), movedPin);
+        assertNotConnected(schematic, movedPin, unrelatedPin);
+    }
+
+    @Test
+    void rotatingPinRoutesAroundStationaryPinAndOutputInsteadOfCreatingShorts() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent input = schematic.add("input", 0, -10, Facing.EAST);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        PlacedComponent unrelatedInput = schematic.add("input", 120, -10, Facing.EAST);
+        connect(schematic, input, "out", gate, "in0");
+
+        schematic.setFacing(gate.id(), Facing.WEST);
+
+        Connectivity.PinPosition rotatedPin = pin(schematic, gate, "in0");
+        assertConnected(schematic, pin(schematic, input, "out"), rotatedPin);
+        assertNotConnected(schematic, rotatedPin, pin(schematic, unrelatedInput, "out"));
+        assertNotConnected(schematic, rotatedPin, pin(schematic, gate, "out"));
     }
 
     @Test
@@ -274,6 +320,17 @@ class ComponentWireLinkTest {
         assertTrue(topology.nets().stream().anyMatch(net ->
                         net.pins().contains(first) && net.pins().contains(second)),
                 () -> first + " should remain connected to " + second);
+    }
+
+    private static void assertNotConnected(
+            Schematic schematic,
+            Connectivity.PinPosition first,
+            Connectivity.PinPosition second) {
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        assertFalse(topology.nets().stream().anyMatch(net ->
+                        net.pins().contains(first) && net.pins().contains(second)),
+                () -> first + " must not be shorted to " + second);
     }
 
     private record CircuitFixture(
