@@ -82,7 +82,9 @@ public final class CanvasPanel extends JPanel {
     private final boolean galleryMode;
     private final GateLibrary gateLibrary;
     private final GateRenderer gateRenderer;
-    private final Schematic schematic;
+    private Schematic schematic;
+    private final Runnable schematicSimulationListener = this::recomputeSimulation;
+    private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private SimulationResult simulationResult;
     private long simulationRecomputeCount;
     private final Set<String> selectedIds = new LinkedHashSet<>();
@@ -139,7 +141,7 @@ public final class CanvasPanel extends JPanel {
         this.gateLibrary = GateLibrary.load();
         this.gateRenderer = new GateRenderer(gateLibrary);
         this.schematic = new Schematic(gateLibrary.all());
-        this.schematic.addChangeListener(this::recomputeSimulation);
+        this.schematic.addChangeListener(schematicSimulationListener);
         recomputeSimulation();
         this.galleryFirstOriginY = galleryMode ? galleryFirstOriginY(gateLibrary.all()) : 0;
         this.galleryRowPitch = galleryMode ? galleryRowPitch(gateLibrary.all()) : 0;
@@ -174,6 +176,37 @@ public final class CanvasPanel extends JPanel {
 
     public Schematic schematic() {
         return schematic;
+    }
+
+    /** Receives the current and every subsequently installed schematic. */
+    public void setSchematicListener(Consumer<Schematic> listener) {
+        schematicReplacementListener = listener == null ? ignored -> { } : listener;
+        schematicReplacementListener.accept(schematic);
+    }
+
+    /** Installs a fully validated document and resets all transient view/editor state. */
+    public void replaceSchematic(Schematic replacement) {
+        if (galleryMode) {
+            throw new IllegalStateException("the gallery does not own an editable schematic");
+        }
+        Schematic next = java.util.Objects.requireNonNull(replacement, "replacement");
+        schematic.removeChangeListener(schematicSimulationListener);
+        schematic = next;
+        schematic.addChangeListener(schematicSimulationListener);
+
+        selectedIds.clear();
+        selectedWires.clear();
+        previewTypeId = null;
+        activeTool = Tool.EDIT;
+        panning = false;
+        lastPanPoint = null;
+        resetGesture();
+        transform.resetToDefault();
+        simulationResult = null;
+        notifySelectionChanged();
+        toolModeListener.accept(activeTool);
+        schematicReplacementListener.accept(schematic);
+        recomputeSimulation();
     }
 
     public SimulationResult simulationResult() { return simulationResult; }

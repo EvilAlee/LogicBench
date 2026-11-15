@@ -66,6 +66,13 @@ public final class ViewTransform {
         translateY = screenY - anchor.y * scale;
     }
 
+    /** Restores the canvas's initial one-to-one zoom and origin offset. */
+    public void resetToDefault() {
+        scale = 1.0;
+        translateX = 24.0;
+        translateY = 24.0;
+    }
+
     public double scale() {
         return scale;
     }
