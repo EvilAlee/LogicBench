@@ -1,5 +1,7 @@
 package io.github.evilalee.gatelab.sim;
 
+import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
+
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
