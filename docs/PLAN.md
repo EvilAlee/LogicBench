@@ -102,9 +102,28 @@ from the components and wire geometry after loading.
 - Dragging from a pin or wire point draws an L path: the first cursor axis
   chooses the first segment direction, then the other axis reaches the target.
   No A* router is used in M5.
-- Wires are independent of components. Moving a selection moves its selected
-  wires, but moving a component alone does not move wires connected to it
-  (v1 limitation).
+- Wires remain geometric and orthogonal. A committed component move or facing
+  change snapshots the pre-gesture net of every pin. A moved pin attached to
+  stationary geometry tries two L routes (larger axis first, then the other
+  axis) followed by Z routes in both orientations. Each orientation tries
+  eight middle-coordinate offsets in this order: 0, +10, -10, +20, -20, +30,
+  -30, +40; the midpoint is rounded to the nearest 10-unit grid coordinate
+  (half-grid ties round toward the positive coordinate). Each candidate is
+  accepted only when Connectivity proves that no resulting net combines pins
+  from different pre-gesture nets. After all links are tried, every pin pair
+  that was connected through stationary (non-selected) wires before the edit
+  must still be connected. Pins whose only original path uses a selected wire
+  are intentionally excluded from this preservation check because moving that
+  wire is itself an explicit user edit; the full pre-gesture net partition is
+  still used to reject any new short. If any route fails or required
+  connectivity is lost, all generated links for that gesture are discarded
+  and the component move/facing change is committed with the original
+  stationary wires left behind; the UI shows "Some wires could not follow".
+  If the moved pin positions themselves would merge different before nets
+  even with no generated links, reject the movement itself, since committing
+  that M4 fallback would still leave a short. No route state is retained
+  between gestures. Wires selected as part of the move still move with the
+  selection and do not generate automatic links.
 
 ## 8. UI spec (Logisim Evolution layout)
 - Menu bar: File, Edit, Project, Simulate, Window, Help (only implemented items enabled).
@@ -157,8 +176,22 @@ from the components and wire geometry after loading.
   pin positions.
 - A crossing without a pin or segment endpoint is not a connection; T-junctions,
   pins on segment interiors, and collinear overlaps join their nets.
-- M5 uses a simple axis-first L route, not A* routing. Wires do not follow
-  components when those components move; only selected wires move with a selection.
+- Component-follow links are validated per gesture against the complete
+  pre-gesture pin-net partition. Candidate order is larger-axis-first L, the
+  other L, then Z paths in both orientations (eight offsets in order 0, +10,
+  -10, +20, -20, +30, -30, +40, with the midpoint rounded to the grid and
+  half-grid ties toward the positive coordinate). A candidate is rejected if
+  any post-gesture net contains pins from different pre-gesture nets. After
+  routing, every pair connected through stationary (non-selected) wires before
+  the gesture must remain connected; connections relying only on selected
+  wires are intentionally movable. If a pin has no safe route or required
+  connectivity is lost, generated links are discarded and the component edit
+  is committed with stationary wires unchanged; the UI reports
+  "Some wires could not follow". If the destination pin positions themselves
+  would create a short without any generated links, the entire movement is
+  rejected because an M4 no-link move would still be unsafe. This guarantees
+  auto-link generation cannot introduce a new short. Candidate routing uses
+  only current geometry and stores no state between gestures.
 
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)

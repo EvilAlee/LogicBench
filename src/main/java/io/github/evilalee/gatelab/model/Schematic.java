@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.model;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.HashMap;
@@ -15,6 +16,24 @@ import java.util.Optional;
  * engine Circuit: M6 will translate it into an engine graph.
  */
 public final class Schematic {
+    /** Result of one atomic component/wire move gesture. */
+    public record MoveResult(List<WireSegment> movedWires, boolean linksFollowed) {
+        public MoveResult {
+            movedWires = List.copyOf(Objects.requireNonNull(movedWires, "movedWires"));
+        }
+    }
+
+    private record PinKey(String componentId, String pinId) {
+    }
+
+    private record PinMove(
+            Connectivity.PinPosition oldPin,
+            Connectivity.PinPosition newPin) {
+    }
+
+    private record GestureCommit(boolean linksFollowed, boolean committed) {
+    }
+
     private final Map<String, GateDef> definitionsById;
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<WireSegment> wires = new ArrayList<>();
@@ -76,28 +95,416 @@ public final class Schematic {
         return false;
     }
 
-    /** Moves a component's origin. The PlacedComponent constructor enforces grid alignment. */
+    /** Moves one component and safely follows its stationary pin connections. */
     public void move(String id, int x, int y) {
-        int index = indexOf(id);
-        PlacedComponent current = components.get(index);
-        if (current.x() == x && current.y() == y) {
-            return;
-        }
-        components.set(index, new PlacedComponent(
-                current.id(), current.typeId(), x, y, current.facing()));
-        notifyChanged();
+        PlacedComponent current = components.get(indexOf(id));
+        moveSelection(List.of(id), List.of(), x - current.x(), y - current.y());
     }
 
-    /** Changes only the orientation; the origin remains fixed. */
-    public void setFacing(String id, Facing facing) {
-        int index = indexOf(id);
-        PlacedComponent current = components.get(index);
-        if (current.facing() == facing) {
-            return;
+    /**
+     * Moves selected components and wires as one validated gesture. Generated links
+     * are committed only if every candidate preserves the pre-gesture net partition.
+     * On failure the components still move, selected wires still move with them, and
+     * all automatically generated links are discarded.
+     */
+    public MoveResult moveSelection(
+            Collection<String> selectedComponentIds,
+            Collection<WireSegment> selectedWireSegments,
+            int deltaX,
+            int deltaY) {
+        Objects.requireNonNull(selectedComponentIds, "selectedComponentIds");
+        Objects.requireNonNull(selectedWireSegments, "selectedWireSegments");
+        requireGridDelta(deltaX, deltaY);
+
+        Set<String> movingComponentIds = new LinkedHashSet<>(selectedComponentIds);
+        for (String id : movingComponentIds) {
+            indexOf(Objects.requireNonNull(id, "component id"));
         }
-        components.set(index, new PlacedComponent(
-                current.id(), current.typeId(), current.x(), current.y(), facing));
+        Set<WireSegment> movingWires = new LinkedHashSet<>(selectedWireSegments);
+        movingWires.retainAll(wires);
+
+        if (deltaX == 0 && deltaY == 0) {
+            return new MoveResult(List.copyOf(movingWires), true);
+        }
+
+        Map<String, PlacedComponent> replacements = new HashMap<>();
+        for (PlacedComponent current : components) {
+            if (movingComponentIds.contains(current.id())) {
+                replacements.put(current.id(), new PlacedComponent(
+                        current.id(), current.typeId(),
+                        current.x() + deltaX, current.y() + deltaY,
+                        current.facing()));
+            }
+        }
+
+        List<WireSegment> baseWires = new ArrayList<>();
+        for (WireSegment wire : wires) {
+            if (!movingWires.contains(wire)) {
+                baseWires.add(wire);
+            }
+        }
+        List<WireSegment> movingWireOrder = new ArrayList<>(movingWires);
+        List<WireSegment> movedWires = new ArrayList<>();
+        for (WireSegment wire : movingWireOrder) {
+            WireSegment translated = translateWire(wire, deltaX, deltaY);
+            if (!baseWires.contains(translated)) {
+                baseWires.add(translated);
+            }
+            movedWires.add(translated);
+        }
+
+        if (replacements.isEmpty() && movingWires.isEmpty()) {
+            return new MoveResult(List.of(), true);
+        }
+
+        GestureCommit commit = commitValidatedGesture(replacements, movingWires, baseWires);
+        List<WireSegment> selectedAfterCommit = commit.committed()
+                ? movedWires
+                : movingWireOrder;
+        return new MoveResult(
+                List.copyOf(new LinkedHashSet<>(selectedAfterCommit)), commit.linksFollowed());
+    }
+
+    /** Changes one component's facing and safely follows its stationary connections. */
+    public boolean setFacing(String id, Facing facing) {
+        return setFacing(List.of(id), facing);
+    }
+
+    /** Changes the facing of a complete component selection in one validated gesture. */
+    public boolean setFacing(Collection<String> selectedComponentIds, Facing facing) {
+        Objects.requireNonNull(selectedComponentIds, "selectedComponentIds");
+        Objects.requireNonNull(facing, "facing");
+        Set<String> selected = new LinkedHashSet<>(selectedComponentIds);
+        for (String id : selected) {
+            indexOf(Objects.requireNonNull(id, "component id"));
+        }
+
+        Map<String, PlacedComponent> replacements = new HashMap<>();
+        for (PlacedComponent current : components) {
+            if (selected.contains(current.id()) && current.facing() != facing) {
+                replacements.put(current.id(), new PlacedComponent(
+                        current.id(), current.typeId(), current.x(), current.y(), facing));
+            }
+        }
+        if (replacements.isEmpty()) {
+            return true;
+        }
+        return commitValidatedGesture(
+                replacements, Set.of(), List.copyOf(wires)).linksFollowed();
+    }
+
+    /**
+     * Computes the before-net partition before changing geometry, tries every
+     * deterministic orthogonal route, and publishes exactly one schematic change.
+     */
+    private GestureCommit commitValidatedGesture(
+            Map<String, PlacedComponent> replacements,
+            Set<WireSegment> movingWires,
+            List<WireSegment> baseWires) {
+        List<Connectivity.PinPosition> beforePins = pinPositions();
+        List<WireSegment> originalWires = List.copyOf(wires);
+        Map<String, PlacedComponent> originalComponents = new HashMap<>();
+        for (PlacedComponent component : components) {
+            if (replacements.containsKey(component.id())) {
+                originalComponents.put(component.id(), component);
+            }
+        }
+        Map<PinKey, Integer> beforeNetIds = netIds(beforePins, originalWires);
+        // A user-selected wire is an intentional move, not an auto-follow target.
+        // Preserve connections that existed through stationary geometry, while the
+        // full before partition still guards against shorts introduced by the edit.
+        List<WireSegment> stationaryBeforeWires = originalWires.stream()
+                .filter(wire -> !movingWires.contains(wire))
+                .toList();
+        Map<PinKey, Integer> requiredConnectionNetIds =
+                netIds(beforePins, stationaryBeforeWires);
+        List<PinMove> pinsToLink = attachedPinsToFollow(
+                replacements, movingWires, beforePins, originalWires);
+
+        replaceComponents(replacements);
+        wires.clear();
+        wires.addAll(baseWires);
+        List<Connectivity.PinPosition> afterPins = pinPositions();
+
+        if (!hasNoNewShorts(afterPins, wires, beforeNetIds)) {
+            // If the moved pins themselves land on unrelated old nets, even the M4
+            // no-link fallback would be electrically unsafe; reject that placement.
+            replaceComponents(originalComponents);
+            wires.clear();
+            wires.addAll(originalWires);
+            return new GestureCommit(false, false);
+        }
+
+        boolean linksFollowed = true;
+        for (PinMove pinMove : pinsToLink) {
+            boolean accepted = false;
+            for (List<WireSegment> candidate : candidateRoutes(pinMove)) {
+                List<WireSegment> attempted = new ArrayList<>(wires);
+                for (WireSegment segment : candidate) {
+                    if (!attempted.contains(segment)) {
+                        attempted.add(segment);
+                    }
+                }
+                if (hasNoNewShorts(afterPins, attempted, beforeNetIds)) {
+                    wires.clear();
+                    wires.addAll(attempted);
+                    accepted = true;
+                    break;
+                }
+            }
+            if (!accepted) {
+                linksFollowed = false;
+                break;
+            }
+        }
+
+        if (linksFollowed
+                && !preservesBeforeConnections(afterPins, wires, requiredConnectionNetIds)) {
+            linksFollowed = false;
+        }
+        if (!linksFollowed) {
+            // A failed link invalidates the entire gesture's generated routing.
+            wires.clear();
+            wires.addAll(baseWires);
+        }
+
         notifyChanged();
+        return new GestureCommit(linksFollowed, true);
+    }
+
+    private List<PinMove> attachedPinsToFollow(
+            Map<String, PlacedComponent> replacements,
+            Set<WireSegment> movingWires,
+            List<Connectivity.PinPosition> beforePins,
+            List<WireSegment> beforeWires) {
+        Set<String> movingIds = replacements.keySet();
+        Set<Connectivity.Point> stationaryPinPoints = new HashSet<>();
+        for (Connectivity.PinPosition pin : beforePins) {
+            if (!movingIds.contains(pin.componentId())) {
+                stationaryPinPoints.add(new Connectivity.Point(pin.x(), pin.y()));
+            }
+        }
+        List<WireSegment> stationaryWires = beforeWires.stream()
+                .filter(wire -> !movingWires.contains(wire))
+                .toList();
+
+        Map<PinKey, Connectivity.PinPosition> newPins = new HashMap<>();
+        for (PlacedComponent component : components) {
+            PlacedComponent replacement = replacements.get(component.id());
+            newPinsFor(replacement == null ? component : replacement, newPins);
+        }
+
+        List<PinMove> result = new ArrayList<>();
+        for (Connectivity.PinPosition oldPin : beforePins) {
+            if (!movingIds.contains(oldPin.componentId())) {
+                continue;
+            }
+            Connectivity.PinPosition newPin = newPins.get(key(oldPin));
+            if (newPin == null || (oldPin.x() == newPin.x() && oldPin.y() == newPin.y())) {
+                continue;
+            }
+            Connectivity.Point oldPoint = new Connectivity.Point(oldPin.x(), oldPin.y());
+            boolean attachedToWire = stationaryWires.stream()
+                    .anyMatch(wire -> contains(wire, oldPoint));
+            boolean attachedToStationaryPin = stationaryPinPoints.contains(oldPoint);
+            if (attachedToWire || attachedToStationaryPin) {
+                result.add(new PinMove(oldPin, newPin));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private void newPinsFor(
+            PlacedComponent component,
+            Map<PinKey, Connectivity.PinPosition> target) {
+        GateDef definition = requireKnownType(component.typeId());
+        for (int index = 0; index < definition.inputs().size(); index++) {
+            GateGeometry.Offset offset = GateGeometry.pinOffset(
+                    definition, definition.inputs().get(index), component.facing());
+            Connectivity.PinPosition pin = new Connectivity.PinPosition(
+                    component.id(), "in" + index,
+                    component.x() + offset.x(), component.y() + offset.y());
+            target.put(key(pin), pin);
+        }
+        if (definition.output() != null) {
+            GateGeometry.Offset offset = GateGeometry.outputOffset(definition, component.facing());
+            Connectivity.PinPosition pin = new Connectivity.PinPosition(
+                    component.id(), "out",
+                    component.x() + offset.x(), component.y() + offset.y());
+            target.put(key(pin), pin);
+        }
+    }
+
+    private void replaceComponents(Map<String, PlacedComponent> replacements) {
+        for (int index = 0; index < components.size(); index++) {
+            PlacedComponent current = components.get(index);
+            PlacedComponent replacement = replacements.get(current.id());
+            if (replacement != null) {
+                components.set(index, replacement);
+            }
+        }
+    }
+
+    private static PinKey key(Connectivity.PinPosition pin) {
+        return new PinKey(pin.componentId(), pin.pinId());
+    }
+
+    private static Map<PinKey, Integer> netIds(
+            Collection<Connectivity.PinPosition> pins,
+            Collection<WireSegment> geometry) {
+        Connectivity.Result topology = Connectivity.analyze(pins, geometry);
+        Map<PinKey, Integer> result = new HashMap<>();
+        int netId = 0;
+        for (Connectivity.Net net : topology.nets()) {
+            for (Connectivity.PinPosition pin : net.pins()) {
+                result.put(key(pin), netId);
+            }
+            netId++;
+        }
+        return result;
+    }
+
+    private static boolean hasNoNewShorts(
+            Collection<Connectivity.PinPosition> currentPins,
+            Collection<WireSegment> geometry,
+            Map<PinKey, Integer> beforeNetIds) {
+        Connectivity.Result topology = Connectivity.analyze(currentPins, geometry);
+        for (Connectivity.Net net : topology.nets()) {
+            Integer originalNet = null;
+            for (Connectivity.PinPosition pin : net.pins()) {
+                Integer pinNet = beforeNetIds.get(key(pin));
+                if (pinNet == null) {
+                    return false;
+                }
+                if (originalNet == null) {
+                    originalNet = pinNet;
+                } else if (!originalNet.equals(pinNet)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean preservesBeforeConnections(
+            Collection<Connectivity.PinPosition> currentPins,
+            Collection<WireSegment> geometry,
+            Map<PinKey, Integer> beforeNetIds) {
+        Map<PinKey, Integer> afterNetIds = netIds(currentPins, geometry);
+        Map<Integer, Integer> afterNetForOriginalNet = new HashMap<>();
+        for (Map.Entry<PinKey, Integer> entry : beforeNetIds.entrySet()) {
+            Integer afterNet = afterNetIds.get(entry.getKey());
+            if (afterNet == null) {
+                return false;
+            }
+            Integer previousNet = afterNetForOriginalNet.putIfAbsent(entry.getValue(), afterNet);
+            if (previousNet != null && !previousNet.equals(afterNet)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<List<WireSegment>> candidateRoutes(PinMove pinMove) {
+        Connectivity.Point oldPoint = new Connectivity.Point(
+                pinMove.oldPin().x(), pinMove.oldPin().y());
+        Connectivity.Point newPoint = new Connectivity.Point(
+                pinMove.newPin().x(), pinMove.newPin().y());
+        long deltaX = Math.abs((long) newPoint.x() - oldPoint.x());
+        long deltaY = Math.abs((long) newPoint.y() - oldPoint.y());
+        boolean horizontalFirst = deltaX >= deltaY;
+
+        LinkedHashSet<List<WireSegment>> candidates = new LinkedHashSet<>();
+        addCandidate(candidates, oldPoint, new Connectivity.Point(newPoint.x(), oldPoint.y()), newPoint);
+        addCandidate(candidates, oldPoint, new Connectivity.Point(oldPoint.x(), newPoint.y()), newPoint);
+
+        if (horizontalFirst) {
+            addZCandidates(candidates, oldPoint, newPoint, true);
+            addZCandidates(candidates, oldPoint, newPoint, false);
+        } else {
+            addZCandidates(candidates, oldPoint, newPoint, false);
+            addZCandidates(candidates, oldPoint, newPoint, true);
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static void addZCandidates(
+            Set<List<WireSegment>> candidates,
+            Connectivity.Point start,
+            Connectivity.Point end,
+            boolean horizontalFirst) {
+        int midpoint = horizontalFirst
+                ? midpointOnGrid(start.x(), end.x())
+                : midpointOnGrid(start.y(), end.y());
+        int spacing = PlacedComponent.GRID_SPACING;
+        // Eight candidates per orientation: midpoint, then +10/-10 ... +30/-30, +40.
+        int[] offsets = {0, spacing, -spacing, spacing * 2, -spacing * 2,
+                spacing * 3, -spacing * 3, spacing * 4};
+        for (int offset : offsets) {
+            long middle = (long) midpoint + offset;
+            if (middle < Integer.MIN_VALUE || middle > Integer.MAX_VALUE) {
+                continue;
+            }
+            if (horizontalFirst) {
+                int x = (int) middle;
+                addCandidate(candidates, start,
+                        new Connectivity.Point(x, start.y()),
+                        new Connectivity.Point(x, end.y()),
+                        end);
+            } else {
+                int y = (int) middle;
+                addCandidate(candidates, start,
+                        new Connectivity.Point(start.x(), y),
+                        new Connectivity.Point(end.x(), y),
+                        end);
+            }
+        }
+    }
+
+    private static int midpointOnGrid(int first, int second) {
+        double midpoint = ((long) first + second) / 2.0;
+        return (int) (Math.round(midpoint / PlacedComponent.GRID_SPACING)
+                * PlacedComponent.GRID_SPACING);
+    }
+
+    private static void addCandidate(
+            Set<List<WireSegment>> candidates,
+            Connectivity.Point... points) {
+        LinkedHashSet<WireSegment> segments = new LinkedHashSet<>();
+        for (int index = 0; index + 1 < points.length; index++) {
+            Connectivity.Point first = points[index];
+            Connectivity.Point second = points[index + 1];
+            if (first.equals(second)) {
+                continue;
+            }
+            segments.add(new WireSegment(first.x(), first.y(), second.x(), second.y()));
+        }
+        if (!segments.isEmpty()) {
+            candidates.add(List.copyOf(segments));
+        }
+    }
+
+    private static boolean contains(WireSegment wire, Connectivity.Point point) {
+        if (wire.isHorizontal()) {
+            return point.y() == wire.y1()
+                    && point.x() >= wire.x1() && point.x() <= wire.x2();
+        }
+        return point.x() == wire.x1()
+                && point.y() >= wire.y1() && point.y() <= wire.y2();
+    }
+
+    private static WireSegment translateWire(WireSegment wire, int deltaX, int deltaY) {
+        return new WireSegment(
+                wire.x1() + deltaX, wire.y1() + deltaY,
+                wire.x2() + deltaX, wire.y2() + deltaY);
+    }
+
+    private static void requireGridDelta(int deltaX, int deltaY) {
+        if (deltaX % PlacedComponent.GRID_SPACING != 0
+                || deltaY % PlacedComponent.GRID_SPACING != 0) {
+            throw new IllegalArgumentException(
+                    "component and wire movement must stay on the schematic grid");
+        }
     }
 
     /**

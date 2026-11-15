@@ -19,6 +19,7 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JLabel;
 import javax.swing.JTable;
 import javax.swing.JToggleButton;
 import javax.swing.JToolBar;
@@ -139,6 +140,10 @@ public final class Main {
         workspace.setDividerLocation(265);
         workspace.setBorder(BorderFactory.createEmptyBorder());
         content.add(workspace, BorderLayout.CENTER);
+        JLabel statusMessage = new JLabel(" ");
+        statusMessage.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
+        canvas.setStatusMessageListener(statusMessage::setText);
+        content.add(statusMessage, BorderLayout.SOUTH);
 
         canvas.setToolModeListener(tool -> {
             edit.setSelected(tool != CanvasPanel.Tool.POKE);
