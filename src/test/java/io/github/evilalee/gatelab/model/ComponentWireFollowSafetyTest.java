@@ -91,9 +91,9 @@ class ComponentWireFollowSafetyTest {
         }
         for (Connectivity.Point point : List.of(
                 new Connectivity.Point(100, 10),
+                new Connectivity.Point(140, 10),
                 new Connectivity.Point(140, 20),
-                new Connectivity.Point(140, 30),
-                new Connectivity.Point(140, 50))) {
+                new Connectivity.Point(140, 30))) {
             exempt.add(point);
         }
         for (int x = 80; x <= 160; x += 10) {
@@ -119,7 +119,7 @@ class ComponentWireFollowSafetyTest {
                 "the safe no-link fallback still commits a move when the destination geometry is safe");
         assertNoNewShorts(schematic, beforeNets);
         assertFalse(isConnected(schematic,
-                new PinKey(input.id(), "out"), new PinKey(gate.id(), "in0")),
+                new PinKey(input.id(), "out"), new PinKey(gate.id(), "in1")),
                 "the fallback leaves the original wire behind rather than connecting via an unsafe route");
     }
 
@@ -188,13 +188,15 @@ class ComponentWireFollowSafetyTest {
 
     private static CircuitFixture connectedAndCircuit() {
         Schematic schematic = new Schematic(DEFINITIONS);
-        PlacedComponent inputA = schematic.add("input", 0, 10, Facing.EAST);
-        PlacedComponent inputB = schematic.add("input", 0, 30, Facing.EAST);
+        PlacedComponent inputA = schematic.add("input", 0, -10, Facing.EAST);
+        PlacedComponent inputB = schematic.add("input", 0, 10, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
         PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+        schematic.addWire(0, -10, 100, -10);
         schematic.addWire(0, 10, 100, 10);
-        schematic.addWire(0, 30, 100, 30);
-        schematic.addWire(100, 0, 180, 0);
+        schematic.addWire(100, 0, 100, -40);
+        schematic.addWire(100, -40, 180, -40);
+        schematic.addWire(180, -40, 180, 0);
         return new CircuitFixture(schematic, inputA, inputB, gate, output);
     }
 
