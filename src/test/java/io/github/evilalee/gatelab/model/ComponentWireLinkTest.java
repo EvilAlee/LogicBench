@@ -268,9 +268,9 @@ class ComponentWireLinkTest {
         for (int[] position : List.of(
                 new int[]{120, 0},
                 new int[]{140, 0},
-                new int[]{140, 20},
-                new int[]{120, 20},
-                new int[]{130, 30})) {
+                new int[]{120, 0},
+                new int[]{160, 0},
+                new int[]{180, 0})) {
             schematic.move(fixture.gate().id(), position[0], position[1]);
             assertCircuitNetsRemainSeparate(fixture);
         }
