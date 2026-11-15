@@ -2,11 +2,16 @@ package io.github.evilalee.gatelab.ui;
 
 import com.formdev.flatlaf.FlatLightLaf;
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.io.SchematicJson;
 import io.github.evilalee.gatelab.model.PlacedComponent;
+import io.github.evilalee.gatelab.model.Schematic;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JFrame;
+import javax.swing.JFileChooser;
+import javax.swing.JOptionPane;
+import javax.swing.KeyStroke;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
@@ -21,6 +26,7 @@ import javax.swing.UIManager;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreePath;
+import javax.swing.filechooser.FileFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Container;
@@ -28,8 +34,16 @@ import java.awt.Dimension;
 import java.awt.Insets;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 
 /** Swing application entry point for the LogicBench desktop window. */
@@ -68,13 +82,23 @@ public final class Main {
     }
 
     static JFrame createFrame(boolean galleryMode) {
-        JFrame frame = new JFrame("LogicBench");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        JFrame frame = new JFrame("LogicBench - Untitled");
+        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         CanvasPanel canvas = new CanvasPanel(galleryMode);
-        frame.setJMenuBar(createMenuBar(canvas));
+        DocumentState document = new DocumentState();
+
+        canvas.setSchematicListener(schematic ->
+                observeSchematic(frame, canvas, document, schematic));
+        frame.setJMenuBar(createMenuBar(frame, canvas, document));
         frame.setContentPane(createContent(canvas));
         frame.setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
         frame.setLocationRelativeTo(null);
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent event) {
+                requestClose(frame, canvas, document);
+            }
+        });
         return frame;
     }
 
@@ -121,14 +145,23 @@ public final class Main {
         return content;
     }
 
-    private static JMenuBar createMenuBar(CanvasPanel canvas) {
+    private static JMenuBar createMenuBar(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
         JMenuBar menuBar = new JMenuBar();
-        menuBar.add(menuWithDisabledItems("File", "New", "Open...", "Save", "Save As..."));
-        JMenu fileMenu = menuBar.getMenu(0);
-        fileMenu.addSeparator();
+        JMenu file = new JMenu("File");
+        file.add(fileItem("New", KeyEvent.VK_N, 0,
+                () -> createNew(frame, canvas, document)));
+        file.add(fileItem("Open...", KeyEvent.VK_O, 0,
+                () -> openDocument(frame, canvas, document)));
+        file.add(fileItem("Save", KeyEvent.VK_S, 0,
+                () -> saveDocument(frame, canvas, document)));
+        file.add(fileItem("Save As...", KeyEvent.VK_S, InputEvent.SHIFT_DOWN_MASK,
+                () -> saveAs(frame, canvas, document)));
+        file.addSeparator();
         JMenuItem exit = new JMenuItem("Exit");
-        exit.addActionListener(event -> System.exit(0));
-        fileMenu.add(exit);
+        exit.addActionListener(event -> requestClose(frame, canvas, document));
+        file.add(exit);
+        menuBar.add(file);
 
         menuBar.add(menuWithDisabledItems("Edit", "Undo", "Redo", "Cut", "Copy", "Paste"));
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
@@ -141,6 +174,202 @@ public final class Main {
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
         menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
         return menuBar;
+    }
+
+    private static JMenuItem fileItem(
+            String label, int keyCode, int modifiers, Runnable action) {
+        JMenuItem item = new JMenuItem(label);
+        item.setAccelerator(KeyStroke.getKeyStroke(keyCode,
+                InputEvent.CTRL_DOWN_MASK | modifiers));
+        item.addActionListener(event -> action.run());
+        return item;
+    }
+
+    private static void createNew(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        if (!confirmUnsavedChanges(frame, canvas, document)) {
+            return;
+        }
+        Schematic fresh = new Schematic(GateLibrary.load().all());
+        document.file = null;
+        document.savedModificationCount = fresh.modificationCount();
+        canvas.replaceSchematic(fresh);
+    }
+
+    private static void openDocument(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        JFileChooser chooser = schematicChooser();
+        if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        Path selected = chooser.getSelectedFile().toPath();
+        final Schematic loaded;
+        try {
+            String json = Files.readString(selected);
+            loaded = SchematicJson.fromJson(json, GateLibrary.load().all());
+        } catch (IOException | IllegalArgumentException exception) {
+            showFileError(frame, "Could not open schematic", exception);
+            return;
+        }
+
+        if (!confirmUnsavedChanges(frame, canvas, document)) {
+            return;
+        }
+        document.file = selected;
+        document.savedModificationCount = loaded.modificationCount();
+        canvas.replaceSchematic(loaded);
+    }
+
+    private static boolean saveDocument(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        if (document.file == null) {
+            return saveAs(frame, canvas, document);
+        }
+        try {
+            Files.writeString(document.file, SchematicJson.toJson(canvas.schematic()));
+            document.savedModificationCount = canvas.schematic().modificationCount();
+            updateTitle(frame, canvas, document);
+            return true;
+        } catch (IOException | IllegalArgumentException exception) {
+            showFileError(frame, "Could not save schematic", exception);
+            return false;
+        }
+    }
+
+    private static boolean saveAs(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        JFileChooser chooser = schematicChooser();
+        if (document.file != null) {
+            chooser.setSelectedFile(document.file.toFile());
+        }
+        if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) {
+            return false;
+        }
+
+        Path selected = withExtension(chooser.getSelectedFile().toPath());
+        if (Files.exists(selected)
+                && !selected.equals(document.file)
+                && JOptionPane.showConfirmDialog(frame,
+                        "Replace the existing file?", "Confirm Save As",
+                        JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE)
+                        != JOptionPane.YES_OPTION) {
+            return false;
+        }
+        try {
+            Files.writeString(selected, SchematicJson.toJson(canvas.schematic()));
+            document.file = selected;
+            document.savedModificationCount = canvas.schematic().modificationCount();
+            updateTitle(frame, canvas, document);
+            return true;
+        } catch (IOException | IllegalArgumentException exception) {
+            showFileError(frame, "Could not save schematic", exception);
+            return false;
+        }
+    }
+
+    private static Path withExtension(Path path) {
+        String name = path.getFileName().toString();
+        if (!hasSchematicExtension(name)) {
+            return path.resolveSibling(name + SchematicJson.FILE_EXTENSION);
+        }
+        return path;
+    }
+
+    private static JFileChooser schematicChooser() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileFilter(schematicFileFilter());
+        return chooser;
+    }
+
+    static FileFilter schematicFileFilter() {
+        return new FileFilter() {
+            @Override
+            public boolean accept(File file) {
+                return file.isDirectory()
+                        || hasSchematicExtension(file.getName(), SchematicJson.FILE_EXTENSION)
+                        || hasSchematicExtension(file.getName(), SchematicJson.LEGACY_FILE_EXTENSION);
+            }
+
+            @Override
+            public String getDescription() {
+                return "LogicBench schematic (*" + SchematicJson.FILE_EXTENSION + ")";
+            }
+        };
+    }
+
+    static boolean hasSchematicExtension(String fileName) {
+        return hasSchematicExtension(fileName, SchematicJson.FILE_EXTENSION)
+                || hasSchematicExtension(fileName, SchematicJson.LEGACY_FILE_EXTENSION);
+    }
+
+    private static boolean hasSchematicExtension(String fileName, String extension) {
+        return fileName != null
+                && fileName.length() >= extension.length()
+                && fileName.regionMatches(
+                        true, fileName.length() - extension.length(),
+                        extension, 0, extension.length());
+    }
+
+    private static boolean confirmUnsavedChanges(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        if (!isDirty(canvas, document)) {
+            return true;
+        }
+        Object[] choices = {"Save", "Don't Save", "Cancel"};
+        int choice = JOptionPane.showOptionDialog(frame,
+                "Save changes to the current schematic?",
+                "Unsaved Changes",
+                JOptionPane.DEFAULT_OPTION,
+                JOptionPane.WARNING_MESSAGE,
+                null, choices, choices[0]);
+        return switch (choice) {
+            case 0 -> saveDocument(frame, canvas, document);
+            case 1 -> true;
+            default -> false;
+        };
+    }
+
+    private static void requestClose(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        if (confirmUnsavedChanges(frame, canvas, document)) {
+            frame.dispose();
+        }
+    }
+
+    private static boolean isDirty(CanvasPanel canvas, DocumentState document) {
+        return canvas.schematic().modificationCount() != document.savedModificationCount;
+    }
+
+    private static void observeSchematic(
+            JFrame frame, CanvasPanel canvas, DocumentState document, Schematic schematic) {
+        if (document.observedSchematic != null && document.titleListener != null) {
+            document.observedSchematic.removeChangeListener(document.titleListener);
+        }
+        document.observedSchematic = schematic;
+        document.titleListener = () -> updateTitle(frame, canvas, document);
+        schematic.addChangeListener(document.titleListener);
+        updateTitle(frame, canvas, document);
+    }
+
+    private static void updateTitle(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        String fileName = document.file == null
+                ? "Untitled" : document.file.getFileName().toString();
+        frame.setTitle("LogicBench - " + fileName + (isDirty(canvas, document) ? "*" : ""));
+    }
+
+    private static void showFileError(JFrame frame, String title, Exception exception) {
+        JOptionPane.showMessageDialog(frame, exception.getMessage(),
+                title, JOptionPane.ERROR_MESSAGE);
+    }
+
+    private static final class DocumentState {
+        private Path file;
+        private long savedModificationCount;
+        private Schematic observedSchematic;
+        private Runnable titleListener;
     }
 
     private static JMenu menuWithDisabledItems(String title, String... items) {
