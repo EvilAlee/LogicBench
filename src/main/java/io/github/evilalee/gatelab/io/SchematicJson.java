@@ -16,6 +16,8 @@ import io.github.evilalee.gatelab.model.WireSegment;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -43,6 +45,11 @@ public final class SchematicJson {
             item.addProperty("x", component.x());
             item.addProperty("y", component.y());
             item.addProperty("facing", component.facing().name());
+            if (!component.attributes().isEmpty()) {
+                JsonObject attributes = new JsonObject();
+                component.attributes().forEach(attributes::addProperty);
+                item.add("attrs", attributes);
+            }
             if ("input".equals(component.typeId())) {
                 item.addProperty("high", schematic.inputValue(component.id()));
             }
@@ -91,7 +98,7 @@ public final class SchematicJson {
 
         Set<String> knownTypes = new HashSet<>();
         for (GateDef definition : definitions) {
-            knownTypes.add(definition.id());
+            knownTypes.add(definition.family());
         }
         Schematic schematic = new Schematic(definitions);
         JsonArray componentArray = array(root, "components", "document");
@@ -136,8 +143,27 @@ public final class SchematicJson {
                 high = highElement.getAsBoolean();
             }
 
+            Map<String, String> attributes = new LinkedHashMap<>();
+            if (item.has("attrs")) {
+                JsonElement attrsElement = item.get("attrs");
+                if (attrsElement == null || !attrsElement.isJsonObject()) {
+                    throw new IllegalArgumentException(context + ".attrs must be an object");
+                }
+                JsonObject attrsObject = attrsElement.getAsJsonObject();
+                for (Map.Entry<String, JsonElement> attribute : attrsObject.entrySet()) {
+                    JsonElement attributeValue = attribute.getValue();
+                    if (attributeValue == null || !attributeValue.isJsonPrimitive()
+                            || !attributeValue.getAsJsonPrimitive().isString()) {
+                        throw new IllegalArgumentException(
+                                context + ".attrs." + attribute.getKey() + " must be a string");
+                    }
+                    attributes.put(attribute.getKey(), attributeValue.getAsString());
+                }
+            }
+
             try {
-                PlacedComponent component = new PlacedComponent(id, type, x, y, facing);
+                PlacedComponent component = new PlacedComponent(
+                        id, type, x, y, facing, attributes);
                 schematic.add(component);
                 if (high) {
                     schematic.setInputValue(id, true);
