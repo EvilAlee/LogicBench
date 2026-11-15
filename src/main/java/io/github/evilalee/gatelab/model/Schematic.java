@@ -210,6 +210,14 @@ public final class Schematic {
             }
         }
         Map<PinKey, Integer> beforeNetIds = netIds(beforePins, originalWires);
+        // A user-selected wire is an intentional move, not an auto-follow target.
+        // Preserve connections that existed through stationary geometry, while the
+        // full before partition still guards against shorts introduced by the edit.
+        List<WireSegment> stationaryBeforeWires = originalWires.stream()
+                .filter(wire -> !movingWires.contains(wire))
+                .toList();
+        Map<PinKey, Integer> requiredConnectionNetIds =
+                netIds(beforePins, stationaryBeforeWires);
         List<PinMove> pinsToLink = attachedPinsToFollow(
                 replacements, movingWires, beforePins, originalWires);
 
@@ -251,7 +259,7 @@ public final class Schematic {
         }
 
         if (linksFollowed
-                && !preservesBeforeConnections(afterPins, wires, beforeNetIds)) {
+                && !preservesBeforeConnections(afterPins, wires, requiredConnectionNetIds)) {
             linksFollowed = false;
         }
         if (!linksFollowed) {

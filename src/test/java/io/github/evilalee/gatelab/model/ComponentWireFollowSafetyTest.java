@@ -116,6 +116,51 @@ class ComponentWireFollowSafetyTest {
     }
 
     @Test
+    void movingSelectedWireDoesNotTriggerAutoFollowWarningOrGenerateExtraLinks() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent input = schematic.add("input", 0, 0, Facing.EAST);
+        PlacedComponent output = schematic.add("output", 100, 0, Facing.EAST);
+        WireSegment selected = new WireSegment(0, 0, 100, 0);
+        schematic.addWire(selected);
+        List<WireSegment> before = schematic.wires();
+
+        Schematic.MoveResult result = schematic.moveSelection(
+                Set.of(), Set.of(selected), 0, 20);
+
+        assertTrue(result.linksFollowed(),
+                "moving selected geometry is intentional, not a failed auto-follow route");
+        assertEquals(List.of(new WireSegment(0, 20, 100, 20)), schematic.wires());
+        assertEquals(List.of(new WireSegment(0, 20, 100, 20)), result.movedWires());
+        assertNotEquals(before, schematic.wires());
+        assertFalse(isConnected(schematic,
+                new PinKey(input.id(), "out"), new PinKey(output.id(), "in0")));
+    }
+
+    @Test
+    void movingGateAndItsSelectedInputWireDoesNotGenerateAnAutoFollowLink() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        Connectivity.PinPosition inputPin = schematic.pinPositions().stream()
+                .filter(pin -> pin.componentId().equals(gate.id())
+                        && pin.pinId().equals("in0"))
+                .findFirst().orElseThrow();
+        WireSegment selected = new WireSegment(
+                inputPin.x() - 40, inputPin.y(), inputPin.x(), inputPin.y());
+        schematic.addWire(selected);
+        int wireCountBefore = schematic.wires().size();
+
+        Schematic.MoveResult result = schematic.moveSelection(
+                Set.of(gate.id()), Set.of(selected), 20, 10);
+
+        assertTrue(result.linksFollowed());
+        assertEquals(wireCountBefore, schematic.wires().size(),
+                "a pin attached only to a moving wire does not get a stationary auto-link");
+        assertEquals(List.of(new WireSegment(
+                selected.x1() + 20, selected.y1() + 10,
+                selected.x2() + 20, selected.y2() + 10)), schematic.wires());
+    }
+
+    @Test
     void twoHundredFuzzSeedsRemainShortFreeAndUndoRestoresEveryGestureExactly() {
         for (int seed = 0; seed < 200; seed++) {
             Random random = new Random(seed);
