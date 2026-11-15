@@ -21,3 +21,8 @@ Match docs/reference/ screenshots.
 - PR description must list: what changed, any behavior that differs from reference/js, open questions.
 - If the spec is ambiguous, pick the simplest option and note it in the PR; don't guess silently.
 - Keep classes small; comment the *why*, not the what.
+- 
+## Resuming work
+- Read docs/STATUS.md first. If a branch for the current task already exists, check it out and
+  continue from it; do not restart or open a duplicate PR.
+- Before finishing any task, update docs/STATUS.md (Done / In progress / Next).
