@@ -7,10 +7,11 @@
 - M4: placed-component Schematic, add/select/move/rotate/delete interactions
 - M5: orthogonal wires, selection/movement/deletion, geometric connectivity, junctions and tests
 - M6: live schematic simulation, Poke tool, value-colored wires, I/O digits and oscillation reporting
+- M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
 
 ## In progress
-- M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
-  - Branch: m7b-undo
+- M8b: orthogonal links keep stationary wire/pin attachments connected when components move or rotate
+  - Branch: m8b-follow
   - PR pending review
 
 ## Next
@@ -24,7 +25,9 @@
 - M6 rebuilds a fresh Circuit and Simulator on changes; prior gate drivers seed fresh feedback latch state.
 - Input state is stored per input in Schematic; default LOW.
 - ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255); selected wires use an orange translucent halo.
-- Component origin, rotation, 10-unit grid, and M5 wire independence remain unchanged.
+- Component origin, rotation, and 10-unit grid remain unchanged.
+- Moving/rotating components leaves old wire segments as stubs and adds orthogonal links where stationary wires or pins touched changed pin positions; selected wires still move with the selection.
+- Link routing starts along the axis with the larger absolute pin displacement (horizontal first on ties).
 - M7b history snapshots contain only placed components and geometric wire segments; input poke values are not history state.
 - Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
 - New/Open clear history; Save leaves it intact.

@@ -830,13 +830,9 @@ public final class CanvasPanel extends JPanel {
         if (gesture == Gesture.MOVE_SELECTION && gestureMoved) {
             int deltaX = snapToGrid(pointerWorldX - gestureStartWorldX);
             int deltaY = snapToGrid(pointerWorldY - gestureStartWorldY);
-            for (PlacedComponent starting : moveStartComponents.values()) {
-                schematic.move(starting.id(), starting.x() + deltaX, starting.y() + deltaY);
-            }
-            if (!moveStartWires.isEmpty()) {
-                selectedWires.clear();
-                selectedWires.addAll(schematic.moveWires(moveStartWires, deltaX, deltaY));
-            }
+            selectedWires.clear();
+            selectedWires.addAll(schematic.moveSelection(
+                    moveStartComponents.keySet(), moveStartWires, deltaX, deltaY));
             notifySelectionChanged();
             commitHistoryGesture();
         } else if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
@@ -903,9 +899,7 @@ public final class CanvasPanel extends JPanel {
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
         beginHistoryGesture();
-        for (PlacedComponent component : selectedComponents()) {
-            schematic.setFacing(component.id(), facing);
-        }
+        schematic.setFacing(selectedIds, facing);
         commitHistoryGesture();
         notifySelectionChanged();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());

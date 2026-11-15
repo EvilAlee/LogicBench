@@ -102,9 +102,14 @@ from the components and wire geometry after loading.
 - Dragging from a pin or wire point draws an L path: the first cursor axis
   chooses the first segment direction, then the other axis reaches the target.
   No A* router is used in M5.
-- Wires are independent of components. Moving a selection moves its selected
-  wires, but moving a component alone does not move wires connected to it
-  (v1 limitation).
+- Wires remain geometric and orthogonal. Moving a selection moves its selected
+  wires; other wires are never stretched or edited. When a component moves or
+  rotates, each changed pin that was touched by a non-moving wire or stationary
+  pin gets a new L-shaped link back to its old position. The original wire
+  remains as a short stub; stubs are not automatically cleaned up.
+- Link paths use one segment when the pin displacement is axis-aligned. For a
+  diagonal displacement, the first leg follows the axis with the larger
+  absolute delta (horizontal first on ties), then the other axis.
 
 ## 8. UI spec (Logisim Evolution layout)
 - Menu bar: File, Edit, Project, Simulate, Window, Help (only implemented items enabled).
@@ -157,8 +162,11 @@ from the components and wire geometry after loading.
   pin positions.
 - A crossing without a pin or segment endpoint is not a connection; T-junctions,
   pins on segment interiors, and collinear overlaps join their nets.
-- M5 uses a simple axis-first L route, not A* routing. Wires do not follow
-  components when those components move; only selected wires move with a selection.
+- M5 wire drawing uses a simple axis-first L route, not A* routing.
+- When components move or rotate, links are added from changed pin locations back
+  to the old connection points instead of stretching existing wires. Old wires
+  remain as stubs. The link's first axis is the one with the larger absolute
+  displacement (horizontal first on ties); the second leg completes the L.
 
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)
