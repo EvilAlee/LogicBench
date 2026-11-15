@@ -27,8 +27,8 @@ class GalleryRenderTest {
 
         int rowPitch = CanvasPanel.galleryRowPitch(definitions);
 
-        assertEquals(0, rowPitch % 10);
-        assertTrue(rowPitch >= largestDimension + 20);
+        int expectedPitch = ((largestDimension + 20 + 9) / 10) * 10;
+        assertEquals(expectedPitch, rowPitch);
     }
 
     @Test
