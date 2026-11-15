@@ -32,14 +32,16 @@ public final class CanvasPanel extends JPanel {
     private static final double ZOOM_PER_WHEEL_NOTCH = 1.12;
 
     private static final int GALLERY_FIRST_ORIGIN_X = 90;
-    private static final int GALLERY_FIRST_ORIGIN_Y = 54;
+    private static final int GALLERY_HEADER_BOTTOM = 40;
+    private static final int GALLERY_ROW_MARGIN = 20;
     private static final int GALLERY_COLUMN_SPACING = 165;
-    private static final int GALLERY_ROW_SPACING = 66;
 
     private final ViewTransform transform = new ViewTransform(1.0, 24.0, 24.0);
     private final boolean galleryMode;
     private final GateLibrary gateLibrary;
     private final GateRenderer gateRenderer;
+    private final int galleryFirstOriginY;
+    private final int galleryRowPitch;
     private boolean showPinMarkers = true;
     private boolean spaceDown;
     private boolean panning;
@@ -53,6 +55,8 @@ public final class CanvasPanel extends JPanel {
         this.galleryMode = galleryMode;
         this.gateLibrary = galleryMode ? GateLibrary.load() : null;
         this.gateRenderer = galleryMode ? new GateRenderer(gateLibrary) : null;
+        this.galleryFirstOriginY = galleryMode ? galleryFirstOriginY(gateLibrary.all()) : 0;
+        this.galleryRowPitch = galleryMode ? galleryRowPitch(gateLibrary.all()) : 0;
 
         setOpaque(true);
         setBackground(Color.WHITE);
@@ -210,6 +214,34 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
+    static int galleryRowPitch(List<GateDef> definitions) {
+        int largestRotatedDimension = 0;
+        for (GateDef definition : definitions) {
+            for (Facing facing : Facing.values()) {
+                GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+                largestRotatedDimension = Math.max(largestRotatedDimension,
+                        Math.max(bounds.width(), bounds.height()));
+            }
+        }
+        return roundUpToGrid(largestRotatedDimension + GALLERY_ROW_MARGIN);
+    }
+
+    static int galleryFirstOriginY(List<GateDef> definitions) {
+        int largestExtentAboveOrigin = 0;
+        for (GateDef definition : definitions) {
+            for (Facing facing : Facing.values()) {
+                GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+                largestExtentAboveOrigin = Math.max(largestExtentAboveOrigin,
+                        Math.max(0, -bounds.y()));
+            }
+        }
+        return roundUpToGrid(GALLERY_HEADER_BOTTOM + largestExtentAboveOrigin);
+    }
+
+    private static int roundUpToGrid(int value) {
+        return ((value + WORLD_GRID_SPACING - 1) / WORLD_GRID_SPACING) * WORLD_GRID_SPACING;
+    }
+
     private void paintGallery(Graphics2D screenGraphics) {
         Graphics2D worldGraphics = (Graphics2D) screenGraphics.create();
         try {
@@ -228,7 +260,7 @@ public final class CanvasPanel extends JPanel {
 
             for (int row = 0; row < definitions.size(); row++) {
                 GateDef definition = definitions.get(row);
-                double originY = GALLERY_FIRST_ORIGIN_Y + row * GALLERY_ROW_SPACING;
+                double originY = galleryFirstOriginY + row * galleryRowPitch;
                 Point2D.Double rowLabel = transform.worldToScreen(8, originY + 4);
                 screenGraphics.setColor(new Color(65, 70, 76));
                 screenGraphics.setFont(screenGraphics.getFont().deriveFont(Font.PLAIN, 10.0f));

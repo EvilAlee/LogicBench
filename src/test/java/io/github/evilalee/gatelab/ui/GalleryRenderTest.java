@@ -1,17 +1,50 @@
 package io.github.evilalee.gatelab.ui;
 
-import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.Facing;
+import io.github.evilalee.gatelab.model.GateDef;
+import io.github.evilalee.gatelab.model.GateGeometry;
 import org.junit.jupiter.api.Test;
 
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GalleryRenderTest {
+    @Test
+    void rowPitchFitsTheLargestRotatedBoundsWithGridAlignedMargin() {
+        List<GateDef> definitions = GateLibrary.load().all();
+        int largestDimension = definitions.stream()
+                .flatMap(definition -> java.util.Arrays.stream(Facing.values())
+                        .map(facing -> GateGeometry.bounds(definition, facing)))
+                .mapToInt(bounds -> Math.max(bounds.width(), bounds.height()))
+                .max()
+                .orElseThrow();
+
+        int rowPitch = CanvasPanel.galleryRowPitch(definitions);
+
+        assertEquals(0, rowPitch % 10);
+        assertTrue(rowPitch >= largestDimension + 20);
+    }
+
+    @Test
+    void firstGalleryRowStartsBelowTheDedicatedHeaderSpace() {
+        List<GateDef> definitions = GateLibrary.load().all();
+        int firstOriginY = CanvasPanel.galleryFirstOriginY(definitions);
+
+        for (GateDef definition : definitions) {
+            for (Facing facing : Facing.values()) {
+                GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+                assertTrue(firstOriginY + bounds.y() >= 40,
+                        definition.id() + " " + facing + " overlaps gallery headers");
+            }
+        }
+    }
+
     @Test
     void headlessGalleryPaintsAllTenDefinitionsAcrossFourFacings() {
         assertEquals(10, GateLibrary.load().all().size());
