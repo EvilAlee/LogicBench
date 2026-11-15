@@ -132,21 +132,23 @@ class ComponentAttributeTest {
     @Test
     void threeInputAndVariantCompilesToAThreeInputEngineGate() {
         Schematic schematic = new Schematic(DEFINITIONS);
-        PlacedComponent first = schematic.add("input", 70, -20, Facing.EAST);
-        PlacedComponent second = schematic.add("input", 70, 0, Facing.EAST);
-        PlacedComponent third = schematic.add("input", 70, 20, Facing.EAST);
+        PlacedComponent first = schematic.add("input", 20, -10, Facing.EAST);
+        PlacedComponent second = schematic.add("input", 20, 10, Facing.EAST);
+        PlacedComponent third = schematic.add("input", 20, 20, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
         PlacedComponent output = schematic.add("output", 160, 0, Facing.EAST);
-        assertTrue(schematic.setAttribute(gate.id(), "inputs", "3"));
-
-        for (PlacedComponent input : List.of(first, second, third)) {
-            Connectivity.PinPosition outputPin = pin(schematic, input.id(), "out");
-            Connectivity.PinPosition gatePin = pin(schematic, gate.id(),
-                    "in" + List.of(first, second, third).indexOf(input));
-            assertEquals(outputPin.x(), gatePin.x());
-            assertEquals(outputPin.y(), gatePin.y());
-        }
+        schematic.addWire(20, -10, 70, -10);
+        schematic.addWire(20, 10, 70, 10);
         schematic.addWire(100, 0, 160, 0);
+
+        assertTrue(schematic.setAttribute(gate.id(), "inputs", "3"));
+        assertConnected(schematic, first.id(), gate.id(), "in0");
+        assertConnected(schematic, second.id(), gate.id(), "in1");
+        assertEquals(3, schematic.definitionFor(
+                schematic.components().stream()
+                        .filter(component -> component.id().equals(gate.id()))
+                        .findFirst().orElseThrow()).inputCount());
+        schematic.addWire(20, 20, 70, 20);
         schematic.setInputValue(first.id(), true);
         schematic.setInputValue(second.id(), true);
         schematic.setInputValue(third.id(), true);
@@ -156,6 +158,16 @@ class ComponentAttributeTest {
         schematic.setInputValue(third.id(), false);
         assertEquals(Value.ZERO, SchematicCompiler.compileAndSettle(schematic)
                 .outputValues().get(output.id()));
+    }
+
+    private static void assertConnected(
+            Schematic schematic, String inputId, String gateId, String gatePinId) {
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        Connectivity.PinPosition input = pin(schematic, inputId, "out");
+        Connectivity.PinPosition gatePin = pin(schematic, gateId, gatePinId);
+        assertTrue(topology.nets().stream().anyMatch(net ->
+                net.pins().contains(input) && net.pins().contains(gatePin)));
     }
 
     private static Connectivity.PinPosition pin(Schematic schematic, String componentId, String pinId) {
