@@ -1,6 +1,10 @@
 package io.github.evilalee.gatelab.ui;
 
+import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.Facing;
+import io.github.evilalee.gatelab.model.PlacedComponent;
+import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.Facing;
@@ -11,6 +15,7 @@ import java.awt.event.InputEvent;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionListener;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -74,6 +79,31 @@ class CanvasWiringTest {
         press(canvas, inputCenter);
         release(canvas, inputCenter);
         assertEquals(Value.ZERO, canvas.simulationResult().inputValues().get(input.id()));
+    }
+
+    @Test
+    void replacingTheDocumentClearsSelectionResetsViewAndRecomputes() {
+        CanvasPanel canvas = new CanvasPanel();
+        canvas.setSize(900, 700);
+        AtomicReference<List<PlacedComponent>> selection = new AtomicReference<>(List.of());
+        canvas.setSelectionListener(selection::set);
+        canvas.placeFromDrop("input", new Point(180, 160));
+        assertEquals(1, selection.get().size());
+
+        canvas.viewTransform().panBy(35, -12);
+        canvas.viewTransform().zoomAt(200, 180, 1.8);
+        long recomputesBefore = canvas.simulationRecomputeCount();
+        Schematic replacement = new Schematic(GateLibrary.load().all());
+        replacement.add("output", 200, 100, Facing.WEST);
+
+        canvas.replaceSchematic(replacement);
+
+        assertEquals(replacement, canvas.schematic());
+        assertTrue(selection.get().isEmpty());
+        assertEquals(1.0, canvas.viewTransform().scale());
+        assertEquals(24.0, canvas.viewTransform().translateX());
+        assertEquals(24.0, canvas.viewTransform().translateY());
+        assertEquals(recomputesBefore + 1, canvas.simulationRecomputeCount());
     }
 
     @Test
