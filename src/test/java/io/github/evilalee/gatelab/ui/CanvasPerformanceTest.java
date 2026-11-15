@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.event.InputEvent;
+import java.awt.event.ActionEvent;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionListener;
 import java.awt.event.MouseWheelEvent;
@@ -77,6 +78,59 @@ class CanvasPerformanceTest {
         assertTrue(canvas.viewTransform().scale() < originalScale);
         assertEquals(originalScale * Math.pow(1.12, -0.5),
                 canvas.viewTransform().scale(), 1.0e-12);
+    }
+
+    @Test
+    void escapeReturnsToEditAndArrowActionSetsPreviewFacing() {
+        CanvasPanel escapeCanvas = new CanvasPanel();
+        escapeCanvas.setSize(900, 700);
+        escapeCanvas.enterAddMode("and");
+        escapeCanvas.getActionMap().get("return-to-edit").actionPerformed(
+                new ActionEvent(escapeCanvas, ActionEvent.ACTION_PERFORMED, "escape"));
+        click(escapeCanvas, 240, 220);
+        assertTrue(escapeCanvas.schematic().components().isEmpty(),
+                "click after Escape must not place an Add preview");
+
+        CanvasPanel facingCanvas = new CanvasPanel();
+        facingCanvas.setSize(900, 700);
+        facingCanvas.enterAddMode("and");
+        facingCanvas.getActionMap().get("face-south").actionPerformed(
+                new ActionEvent(facingCanvas, ActionEvent.ACTION_PERFORMED, "down"));
+        click(facingCanvas, 310, 270);
+        assertEquals("and", facingCanvas.schematic().components().getFirst().typeId());
+        assertEquals(io.github.evilalee.gatelab.model.Facing.SOUTH,
+                facingCanvas.schematic().components().getFirst().facing());
+    }
+
+    @Test
+    void treeDropPlacementStillSnapsToGrid() {
+        CanvasPanel canvas = new CanvasPanel();
+        canvas.setSize(900, 700);
+
+        // The canvas TransferHandler delegates incoming tree drops to this method.
+        canvas.placeFromDrop("nand", new Point(147, 153));
+
+        var placed = canvas.schematic().components().getFirst();
+        assertEquals("nand", placed.typeId());
+        assertEquals(120, placed.x());
+        assertEquals(130, placed.y());
+        assertEquals(io.github.evilalee.gatelab.model.Facing.EAST, placed.facing());
+    }
+
+    private static void click(CanvasPanel canvas, int x, int y) {
+        long now = System.currentTimeMillis();
+        MouseEvent pressed = new MouseEvent(
+                canvas, MouseEvent.MOUSE_PRESSED, now,
+                InputEvent.BUTTON1_DOWN_MASK, x, y, 1, false, MouseEvent.BUTTON1);
+        MouseEvent released = new MouseEvent(
+                canvas, MouseEvent.MOUSE_RELEASED, now + 1,
+                0, x, y, 1, false, MouseEvent.BUTTON1);
+        for (var listener : canvas.getMouseListeners()) {
+            listener.mousePressed(pressed);
+        }
+        for (var listener : canvas.getMouseListeners()) {
+            listener.mouseReleased(released);
+        }
     }
 
     private static void paint(CanvasPanel canvas) {
