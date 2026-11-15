@@ -23,6 +23,7 @@ import java.awt.Color;
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Insets;
+import java.util.Arrays;
 
 /** Swing application entry point for the LogicBench desktop window. */
 public final class Main {
@@ -33,34 +34,39 @@ public final class Main {
     }
 
     public static void main(String[] args) {
-        javax.swing.SwingUtilities.invokeLater(Main::showWindow);
+        boolean galleryMode = Arrays.asList(args).contains("--gallery");
+        javax.swing.SwingUtilities.invokeLater(() -> showWindow(galleryMode));
     }
 
-    private static void showWindow() {
+    private static void showWindow(boolean galleryMode) {
         FlatLightLaf.setup();
         UIManager.put("Component.arc", 0);
         UIManager.put("Button.arc", 0);
         UIManager.put("TextComponent.arc", 0);
 
-        JFrame frame = createFrame();
+        JFrame frame = createFrame(galleryMode);
         frame.setVisible(true);
     }
 
     static JFrame createFrame() {
+        return createFrame(false);
+    }
+
+    static JFrame createFrame(boolean galleryMode) {
         JFrame frame = new JFrame("LogicBench");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setJMenuBar(createMenuBar());
-        frame.setContentPane(createContent());
+        frame.setContentPane(createContent(galleryMode));
         frame.setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
         frame.setLocationRelativeTo(null);
         return frame;
     }
 
-    private static Container createContent() {
+    private static Container createContent(boolean galleryMode) {
         javax.swing.JPanel content = new javax.swing.JPanel(new BorderLayout());
         content.add(createToolbar(), BorderLayout.NORTH);
 
-        CanvasPanel canvas = new CanvasPanel();
+        CanvasPanel canvas = new CanvasPanel(galleryMode);
         JSplitPane leftColumn = createLeftColumn();
         JSplitPane workspace = new JSplitPane(
                 JSplitPane.HORIZONTAL_SPLIT, leftColumn, canvas);

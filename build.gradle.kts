@@ -22,6 +22,8 @@ repositories {
 
 dependencies {
     implementation("com.formdev:flatlaf:3.7.2")
+    implementation("com.github.weisj:jsvg:2.2.0")
+    implementation("com.google.code.gson:gson:2.15.0")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")

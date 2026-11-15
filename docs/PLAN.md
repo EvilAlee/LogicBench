@@ -28,42 +28,59 @@ Root package: `io.github.evilalee.LogicBench`
 - `model`: Circuit, Component, Pin, Wire, Value, Facing (pure data)
 - `sim`: Net building and propagation engine
 - `ui`: Swing frame, canvas, tools, panels
-- `io`: JSON save/load, SVG export
+- `io`: JSON data loading and future circuit persistence
 
-Dependency direction: `ui -> sim -> model`, `io -> model`.
-`model` and `sim` must never import `java.awt` or `javax.swing`.
+Dependency direction: `ui -> io -> model` and `ui -> sim -> model`.
+`model`, `sim`, and `io` must not import `java.awt` or `javax.swing`.
 `reference/js/` is read-only legacy code. Port the logic, never copy it line by line.
 
 ## 4. Geometry conventions
 - Y axis points down. Model coordinates are integers; the grid is 10 units.
 - Everything (component origins, pins, wire endpoints) sits on the grid.
 - Zoom and pan live only in the canvas, never in the model.
-- Component origin = its output pin position.
+- Component origin = its output pin position. For an output probe, which has
+  no output pin, the single input pin is its origin.
 - Default facing is EAST: inputs on the left, output on the right.
   Other facings (NORTH, WEST, SOUTH) rotate the component about its origin.
 - Variable-input gates place inputs on the left edge at 10-unit spacing,
-  vertically centered on the origin row.
-- Pin positions and sizes come from `gates.json`; do not parse them from SVG.
+  vertically centered on the origin row; variable-input rendering is deferred
+  to M8.
+- Pin positions and component sizes come from `gates.json`; do not parse them
+  from SVG artwork.
 
 ## 5. Data formats
-### gates.json (src/main/resources/gates.json)
-One entry per component type:
-`id`, `svg` (path in resources), `width`, `height`, `output` {x,y},
-`inputs` (fixed list of {x,y}, or `"variable"` with `minInputs`/`maxInputs`).
+### Component catalogue (`src/main/resources/gates.json`)
+
+The root object contains a non-empty `gates` array. Each entry has:
+
+| Field | Meaning |
+|---|---|
+| `id` | Unique component identifier (for example, `and` or `output`) |
+| `svg` | Classpath resource path under `src/main/resources`, such as `svg/and.svg` |
+| `width`, `height` | Positive component dimensions in world units |
+| `inputs` | Fixed array of `{ "x": integer, "y": integer }` input-pin coordinates |
+| `output` | `{ "x": integer, "y": integer }` output-pin coordinate, or `null` for an output probe |
+
+Dimensions, pin coordinates, and the derived origin are multiples of 10.
+Pin coordinates lie on or inside the inclusive rectangle from `(0,0)` to
+`(width,height)`. M3 loads the fixed-input array form only; variable input
+definitions and variable-input SVG layout are deferred to M8. Every referenced
+SVG must exist as a classpath resource and parse successfully with JSVG.
+`GateLibrary` validates the catalogue once at startup and exposes immutable
+definitions in file order.
 
 ### Circuit file (*.gatelab.json)
-`version`, `components[]` {`id`, `type`, `x`, `y`, `facing`, `attrs`},
-`wires[]` {`x1`,`y1`,`x2`,`y2`}.
+`version`, `components[]` { `id`, `type`, `x`, `y`, `facing`, `attrs` },
+`wires[]` { `x1`, `y1`, `x2`, `y2` }.
 Nets are NOT stored; they are rebuilt on load.
 
-## 6. Simulation (ENGINE_NOTES.md becomes authoritative once written)
+## 6. Simulation (ENGINE_NOTES.md is authoritative)
 - Values: ZERO, ONE, X.
 - Nets: pins joined by wires form one net (union-find). Rebuild all nets when
   wire topology changes.
-- Propagation: event-driven, one tick of delay per gate.
+- Propagation: one logical tick of delay per gate.
 - `settle()` has a tick cap; on hitting it, set the oscillating flag and return.
-- Conflicting drivers on one net: follow the reference JS if it has an
-  equivalent, otherwise X. Record the choice in the PR.
+- Conflicting drivers on one net resolve to X.
 
 ## 7. Wiring
 - Wires are horizontal or vertical segments between grid points.
@@ -80,8 +97,8 @@ Nets are NOT stored; they are rebuilt on load.
 - Tools: Edit (select, move, drag from pin to wire), Poke (toggle inputs),
   Add (pick a component in the tree, click to place).
 - Keys: arrows rotate the preview or selection, Delete removes, Ctrl+Z / Ctrl+Y undo and redo.
-- Wire colors (tune to screenshots): ONE bright green, ZERO dark green,
-  X blue, error red. Inputs are square pins, outputs are circular LEDs.
+- Wire colors: ONE bright green, ZERO dark green, X blue, error red. Inputs
+  are square pins, outputs are circular LEDs.
 
 ## 9. Milestones and acceptance criteria
 | # | Milestone | Done when |
@@ -93,7 +110,7 @@ Nets are NOT stored; they are rebuilt on load.
 | M5 | Wiring | Draw orthogonal wires between pins; junctions work; nets rebuild correctly |
 | M6 | Live simulation | Poke toggles inputs; wires and outputs recolor immediately |
 | M7 | Persistence | Save/load round-trips a circuit; undo/redo works across all edits |
-| M8 | Polish | Input-count attribute, SVG export, then flip-flops |
+| M8 | Polish | Input-count attribute, variable-input rendering, SVG export, then flip-flops |
 
 ## 10. Decisions log
 - Conflicting drivers on one net resolve to X (M1).
@@ -106,6 +123,10 @@ Nets are NOT stored; they are rebuilt on load.
 - A cross-coupled NOR latch with S=R=ZERO is a stable unknown state (Q=Qbar=X),
   not an oscillation. Setting S or R then drives the corresponding set/reset
   state; returning both controls low holds the established state.
+- Gate dimensions stay exactly as specified by `gates.json`: M3 does not
+  normalize or edit artwork geometry. Component origin is the output pin;
+  for the `output` probe, the sole input pin is the origin. Variable-input
+  rendering is deferred to M8.
 
 ## 10b. Open questions
 - Final gate sizes (narrow vs wide)
