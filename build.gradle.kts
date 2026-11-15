@@ -1,5 +1,6 @@
 plugins {
     java
+    application
 }
 
 group = "io.github.evilalee.gatelab"
@@ -11,11 +12,17 @@ java {
     }
 }
 
+application {
+    mainClass.set("io.github.evilalee.gatelab.ui.Main")
+}
+
 repositories {
     mavenCentral()
 }
 
 dependencies {
+    implementation("com.formdev:flatlaf:3.7.2")
+
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
