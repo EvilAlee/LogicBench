@@ -9,6 +9,7 @@
 
 ## In progress
 - M4: placed-component Schematic, canvas add/select/move/rotate/delete interactions
+  - Arrow facing shortcuts use the canvas `WHEN_FOCUSED` map; Escape/Delete/Backspace/Space/G remain in `WHEN_IN_FOCUSED_WINDOW`.
   - Branch: m4-placement   PR: #8
 
 ## Next

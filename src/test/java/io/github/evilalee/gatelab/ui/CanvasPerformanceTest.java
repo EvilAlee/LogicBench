@@ -2,6 +2,8 @@ package io.github.evilalee.gatelab.ui;
 
 import org.junit.jupiter.api.Test;
 
+import javax.swing.JComponent;
+import javax.swing.KeyStroke;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.event.InputEvent;
@@ -10,9 +12,11 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionListener;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
+import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CanvasPerformanceTest {
@@ -100,6 +104,33 @@ class CanvasPerformanceTest {
         assertEquals("and", facingCanvas.schematic().components().getFirst().typeId());
         assertEquals(io.github.evilalee.gatelab.model.Facing.SOUTH,
                 facingCanvas.schematic().components().getFirst().facing());
+    }
+
+    @Test
+    void arrowFacingKeysAreBoundInTheFocusedInputMap() {
+        CanvasPanel canvas = new CanvasPanel();
+        var focused = canvas.getInputMap(JComponent.WHEN_FOCUSED);
+        var window = canvas.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+
+        assertEquals("face-east", focused.get(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0)));
+        assertEquals("face-south", focused.get(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0)));
+        assertEquals("face-west", focused.get(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0)));
+        assertEquals("face-north", focused.get(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0)));
+
+        assertNull(window.get(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0)));
+        assertNull(window.get(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0)));
+        assertNull(window.get(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0)));
+        assertNull(window.get(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0)));
+
+        assertEquals("return-to-edit", window.get(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)));
+        assertEquals("delete-selection", window.get(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0)));
+        assertEquals("backspace-delete-selection",
+                window.get(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0)));
+        assertEquals("pan-space-down",
+                window.get(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, false)));
+        assertEquals("pan-space-up",
+                window.get(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, true)));
+        assertEquals("toggle-pin-markers", window.get(KeyStroke.getKeyStroke(KeyEvent.VK_G, 0)));
     }
 
     @Test

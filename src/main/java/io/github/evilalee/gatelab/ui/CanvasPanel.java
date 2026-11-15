@@ -268,14 +268,23 @@ public final class CanvasPanel extends JPanel {
         bindKey(KeyEvent.VK_ESCAPE, "return-to-edit", this::setEditMode);
         bindKey(KeyEvent.VK_DELETE, "delete-selection", this::deleteSelection);
         bindKey(KeyEvent.VK_BACK_SPACE, "backspace-delete-selection", this::deleteSelection);
-        bindKey(KeyEvent.VK_RIGHT, "face-east", () -> setFacing(Facing.EAST));
-        bindKey(KeyEvent.VK_DOWN, "face-south", () -> setFacing(Facing.SOUTH));
-        bindKey(KeyEvent.VK_LEFT, "face-west", () -> setFacing(Facing.WEST));
-        bindKey(KeyEvent.VK_UP, "face-north", () -> setFacing(Facing.NORTH));
+        bindKeyWhenFocused(KeyEvent.VK_RIGHT, "face-east", () -> setFacing(Facing.EAST));
+        bindKeyWhenFocused(KeyEvent.VK_DOWN, "face-south", () -> setFacing(Facing.SOUTH));
+        bindKeyWhenFocused(KeyEvent.VK_LEFT, "face-west", () -> setFacing(Facing.WEST));
+        bindKeyWhenFocused(KeyEvent.VK_UP, "face-north", () -> setFacing(Facing.NORTH));
     }
 
     private void bindKey(int keyCode, String actionName, Runnable action) {
-        getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+        bindKey(keyCode, actionName, action, JComponent.WHEN_IN_FOCUSED_WINDOW);
+    }
+
+    private void bindKeyWhenFocused(int keyCode, String actionName, Runnable action) {
+        bindKey(keyCode, actionName, action, JComponent.WHEN_FOCUSED);
+    }
+
+    private void bindKey(
+            int keyCode, String actionName, Runnable action, int inputMapCondition) {
+        getInputMap(inputMapCondition).put(
                 KeyStroke.getKeyStroke(keyCode, 0), actionName);
         getActionMap().put(actionName, new AbstractAction() {
             @Override
