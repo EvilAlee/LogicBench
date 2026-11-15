@@ -15,9 +15,6 @@
 - M9a: per-component Facing/Size/Input-count attributes, variant resolution, save/load, undo and attribute table
   - Branch: m9a-attributes
   - PR pending review
-- M9a: per-component Facing/Size/Input-count attributes, variant resolution, save/load, undo and attribute table
-  - Branch: m9a-attributes
-  - PR pending review
 
 ## Next
 - M8 polish
