@@ -178,7 +178,7 @@ public final class Schematic {
         }
 
         List<PinMove> linkedPins = pinsWithStationaryAttachments(
-                replacements, movingComponentIds, Set.of());
+                replacements, replacements.keySet(), Set.of());
         replaceComponents(replacements);
         for (PinMove pinMove : linkedPins) {
             addConnectingPath(pinMove.oldPin(), pinMove.newPin());

@@ -35,6 +35,11 @@ class ComponentWireLinkTest {
                     pin(schematic, fixture.gate(), "out"),
                     pin(schematic, fixture.output(), "in0"));
 
+            if (delta[0] == 20 && delta[1] == 10) {
+                assertTrue(schematic.wires().contains(new WireSegment(70, -10, 90, -10)),
+                        "the larger horizontal delta determines the first leg of the link");
+                assertTrue(schematic.wires().contains(new WireSegment(90, -10, 90, 0)));
+            }
             assertEquals(Value.ONE, SchematicCompiler.compileAndSettle(schematic)
                     .outputValues().get(fixture.output().id()),
                     "the moved gate must still simulate to the same output");
@@ -54,6 +59,20 @@ class ComponentWireLinkTest {
         WireSegment link = new WireSegment(70, -10, 90, -10);
         assertTrue(schematic.wires().contains(link),
                 "the T-connected pin must receive a link even though it touched the wire interior");
+        assertConnected(schematic,
+                pin(schematic, input, "out"),
+                pin(schematic, gate, "in0"));
+    }
+
+    @Test
+    void oldPinCoincidentWithANonMovingComponentPinGetsALink() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        PlacedComponent input = schematic.add("input", 70, -10, Facing.EAST);
+
+        schematic.move(gate.id(), 120, 0);
+
+        assertEquals(List.of(new WireSegment(70, -10, 90, -10)), schematic.wires());
         assertConnected(schematic,
                 pin(schematic, input, "out"),
                 pin(schematic, gate, "in0"));
