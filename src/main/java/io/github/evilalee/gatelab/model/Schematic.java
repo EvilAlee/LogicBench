@@ -31,6 +31,9 @@ public final class Schematic {
             Connectivity.PinPosition newPin) {
     }
 
+    private record GestureCommit(boolean linksFollowed, boolean committed) {
+    }
+
     private final Map<String, GateDef> definitionsById;
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<WireSegment> wires = new ArrayList<>();
@@ -140,8 +143,9 @@ public final class Schematic {
                 baseWires.add(wire);
             }
         }
+        List<WireSegment> movingWireOrder = new ArrayList<>(movingWires);
         List<WireSegment> movedWires = new ArrayList<>();
-        for (WireSegment wire : movingWires) {
+        for (WireSegment wire : movingWireOrder) {
             WireSegment translated = translateWire(wire, deltaX, deltaY);
             if (!baseWires.contains(translated)) {
                 baseWires.add(translated);
@@ -153,8 +157,12 @@ public final class Schematic {
             return new MoveResult(List.of(), true);
         }
 
-        boolean linksFollowed = commitValidatedGesture(replacements, movingWires, baseWires);
-        return new MoveResult(List.copyOf(new LinkedHashSet<>(movedWires)), linksFollowed);
+        GestureCommit commit = commitValidatedGesture(replacements, movingWires, baseWires);
+        List<WireSegment> selectedAfterCommit = commit.committed()
+                ? movedWires
+                : movingWireOrder;
+        return new MoveResult(
+                List.copyOf(new LinkedHashSet<>(selectedAfterCommit)), commit.linksFollowed());
     }
 
     /** Changes one component's facing and safely follows its stationary connections. */
@@ -181,14 +189,15 @@ public final class Schematic {
         if (replacements.isEmpty()) {
             return true;
         }
-        return commitValidatedGesture(replacements, Set.of(), List.copyOf(wires));
+        return commitValidatedGesture(
+                replacements, Set.of(), List.copyOf(wires)).linksFollowed();
     }
 
     /**
      * Computes the before-net partition before changing geometry, tries every
      * deterministic orthogonal route, and publishes exactly one schematic change.
      */
-    private boolean commitValidatedGesture(
+    private GestureCommit commitValidatedGesture(
             Map<String, PlacedComponent> replacements,
             Set<WireSegment> movingWires,
             List<WireSegment> baseWires) {
@@ -215,7 +224,7 @@ public final class Schematic {
             replaceComponents(originalComponents);
             wires.clear();
             wires.addAll(originalWires);
-            return false;
+            return new GestureCommit(false, false);
         }
 
         boolean linksFollowed = true;
@@ -252,7 +261,7 @@ public final class Schematic {
         }
 
         notifyChanged();
-        return linksFollowed;
+        return new GestureCommit(linksFollowed, true);
     }
 
     private List<PinMove> attachedPinsToFollow(

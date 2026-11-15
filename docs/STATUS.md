@@ -28,7 +28,7 @@
 - Input state is stored per input in Schematic; default LOW.
 - ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255); selected wires use an orange translucent halo.
 - Component origin, rotation, 10-unit grid, and geometric wire representation remain unchanged.
-- M8b-v2 validates every generated move/rotation link against the complete pre-gesture pin-net partition; if no safe route exists or any prior connection is lost, it discards all generated links, keeps stationary wires in place, and reports "Some wires could not follow".
+- M8b-v2 validates generated move/rotation links against the complete pre-gesture pin-net partition; if no safe route exists or a prior connection is lost, it discards all generated links, keeps stationary wires in place, and reports "Some wires could not follow". If moving pin destinations alone would already merge separate before nets, the movement itself is rejected because the no-link fallback would still short.
 - M7b history snapshots contain only placed components and geometric wire segments; input poke values are not history state.
 - Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
 - New/Open clear history; Save leaves it intact.

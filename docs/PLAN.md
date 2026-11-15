@@ -112,7 +112,10 @@ from the components and wire geometry after loading.
   If any route fails or connectivity is lost, all generated links for that
   gesture are discarded and the component move/facing change is committed with
   the original stationary wires left behind; the UI shows
-  "Some wires could not follow". No route state is retained between gestures.
+  "Some wires could not follow". If the moved pin positions themselves would
+  merge different before nets even with no generated links, reject the movement
+  itself, since committing that M4 fallback would still leave a short. No route
+  state is retained between gestures.
   Wires selected as part of the move still move with the selection and do not
   generate automatic links.
 
