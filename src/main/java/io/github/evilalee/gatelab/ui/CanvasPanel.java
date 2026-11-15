@@ -598,13 +598,13 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void updateWireGestureMovement(Point screenPoint) {
-        updateGestureMovement(screenPoint);
-        if (wireStartPoint == null) {
+        if (gestureStartScreen == null || screenPoint == null) {
             return;
         }
-        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
-        if (snapToGrid(world.x) != wireStartPoint.x()
-                || snapToGrid(world.y) != wireStartPoint.y()) {
+        double dx = screenPoint.x - gestureStartScreen.x;
+        double dy = screenPoint.y - gestureStartScreen.y;
+        // A grid step is only 2.5 screen pixels at minimum zoom.
+        if (dx * dx + dy * dy >= 4.0) {
             gestureMoved = true;
         }
     }

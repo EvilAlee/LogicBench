@@ -46,7 +46,8 @@ class CanvasWiringTest {
         canvas.getActionMap().get("delete-selection").actionPerformed(
                 new java.awt.event.ActionEvent(
                         canvas, java.awt.event.ActionEvent.ACTION_PERFORMED, "delete"));
-        assertTrue(canvas.schematic().wires().isEmpty());
+        assertEquals(List.of(expected.get(1)), canvas.schematic().wires(),
+                "deleting a selected wire leaves the other unselected segment intact");
         assertTrue(canvas.selectedWires().isEmpty());
     }
 
