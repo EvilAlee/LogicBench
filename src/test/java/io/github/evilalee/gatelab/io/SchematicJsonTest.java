@@ -1,0 +1,119 @@
+package io.github.evilalee.gatelab.io;
+
+import io.github.evilalee.gatelab.model.Facing;
+import io.github.evilalee.gatelab.model.GateDef;
+import io.github.evilalee.gatelab.model.PlacedComponent;
+import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.WireSegment;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class SchematicJsonTest {
+    private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
+
+    @Test
+    void roundTripPreservesEveryComponentTypeFacingWireAndInputState() {
+        Schematic original = new Schematic(DEFINITIONS);
+        int x = 100;
+        for (GateDef definition : DEFINITIONS) {
+            for (Facing facing : Facing.values()) {
+                PlacedComponent placed = original.add(
+                        definition.id(), x, 100 + facing.ordinal() * 60, facing);
+                if ("input".equals(definition.id()) && facing.ordinal() % 2 == 1) {
+                    original.setInputValue(placed.id(), true);
+                }
+                x += 100;
+            }
+        }
+        original.addWire(new WireSegment(0, 0, 40, 0));
+        original.addWire(new WireSegment(40, 0, 40, 30));
+
+        String json = SchematicJson.toJson(original);
+        assertFalse(json.contains("netValues"));
+        assertFalse(json.contains("simulationResult"));
+        Schematic loaded = SchematicJson.fromJson(json, DEFINITIONS);
+
+        assertEquals(original.components(), loaded.components());
+        assertEquals(original.wires(), loaded.wires());
+        for (PlacedComponent component : original.components()) {
+            if ("input".equals(component.typeId())) {
+                assertEquals(original.inputValue(component.id()), loaded.inputValue(component.id()));
+            }
+        }
+    }
+
+    @Test
+    void rejectsUnsupportedVersion() {
+        assertInvalid("{\"version\":2,\"components\":[],\"wires\":[]}", "version");
+    }
+
+    @Test
+    void rejectsUnknownComponentType() {
+        assertInvalid(document(component("a", "mystery", 0, 0, "EAST")), "unknown component type");
+    }
+
+    @Test
+    void rejectsOffGridComponentCoordinates() {
+        assertInvalid(document(component("a", "and", 11, 0, "EAST")), "grid");
+    }
+
+    @Test
+    void rejectsDuplicateComponentIds() {
+        String item = component("same", "input", 0, 0, "EAST");
+        assertInvalid("{\"version\":1,\"components\":["+item+","+item+"],\"wires\":[]}",
+                "Duplicate component id");
+    }
+
+    @Test
+    void rejectsNonOrthogonalWire() {
+        assertInvalid("{\"version\":1,\"components\":[],\"wires\":["
+                +"{\"x1\":0,\"y1\":0,\"x2\":10,\"y2\":10}]}", "axis-aligned");
+    }
+
+    @Test
+    void rejectsZeroLengthWire() {
+        assertInvalid("{\"version\":1,\"components\":[],\"wires\":["
+                +"{\"x1\":0,\"y1\":0,\"x2\":0,\"y2\":0}]}", "non-zero");
+    }
+
+    @Test
+    void rejectsOffGridWireCoordinates() {
+        assertInvalid("{\"version\":1,\"components\":[],\"wires\":["
+                +"{\"x1\":0,\"y1\":0,\"x2\":11,\"y2\":0}]}", "grid");
+    }
+
+    @Test
+    void rejectsHighFlagOnNonInputComponent() {
+        assertInvalid("{\"version\":1,\"components\":["
+                +"{\"id\":\"o\",\"type\":\"output\",\"x\":0,\"y\":0,"
+                +"\"facing\":\"EAST\",\"high\":true}],\"wires\":[]}", "only valid for input");
+    }
+
+    @Test
+    void generatedIdsDoNotCollideWithIdsLoadedFromJson() {
+        String loadedId = "component-1";
+        Schematic loaded = SchematicJson.fromJson(document(
+                component(loadedId, "input", 0, 0, "EAST")), DEFINITIONS);
+        PlacedComponent placed = loaded.add("output", 100, 0, Facing.EAST);
+        assertNotEquals(loadedId, placed.id());
+    }
+
+    private static void assertInvalid(String json, String messagePart) {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class, () -> SchematicJson.fromJson(json, DEFINITIONS));
+        assertTrue(exception.getMessage().toLowerCase().contains(messagePart.toLowerCase()),
+                exception.getMessage());
+    }
+
+    private static String document(String component) {
+        return "{\"version\":1,\"components\":["+component+"],\"wires\":[]}";
+    }
+
+    private static String component(String id, String type, int x, int y, String facing) {
+        return "{\"id\":\""+id+"\",\"type\":\""+type+"\",\"x\":"+x
+                +",\"y\":"+y+",\"facing\":\""+facing+"\"}";
+    }
+}
