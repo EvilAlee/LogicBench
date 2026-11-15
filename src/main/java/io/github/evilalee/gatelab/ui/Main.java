@@ -1,6 +1,8 @@
 package io.github.evilalee.gatelab.ui;
 
 import com.formdev.flatlaf.FlatLightLaf;
+import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.PlacedComponent;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
@@ -14,6 +16,7 @@ import javax.swing.JTable;
 import javax.swing.JToggleButton;
 import javax.swing.JToolBar;
 import javax.swing.JTree;
+import javax.swing.TransferHandler;
 import javax.swing.UIManager;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -23,6 +26,8 @@ import java.awt.Color;
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Insets;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
 import java.util.Arrays;
 
 /** Swing application entry point for the LogicBench desktop window. */
@@ -64,10 +69,33 @@ public final class Main {
 
     private static Container createContent(boolean galleryMode) {
         javax.swing.JPanel content = new javax.swing.JPanel(new BorderLayout());
-        content.add(createToolbar(), BorderLayout.NORTH);
 
         CanvasPanel canvas = new CanvasPanel(galleryMode);
-        JSplitPane leftColumn = createLeftColumn();
+        JToggleButton edit = new JToggleButton("Edit");
+        JToggleButton poke = new JToggleButton("Poke");
+        content.add(createToolbar(canvas, edit, poke), BorderLayout.NORTH);
+
+        DefaultTableModel attributesModel = new DefaultTableModel(
+                new Object[]{"Attribute", "Value"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        JTable attributes = new JTable(attributesModel);
+        attributes.setFillsViewportHeight(true);
+        attributes.setRowHeight(22);
+        attributes.getTableHeader().setReorderingAllowed(false);
+        canvas.setSelectionListener(selection -> {
+            attributesModel.setRowCount(0);
+            if (selection.size() == 1) {
+                PlacedComponent component = selection.getFirst();
+                attributesModel.addRow(new Object[]{"Type", component.typeId()});
+                attributesModel.addRow(new Object[]{"Facing", component.facing().name()});
+            }
+        });
+
+        JSplitPane leftColumn = createLeftColumn(canvas, attributes);
         JSplitPane workspace = new JSplitPane(
                 JSplitPane.HORIZONTAL_SPLIT, leftColumn, canvas);
         workspace.setContinuousLayout(true);
@@ -76,6 +104,11 @@ public final class Main {
         workspace.setDividerLocation(265);
         workspace.setBorder(BorderFactory.createEmptyBorder());
         content.add(workspace, BorderLayout.CENTER);
+
+        canvas.setToolModeListener(tool -> {
+            edit.setSelected(tool != CanvasPanel.Tool.POKE);
+            poke.setSelected(tool == CanvasPanel.Tool.POKE);
+        });
         return content;
     }
 
@@ -106,15 +139,14 @@ public final class Main {
         return menu;
     }
 
-    private static JToolBar createToolbar() {
+    private static JToolBar createToolbar(
+            CanvasPanel canvas, JToggleButton edit, JToggleButton poke) {
         JToolBar toolbar = new JToolBar();
         toolbar.setFloatable(false);
         toolbar.setRollover(false);
         toolbar.setBorder(BorderFactory.createMatteBorder(
                 0, 0, 1, 0, new Color(205, 209, 214)));
 
-        JToggleButton edit = new JToggleButton("Edit");
-        JToggleButton poke = new JToggleButton("Poke");
         edit.setMargin(new Insets(4, 12, 4, 12));
         poke.setMargin(new Insets(4, 12, 4, 12));
         edit.setFocusable(false);
@@ -124,46 +156,72 @@ public final class Main {
         tools.add(edit);
         tools.add(poke);
         edit.setSelected(true);
+        edit.addActionListener(event -> canvas.setEditMode());
+        poke.addActionListener(event -> canvas.setPokeMode());
 
         toolbar.add(edit);
         toolbar.add(poke);
         return toolbar;
     }
 
-    private static JSplitPane createLeftColumn() {
+    private static JSplitPane createLeftColumn(CanvasPanel canvas, JTable attributes) {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("Components");
         DefaultMutableTreeNode gates = new DefaultMutableTreeNode("Gates");
-        for (String gate : new String[]{
-                "AND", "OR", "NOT", "NAND", "NOR", "XOR", "XNOR", "Buffer"}) {
-            gates.add(new DefaultMutableTreeNode(gate));
-        }
         DefaultMutableTreeNode pins = new DefaultMutableTreeNode("Pins");
-        pins.add(new DefaultMutableTreeNode("Input"));
-        pins.add(new DefaultMutableTreeNode("Output"));
+
+        for (var definition : GateLibrary.load().all()) {
+            ComponentTreeItem item = new ComponentTreeItem(
+                    definition.id(), treeLabel(definition.id()));
+            if (definition.id().equals("input") || definition.id().equals("output")) {
+                pins.add(new DefaultMutableTreeNode(item));
+            } else {
+                gates.add(new DefaultMutableTreeNode(item));
+            }
+        }
         root.add(gates);
         root.add(pins);
 
         JTree tree = new JTree(root);
         tree.setRootVisible(true);
         tree.setShowsRootHandles(true);
+        tree.setDragEnabled(true);
         tree.expandPath(new TreePath(root.getPath()));
         tree.expandPath(new TreePath(gates.getPath()));
         tree.expandPath(new TreePath(pins.getPath()));
+        tree.addTreeSelectionListener(event -> {
+            TreePath path = tree.getSelectionPath();
+            if (path == null) {
+                return;
+            }
+            Object node = path.getLastPathComponent();
+            if (node instanceof DefaultMutableTreeNode treeNode
+                    && treeNode.getUserObject() instanceof ComponentTreeItem item) {
+                canvas.enterAddMode(item.typeId());
+            }
+        });
+        tree.setTransferHandler(new TransferHandler() {
+            @Override
+            public int getSourceActions(javax.swing.JComponent component) {
+                return COPY;
+            }
+
+            @Override
+            protected Transferable createTransferable(javax.swing.JComponent component) {
+                TreePath path = tree.getSelectionPath();
+                if (path == null) {
+                    return null;
+                }
+                Object node = path.getLastPathComponent();
+                if (node instanceof DefaultMutableTreeNode treeNode
+                        && treeNode.getUserObject() instanceof ComponentTreeItem item) {
+                    return new StringSelection(item.typeId());
+                }
+                return null;
+            }
+        });
 
         JScrollPane explorer = new JScrollPane(tree);
         explorer.setBorder(BorderFactory.createTitledBorder("Component Explorer"));
-
-        DefaultTableModel attributesModel = new DefaultTableModel(
-                new Object[]{"Attribute", "Value"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        JTable attributes = new JTable(attributesModel);
-        attributes.setFillsViewportHeight(true);
-        attributes.setRowHeight(22);
-        attributes.getTableHeader().setReorderingAllowed(false);
 
         JScrollPane attributeTable = new JScrollPane(attributes);
         attributeTable.setBorder(BorderFactory.createTitledBorder("Attributes"));
@@ -178,5 +236,22 @@ public final class Main {
         splitPane.setBorder(BorderFactory.createEmptyBorder());
         splitPane.setMinimumSize(new Dimension(230, 200));
         return splitPane;
+    }
+
+    private static String treeLabel(String id) {
+        return switch (id) {
+            case "and", "or", "not", "nand", "nor", "xor", "xnor" -> id.toUpperCase();
+            case "buffer" -> "Buffer";
+            case "input" -> "Input";
+            case "output" -> "Output";
+            default -> id;
+        };
+    }
+
+    private record ComponentTreeItem(String typeId, String label) {
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 }

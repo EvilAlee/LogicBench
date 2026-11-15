@@ -4,12 +4,17 @@ import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
+import io.github.evilalee.gatelab.model.PlacedComponent;
+import io.github.evilalee.gatelab.model.Schematic;
 
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import javax.swing.TransferHandler;
+import java.awt.AlphaComposite;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
@@ -18,28 +23,54 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.RenderingHints;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.geom.Point2D;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 
-/** White M2 work surface, with an optional M3 SVG gallery. */
+/** Grid canvas for the M4 schematic editor, with an optional M3 SVG gallery. */
 public final class CanvasPanel extends JPanel {
-    private static final int WORLD_GRID_SPACING = 10;
+    private static final int WORLD_GRID_SPACING = PlacedComponent.GRID_SPACING;
     private static final double MIN_SCREEN_GRID_SPACING = 4.0;
     private static final double ZOOM_PER_WHEEL_NOTCH = 1.12;
+    private static final double DRAG_THRESHOLD_SQUARED = 9.0;
 
     private static final int GALLERY_FIRST_ORIGIN_X = 90;
     private static final int GALLERY_HEADER_BOTTOM = 40;
     private static final int GALLERY_ROW_MARGIN = 20;
     private static final int GALLERY_COLUMN_SPACING = 165;
 
+    public enum Tool {
+        EDIT,
+        POKE,
+        ADD
+    }
+
+    private enum Gesture {
+        NONE,
+        ADD_CLICK,
+        MOVE_SELECTION,
+        SELECT_RECTANGLE
+    }
+
     private final ViewTransform transform = new ViewTransform(1.0, 24.0, 24.0);
     private final boolean galleryMode;
     private final GateLibrary gateLibrary;
     private final GateRenderer gateRenderer;
+    private final Schematic schematic;
+    private final Set<String> selectedIds = new LinkedHashSet<>();
+
     private final int galleryFirstOriginY;
     private final int galleryRowPitch;
     private boolean showPinMarkers = true;
@@ -47,14 +78,33 @@ public final class CanvasPanel extends JPanel {
     private boolean panning;
     private Point lastPanPoint;
 
+    private Tool activeTool = Tool.EDIT;
+    private String previewTypeId;
+    private Facing previewFacing = Facing.EAST;
+    private int previewX;
+    private int previewY;
+    private Consumer<List<PlacedComponent>> selectionListener = ignored -> { };
+    private Consumer<Tool> toolModeListener = ignored -> { };
+
+    private Gesture gesture = Gesture.NONE;
+    private Point gestureStartScreen;
+    private double gestureStartWorldX;
+    private double gestureStartWorldY;
+    private double pointerWorldX;
+    private double pointerWorldY;
+    private boolean gestureMoved;
+    private boolean additiveMarquee;
+    private Map<String, PlacedComponent> moveStartComponents = Map.of();
+
     public CanvasPanel() {
         this(false);
     }
 
     public CanvasPanel(boolean galleryMode) {
         this.galleryMode = galleryMode;
-        this.gateLibrary = galleryMode ? GateLibrary.load() : null;
-        this.gateRenderer = galleryMode ? new GateRenderer(gateLibrary) : null;
+        this.gateLibrary = GateLibrary.load();
+        this.gateRenderer = new GateRenderer(gateLibrary);
+        this.schematic = new Schematic(gateLibrary.all());
         this.galleryFirstOriginY = galleryMode ? galleryFirstOriginY(gateLibrary.all()) : 0;
         this.galleryRowPitch = galleryMode ? galleryRowPitch(gateLibrary.all()) : 0;
 
@@ -64,13 +114,14 @@ public final class CanvasPanel extends JPanel {
         setPreferredSize(new Dimension(900, 700));
         setToolTipText(galleryMode
                 ? "Middle-drag or Space + drag to pan; Ctrl + wheel to zoom; G toggles pin markers"
-                : "Middle-drag or Space + drag to pan; Ctrl + mouse wheel to zoom");
+                : "Click a component in the explorer to place; arrows set facing; Esc returns to Edit; "
+                        + "Middle-drag or Space + drag to pan; Ctrl + wheel to zoom");
 
         installSpaceBinding();
+        installGalleryKeyBinding();
+        installInteractionBindings();
         installMouseControls();
-        if (galleryMode) {
-            installGalleryKeyBinding();
-        }
+        installDropHandler();
     }
 
     public ViewTransform viewTransform() {
@@ -83,6 +134,72 @@ public final class CanvasPanel extends JPanel {
 
     public boolean arePinMarkersVisible() {
         return showPinMarkers;
+    }
+
+    public Schematic schematic() {
+        return schematic;
+    }
+
+    public void setSelectionListener(Consumer<List<PlacedComponent>> listener) {
+        selectionListener = listener == null ? ignored -> { } : listener;
+        notifySelectionChanged();
+    }
+
+    public void setToolModeListener(Consumer<Tool> listener) {
+        toolModeListener = listener == null ? ignored -> { } : listener;
+        toolModeListener.accept(activeTool);
+    }
+
+    /** Enters repeated-click placement mode for a catalogue type. */
+    public void enterAddMode(String typeId) {
+        if (galleryMode) {
+            return;
+        }
+        previewTypeId = gateLibrary.get(typeId).id();
+        previewFacing = Facing.EAST;
+        selectedIds.clear();
+        notifySelectionChanged();
+        activeTool = Tool.ADD;
+        Point2D.Double center = transform.screenToWorld(
+                Math.max(0, getWidth()) / 2.0, Math.max(0, getHeight()) / 2.0);
+        updatePreviewPosition(center.x, center.y);
+        resetGesture();
+        toolModeListener.accept(activeTool);
+        requestFocusInWindow();
+        repaint();
+    }
+
+    /** Returns the canvas to the selection tool. */
+    public void setEditMode() {
+        previewTypeId = null;
+        activeTool = Tool.EDIT;
+        resetGesture();
+        toolModeListener.accept(activeTool);
+        requestFocusInWindow();
+        repaint();
+    }
+
+    /** Selects the inert Poke tool; no input interaction is implemented in M4. */
+    public void setPokeMode() {
+        previewTypeId = null;
+        activeTool = Tool.POKE;
+        resetGesture();
+        toolModeListener.accept(activeTool);
+        requestFocusInWindow();
+        repaint();
+    }
+
+    /** One-shot tree drag/drop placement, sharing the same grid-snapped origin rule. */
+    public void placeFromDrop(String typeId, Point screenPoint) {
+        GateDef definition = gateLibrary.get(typeId);
+        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        PlacedComponent placed = schematic.add(
+                definition.id(), snapToGrid(world.x), snapToGrid(world.y), Facing.EAST);
+        selectedIds.clear();
+        selectedIds.add(placed.id());
+        setEditMode();
+        notifySelectionChanged();
+        repaint();
     }
 
     private void installSpaceBinding() {
@@ -111,8 +228,58 @@ public final class CanvasPanel extends JPanel {
         getActionMap().put("toggle-pin-markers", new AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent event) {
-                showPinMarkers = !showPinMarkers;
-                repaint();
+                if (galleryMode) {
+                    showPinMarkers = !showPinMarkers;
+                    repaint();
+                }
+            }
+        });
+    }
+
+    private void installInteractionBindings() {
+        bindKey(KeyEvent.VK_ESCAPE, "return-to-edit", this::setEditMode);
+        bindKey(KeyEvent.VK_DELETE, "delete-selection", this::deleteSelection);
+        bindKey(KeyEvent.VK_BACK_SPACE, "backspace-delete-selection", this::deleteSelection);
+        bindKey(KeyEvent.VK_RIGHT, "face-east", () -> setFacing(Facing.EAST));
+        bindKey(KeyEvent.VK_DOWN, "face-south", () -> setFacing(Facing.SOUTH));
+        bindKey(KeyEvent.VK_LEFT, "face-west", () -> setFacing(Facing.WEST));
+        bindKey(KeyEvent.VK_UP, "face-north", () -> setFacing(Facing.NORTH));
+    }
+
+    private void bindKey(int keyCode, String actionName, Runnable action) {
+        getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                KeyStroke.getKeyStroke(keyCode, 0), actionName);
+        getActionMap().put(actionName, new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                if (!galleryMode) {
+                    action.run();
+                }
+            }
+        });
+    }
+
+    private void installDropHandler() {
+        setTransferHandler(new TransferHandler() {
+            @Override
+            public boolean canImport(TransferSupport support) {
+                return !galleryMode && support.isDrop()
+                        && support.isDataFlavorSupported(DataFlavor.stringFlavor);
+            }
+
+            @Override
+            public boolean importData(TransferSupport support) {
+                if (!canImport(support)) {
+                    return false;
+                }
+                try {
+                    String typeId = (String) support.getTransferable()
+                            .getTransferData(DataFlavor.stringFlavor);
+                    placeFromDrop(typeId, support.getDropLocation().getDropPoint());
+                    return true;
+                } catch (UnsupportedFlavorException | IOException | IllegalArgumentException exception) {
+                    return false;
+                }
             }
         });
     }
@@ -127,20 +294,53 @@ public final class CanvasPanel extends JPanel {
                 if (middleDrag || spaceLeftDrag) {
                     panning = true;
                     lastPanPoint = event.getPoint();
+                    resetGesture();
                     setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                    return;
+                }
+                if (galleryMode || !SwingUtilities.isLeftMouseButton(event)) {
+                    return;
+                }
+
+                if (activeTool == Tool.ADD) {
+                    gesture = Gesture.ADD_CLICK;
+                    gestureStartScreen = event.getPoint();
+                    pointerFromScreen(event.getPoint());
+                } else if (activeTool == Tool.EDIT) {
+                    beginEditGesture(event);
                 }
             }
 
             @Override
             public void mouseDragged(MouseEvent event) {
-                if (!panning || lastPanPoint == null) {
+                if (panning && lastPanPoint != null) {
+                    transform.panBy(
+                            event.getX() - lastPanPoint.x,
+                            event.getY() - lastPanPoint.y);
+                    lastPanPoint = event.getPoint();
+                    repaint();
                     return;
                 }
-                transform.panBy(
-                        event.getX() - lastPanPoint.x,
-                        event.getY() - lastPanPoint.y);
-                lastPanPoint = event.getPoint();
-                repaint();
+
+                if (activeTool == Tool.ADD) {
+                    pointerFromScreen(event.getPoint());
+                    updateGestureMovement(event.getPoint());
+                    repaint();
+                    return;
+                }
+                if (activeTool == Tool.EDIT) {
+                    pointerFromScreen(event.getPoint());
+                    updateGestureMovement(event.getPoint());
+                    repaint();
+                }
+            }
+
+            @Override
+            public void mouseMoved(MouseEvent event) {
+                if (activeTool == Tool.ADD) {
+                    pointerFromScreen(event.getPoint());
+                    repaint();
+                }
             }
 
             @Override
@@ -149,6 +349,23 @@ public final class CanvasPanel extends JPanel {
                     panning = false;
                     lastPanPoint = null;
                     setCursor(Cursor.getDefaultCursor());
+                    return;
+                }
+                if (!SwingUtilities.isLeftMouseButton(event)) {
+                    return;
+                }
+
+                if (activeTool == Tool.ADD && gesture == Gesture.ADD_CLICK) {
+                    updateGestureMovement(event.getPoint());
+                    if (!gestureMoved && previewTypeId != null) {
+                        schematic.add(previewTypeId, previewX, previewY, previewFacing);
+                        repaint();
+                    }
+                    resetGesture();
+                    return;
+                }
+                if (activeTool == Tool.EDIT) {
+                    finishEditGesture(event);
                 }
             }
 
@@ -160,6 +377,9 @@ public final class CanvasPanel extends JPanel {
                 double factor = Math.pow(ZOOM_PER_WHEEL_NOTCH,
                         -event.getPreciseWheelRotation());
                 transform.zoomAt(event.getX(), event.getY(), factor);
+                if (activeTool == Tool.ADD) {
+                    pointerFromScreen(event.getPoint());
+                }
                 repaint();
                 event.consume();
             }
@@ -168,6 +388,167 @@ public final class CanvasPanel extends JPanel {
         addMouseListener(mouseControls);
         addMouseMotionListener(mouseControls);
         addMouseWheelListener(mouseControls);
+    }
+
+    private void beginEditGesture(MouseEvent event) {
+        Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
+        gestureStartWorldX = world.x;
+        gestureStartWorldY = world.y;
+        gestureStartScreen = event.getPoint();
+        gestureMoved = false;
+
+        int hitX = (int) Math.floor(world.x);
+        int hitY = (int) Math.floor(world.y);
+        PlacedComponent hit = schematic.componentAt(hitX, hitY).orElse(null);
+        boolean shift = event.isShiftDown();
+
+        if (hit != null && shift) {
+            if (!selectedIds.add(hit.id())) {
+                selectedIds.remove(hit.id());
+            }
+            notifySelectionChanged();
+            gesture = Gesture.NONE;
+            return;
+        }
+
+        if (hit == null) {
+            if (!shift) {
+                selectedIds.clear();
+                notifySelectionChanged();
+            }
+            additiveMarquee = shift;
+            gesture = Gesture.SELECT_RECTANGLE;
+            moveStartComponents = Map.of();
+            repaint();
+            return;
+        }
+
+        if (!selectedIds.contains(hit.id())) {
+            selectedIds.clear();
+            selectedIds.add(hit.id());
+            notifySelectionChanged();
+        }
+        gesture = Gesture.MOVE_SELECTION;
+        Map<String, PlacedComponent> starting = new LinkedHashMap<>();
+        for (PlacedComponent component : selectedComponents()) {
+            starting.put(component.id(), component);
+        }
+        moveStartComponents = Map.copyOf(starting);
+    }
+
+    private void updateGestureMovement(Point currentScreen) {
+        if (gestureStartScreen == null || currentScreen == null) {
+            return;
+        }
+        double dx = currentScreen.x - gestureStartScreen.x;
+        double dy = currentScreen.y - gestureStartScreen.y;
+        if (dx * dx + dy * dy >= DRAG_THRESHOLD_SQUARED) {
+            gestureMoved = true;
+        }
+    }
+
+    private void finishEditGesture(MouseEvent event) {
+        pointerFromScreen(event.getPoint());
+        updateGestureMovement(event.getPoint());
+
+        if (gesture == Gesture.MOVE_SELECTION && gestureMoved) {
+            int deltaX = snapToGrid(pointerWorldX - gestureStartWorldX);
+            int deltaY = snapToGrid(pointerWorldY - gestureStartWorldY);
+            for (PlacedComponent starting : moveStartComponents.values()) {
+                schematic.move(starting.id(), starting.x() + deltaX, starting.y() + deltaY);
+            }
+            notifySelectionChanged();
+        } else if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
+            GateGeometry.Bounds rectangle = selectionRectangle(
+                    gestureStartWorldX, gestureStartWorldY,
+                    pointerWorldX, pointerWorldY);
+            List<PlacedComponent> hits = schematic.componentsIntersecting(rectangle);
+            if (!additiveMarquee) {
+                selectedIds.clear();
+            }
+            for (PlacedComponent component : hits) {
+                selectedIds.add(component.id());
+            }
+            notifySelectionChanged();
+        }
+
+        resetGesture();
+        repaint();
+    }
+
+    private static GateGeometry.Bounds selectionRectangle(
+            double startX, double startY, double endX, double endY) {
+        int left = (int) Math.floor(Math.min(startX, endX));
+        int top = (int) Math.floor(Math.min(startY, endY));
+        int right = (int) Math.ceil(Math.max(startX, endX));
+        int bottom = (int) Math.ceil(Math.max(startY, endY));
+        return new GateGeometry.Bounds(left, top, right - left, bottom - top);
+    }
+
+    private void pointerFromScreen(Point screenPoint) {
+        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        pointerWorldX = world.x;
+        pointerWorldY = world.y;
+        updatePreviewPosition(world.x, world.y);
+    }
+
+    private void updatePreviewPosition(double worldX, double worldY) {
+        previewX = snapToGrid(worldX);
+        previewY = snapToGrid(worldY);
+    }
+
+    private static int snapToGrid(double coordinate) {
+        return (int) (Math.floor(coordinate / WORLD_GRID_SPACING + 0.5) * WORLD_GRID_SPACING);
+    }
+
+    private void setFacing(Facing facing) {
+        if (activeTool == Tool.ADD) {
+            previewFacing = facing;
+            repaint();
+            return;
+        }
+        if (selectedIds.isEmpty()) {
+            return;
+        }
+        for (PlacedComponent component : selectedComponents()) {
+            schematic.setFacing(component.id(), facing);
+        }
+        notifySelectionChanged();
+        repaint();
+    }
+
+    private void deleteSelection() {
+        if (selectedIds.isEmpty() || activeTool != Tool.EDIT) {
+            return;
+        }
+        for (String id : List.copyOf(selectedIds)) {
+            schematic.remove(id);
+        }
+        selectedIds.clear();
+        notifySelectionChanged();
+        repaint();
+    }
+
+    private List<PlacedComponent> selectedComponents() {
+        List<PlacedComponent> selected = new ArrayList<>();
+        for (PlacedComponent component : schematic.components()) {
+            if (selectedIds.contains(component.id())) {
+                selected.add(component);
+            }
+        }
+        return List.copyOf(selected);
+    }
+
+    private void notifySelectionChanged() {
+        selectionListener.accept(selectedComponents());
+    }
+
+    private void resetGesture() {
+        gesture = Gesture.NONE;
+        gestureStartScreen = null;
+        gestureMoved = false;
+        additiveMarquee = false;
+        moveStartComponents = Map.of();
     }
 
     @Override
@@ -181,6 +562,8 @@ public final class CanvasPanel extends JPanel {
             paintGrid(g2);
             if (galleryMode) {
                 paintGallery(g2);
+            } else {
+                paintSchematic(g2);
             }
         } finally {
             g2.dispose();
@@ -211,6 +594,87 @@ public final class CanvasPanel extends JPanel {
                 int screenX = (int) Math.round(point.x);
                 graphics.fillOval(screenX, screenY, dotSize, dotSize);
             }
+        }
+    }
+
+    private void paintSchematic(Graphics2D screenGraphics) {
+        Graphics2D worldGraphics = (Graphics2D) screenGraphics.create();
+        try {
+            worldGraphics.translate(transform.translateX(), transform.translateY());
+            worldGraphics.scale(transform.scale(), transform.scale());
+
+            int moveDeltaX = gesture == Gesture.MOVE_SELECTION && gestureMoved
+                    ? snapToGrid(pointerWorldX - gestureStartWorldX) : 0;
+            int moveDeltaY = gesture == Gesture.MOVE_SELECTION && gestureMoved
+                    ? snapToGrid(pointerWorldY - gestureStartWorldY) : 0;
+
+            for (PlacedComponent component : schematic.components()) {
+                boolean selected = selectedIds.contains(component.id());
+                boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
+                int x = component.x() + (moving ? moveDeltaX : 0);
+                int y = component.y() + (moving ? moveDeltaY : 0);
+
+                if (moving) {
+                    worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.72f));
+                } else {
+                    worldGraphics.setComposite(AlphaComposite.SrcOver);
+                }
+                GateDef definition = gateLibrary.get(component.typeId());
+                gateRenderer.render(
+                        worldGraphics, definition, component.facing(), x, y);
+                worldGraphics.setComposite(AlphaComposite.SrcOver);
+
+                if (selected) {
+                    paintSelectionOutline(worldGraphics, definition,
+                            component.facing(), x, y);
+                }
+            }
+
+            if (activeTool == Tool.ADD && previewTypeId != null) {
+                worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
+                gateRenderer.render(worldGraphics, gateLibrary.get(previewTypeId),
+                        previewFacing, previewX, previewY);
+                worldGraphics.setComposite(AlphaComposite.SrcOver);
+            }
+
+            if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
+                paintMarquee(worldGraphics);
+            }
+        } finally {
+            worldGraphics.dispose();
+        }
+    }
+
+    private void paintSelectionOutline(
+            Graphics2D graphics,
+            GateDef definition,
+            Facing facing,
+            int originX,
+            int originY) {
+        GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            g2.setColor(new Color(36, 112, 214));
+            g2.setStroke(new BasicStroke((float) (1.4 / transform.scale())));
+            g2.drawRect(originX + bounds.x(), originY + bounds.y(),
+                    bounds.width(), bounds.height());
+        } finally {
+            g2.dispose();
+        }
+    }
+
+    private void paintMarquee(Graphics2D graphics) {
+        GateGeometry.Bounds rectangle = selectionRectangle(
+                gestureStartWorldX, gestureStartWorldY, pointerWorldX, pointerWorldY);
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            g2.setColor(new Color(45, 125, 220, 28));
+            g2.fillRect(rectangle.x(), rectangle.y(), rectangle.width(), rectangle.height());
+            g2.setColor(new Color(36, 112, 214));
+            g2.setStroke(new BasicStroke((float) (1.0 / transform.scale())));
+            g2.drawRect(rectangle.x(), rectangle.y(), rectangle.width(), rectangle.height());
+        } finally {
+            g2.dispose();
         }
     }
 
