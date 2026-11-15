@@ -80,6 +80,8 @@ class SchematicTest {
         WireSegment wire = new WireSegment(0, 0, 20, 0);
         assertTrue(schematic.addWire(wire));
         assertEquals(9, schematic.modificationCount());
+        assertFalse(schematic.addWire(wire));
+        assertEquals(9, schematic.modificationCount());
         List<WireSegment> moved = schematic.moveWires(List.of(wire), 10, 0);
         assertEquals(List.of(new WireSegment(10, 0, 30, 0)), moved);
         assertEquals(10, schematic.modificationCount());
@@ -97,7 +99,7 @@ class SchematicTest {
         schematic.wireAt(0, 0, 1);
         assertFalse(schematic.remove("missing"));
         assertFalse(schematic.resetInputs());
-        assertFalse(schematic.addWire(wire));
+        assertFalse(schematic.removeWire(moved.getFirst()));
         assertEquals(13, schematic.modificationCount());
     }
 

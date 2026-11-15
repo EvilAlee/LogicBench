@@ -57,7 +57,7 @@ class SchematicJsonTest {
 
     @Test
     void rejectsOffGridComponentCoordinates() {
-        assertInvalid(document(component("a", "and", 11, 0, "EAST")), "grid");
+        assertInvalid(document(component("a", "and", 11, 0, "EAST")), "multiple of 10");
     }
 
     @Test
@@ -82,7 +82,7 @@ class SchematicJsonTest {
     @Test
     void rejectsOffGridWireCoordinates() {
         assertInvalid("{\"version\":1,\"components\":[],\"wires\":["
-                +"{\"x1\":0,\"y1\":0,\"x2\":11,\"y2\":0}]}", "grid");
+                +"{\"x1\":0,\"y1\":0,\"x2\":11,\"y2\":0}]}", "multiple of 10");
     }
 
     @Test
