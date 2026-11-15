@@ -18,6 +18,8 @@ public final class Schematic {
     private final Map<String, GateDef> definitionsById;
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<WireSegment> wires = new ArrayList<>();
+    private final Map<String, Boolean> inputValues = new HashMap<>();
+    private final List<Runnable> changeListeners = new ArrayList<>();
     private long nextComponentNumber = 1;
 
     public Schematic(Collection<GateDef> definitions) {
@@ -56,6 +58,7 @@ public final class Schematic {
             throw new IllegalArgumentException("duplicate component id: " + component.id());
         }
         components.add(component);
+        notifyChanged();
     }
 
     /** Removes the component with this id; returns false when it is not present. */
@@ -64,6 +67,8 @@ public final class Schematic {
         for (int index = 0; index < components.size(); index++) {
             if (components.get(index).id().equals(id)) {
                 components.remove(index);
+                inputValues.remove(id);
+                notifyChanged();
                 return true;
             }
         }
@@ -74,21 +79,74 @@ public final class Schematic {
     public void move(String id, int x, int y) {
         int index = indexOf(id);
         PlacedComponent current = components.get(index);
+        if (current.x() == x && current.y() == y) {
+            return;
+        }
         components.set(index, new PlacedComponent(
                 current.id(), current.typeId(), x, y, current.facing()));
+        notifyChanged();
     }
 
     /** Changes only the orientation; the origin remains fixed. */
     public void setFacing(String id, Facing facing) {
         int index = indexOf(id);
         PlacedComponent current = components.get(index);
+        if (current.facing() == facing) {
+            return;
+        }
         components.set(index, new PlacedComponent(
                 current.id(), current.typeId(), current.x(), current.y(), facing));
+        notifyChanged();
     }
 
     /** Returns an immutable snapshot in paint order (oldest first, newest on top). */
     public List<PlacedComponent> components() {
         return List.copyOf(components);
+    }
+
+    public void addChangeListener(Runnable listener) {
+        Objects.requireNonNull(listener, "listener");
+        if (!changeListeners.contains(listener)) {
+            changeListeners.add(listener);
+        }
+    }
+
+    public void removeChangeListener(Runnable listener) {
+        changeListeners.remove(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /** Input switches are LOW by default and keep their state through rebuilds. */
+    public boolean inputValue(String id) {
+        requireInput(id);
+        return Boolean.TRUE.equals(inputValues.get(id));
+    }
+
+    public void setInputValue(String id, boolean value) {
+        requireInput(id);
+        if (inputValue(id) == value) {
+            return;
+        }
+        if (value) {
+            inputValues.put(id, true);
+        } else {
+            inputValues.remove(id);
+        }
+        notifyChanged();
+    }
+
+    public boolean toggleInput(String id) {
+        boolean next = !inputValue(id);
+        setInputValue(id, next);
+        return next;
+    }
+
+    public boolean resetInputs() {
+        if (inputValues.isEmpty()) {
+            return false;
+        }
+        inputValues.clear();
+        notifyChanged();
+        return true;
     }
 
     public GateDef definitionFor(PlacedComponent component) {
@@ -160,6 +218,7 @@ public final class Schematic {
             return false;
         }
         wires.add(wire);
+        notifyChanged();
         return true;
     }
 
@@ -174,7 +233,11 @@ public final class Schematic {
     /** Removes a geometric wire; returns false when it is not present. */
     public boolean removeWire(WireSegment wire) {
         Objects.requireNonNull(wire, "wire");
-        return wires.remove(wire);
+        boolean removed = wires.remove(wire);
+        if (removed) {
+            notifyChanged();
+        }
+        return removed;
     }
 
     /** Returns an immutable snapshot in insertion order. */
@@ -195,7 +258,7 @@ public final class Schematic {
 
         Set<WireSegment> moving = new LinkedHashSet<>(selected);
         moving.retainAll(wires);
-        if (deltaX == 0 && deltaY == 0) {
+        if ((deltaX == 0 && deltaY == 0) || moving.isEmpty()) {
             return List.copyOf(moving);
         }
 
@@ -210,6 +273,7 @@ public final class Schematic {
             }
             moved.add(translated);
         }
+        notifyChanged();
         return List.copyOf(new LinkedHashSet<>(moved));
     }
 
@@ -275,6 +339,21 @@ public final class Schematic {
             }
         }
         return List.copyOf(pins);
+    }
+
+    private PlacedComponent requireInput(String id) {
+        Objects.requireNonNull(id, "id");
+        PlacedComponent component = components.get(indexOf(id));
+        if (!"input".equals(component.typeId())) {
+            throw new IllegalArgumentException("component is not an input: " + id);
+        }
+        return component;
+    }
+
+    private void notifyChanged() {
+        for (Runnable listener : List.copyOf(changeListeners)) {
+            listener.run();
+        }
     }
 
     private GateDef requireKnownType(String typeId) {

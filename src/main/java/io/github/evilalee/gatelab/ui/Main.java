@@ -70,17 +70,16 @@ public final class Main {
     static JFrame createFrame(boolean galleryMode) {
         JFrame frame = new JFrame("LogicBench");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setJMenuBar(createMenuBar());
-        frame.setContentPane(createContent(galleryMode));
+        CanvasPanel canvas = new CanvasPanel(galleryMode);
+        frame.setJMenuBar(createMenuBar(canvas));
+        frame.setContentPane(createContent(canvas));
         frame.setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
         frame.setLocationRelativeTo(null);
         return frame;
     }
 
-    private static Container createContent(boolean galleryMode) {
+    private static Container createContent(CanvasPanel canvas) {
         javax.swing.JPanel content = new javax.swing.JPanel(new BorderLayout());
-
-        CanvasPanel canvas = new CanvasPanel(galleryMode);
         JToggleButton edit = new JToggleButton("Edit");
         JToggleButton poke = new JToggleButton("Poke");
         content.add(createToolbar(canvas, edit, poke), BorderLayout.NORTH);
@@ -122,7 +121,7 @@ public final class Main {
         return content;
     }
 
-    private static JMenuBar createMenuBar() {
+    private static JMenuBar createMenuBar(CanvasPanel canvas) {
         JMenuBar menuBar = new JMenuBar();
         menuBar.add(menuWithDisabledItems("File", "New", "Open...", "Save", "Save As..."));
         JMenu fileMenu = menuBar.getMenu(0);
@@ -133,7 +132,12 @@ public final class Main {
 
         menuBar.add(menuWithDisabledItems("Edit", "Undo", "Redo", "Cut", "Copy", "Paste"));
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
-        menuBar.add(menuWithDisabledItems("Simulate", "Tick Once", "Ticks Enabled"));
+        JMenu simulate = menuWithDisabledItems("Simulate", "Tick Once", "Ticks Enabled");
+        JMenuItem reset = new JMenuItem("Reset");
+        reset.addActionListener(event -> canvas.resetInputs());
+        simulate.insert(reset, 0);
+        simulate.insertSeparator(1);
+        menuBar.add(simulate);
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
         menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
         return menuBar;
