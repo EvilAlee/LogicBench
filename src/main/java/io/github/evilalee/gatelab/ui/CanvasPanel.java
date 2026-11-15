@@ -195,24 +195,26 @@ public final class CanvasPanel extends JPanel {
 
     /** Returns the canvas to the selection tool. */
     public void setEditMode() {
-        Rectangle oldPreviewBounds = previewScreenBounds();
+        Rectangle oldTransientBounds = union(
+                previewScreenBounds(), gestureVisualScreenBounds());
         previewTypeId = null;
         activeTool = Tool.EDIT;
         resetGesture();
         toolModeListener.accept(activeTool);
         requestFocusInWindow();
-        repaintIfPresent(oldPreviewBounds);
+        repaintIfPresent(oldTransientBounds);
     }
 
     /** Selects the inert Poke tool; no input interaction is implemented in M4. */
     public void setPokeMode() {
-        Rectangle oldPreviewBounds = previewScreenBounds();
+        Rectangle oldTransientBounds = union(
+                previewScreenBounds(), gestureVisualScreenBounds());
         previewTypeId = null;
         activeTool = Tool.POKE;
         resetGesture();
         toolModeListener.accept(activeTool);
         requestFocusInWindow();
-        repaintIfPresent(oldPreviewBounds);
+        repaintIfPresent(oldTransientBounds);
     }
 
     /** One-shot tree drag/drop placement, sharing the same grid-snapped origin rule. */

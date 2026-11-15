@@ -67,7 +67,7 @@ class CanvasPerformanceTest {
         double originalScale = canvas.viewTransform().scale();
         MouseWheelEvent event = new MouseWheelEvent(
                 canvas, MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(),
-                InputEvent.CTRL_DOWN_MASK, 120, 100, 0, false,
+                InputEvent.CTRL_DOWN_MASK, 120, 100, 120, 100, 0, false,
                 MouseWheelEvent.WHEEL_UNIT_SCROLL, 1, 0, 0.5);
 
         for (MouseWheelListener listener : canvas.getMouseWheelListeners()) {
