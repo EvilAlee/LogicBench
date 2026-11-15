@@ -1,11 +1,13 @@
 package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.WireSegment;
 
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
@@ -67,6 +69,8 @@ public final class CanvasPanel extends JPanel {
     private enum Gesture {
         NONE,
         ADD_CLICK,
+        PENDING_WIRE_START,
+        DRAW_WIRE,
         MOVE_SELECTION,
         SELECT_RECTANGLE
     }
@@ -77,6 +81,7 @@ public final class CanvasPanel extends JPanel {
     private final GateRenderer gateRenderer;
     private final Schematic schematic;
     private final Set<String> selectedIds = new LinkedHashSet<>();
+    private final Set<WireSegment> selectedWires = new LinkedHashSet<>();
 
     private final int galleryFirstOriginY;
     private final int galleryRowPitch;
@@ -114,6 +119,11 @@ public final class CanvasPanel extends JPanel {
     private boolean gestureMoved;
     private boolean additiveMarquee;
     private Map<String, PlacedComponent> moveStartComponents = Map.of();
+    private Set<WireSegment> moveStartWires = Set.of();
+    private Connectivity.Point wireStartPoint;
+    private WireSegment pendingWireHit;
+    private boolean wireAxisChosen;
+    private boolean wireHorizontalFirst;
 
     public CanvasPanel() {
         this(false);
@@ -159,6 +169,10 @@ public final class CanvasPanel extends JPanel {
         return schematic;
     }
 
+    public List<WireSegment> selectedWires() {
+        return List.copyOf(selectedWires);
+    }
+
     public void setSelectionListener(Consumer<List<PlacedComponent>> listener) {
         selectionListener = listener == null ? ignored -> { } : listener;
         notifySelectionChanged();
@@ -182,6 +196,7 @@ public final class CanvasPanel extends JPanel {
         previewTypeId = resolvedTypeId;
         previewFacing = Facing.EAST;
         selectedIds.clear();
+        selectedWires.clear();
         notifySelectionChanged();
         activeTool = Tool.ADD;
         Point2D.Double center = transform.screenToWorld(
@@ -224,6 +239,7 @@ public final class CanvasPanel extends JPanel {
         PlacedComponent placed = placeAtWorld(
                 definition.id(), world.x, world.y, Facing.EAST);
         selectedIds.clear();
+        selectedWires.clear();
         selectedIds.add(placed.id());
         setEditMode();
         notifySelectionChanged();
@@ -369,6 +385,25 @@ public final class CanvasPanel extends JPanel {
                     return;
                 }
                 if (activeTool == Tool.EDIT) {
+                    if (gesture == Gesture.PENDING_WIRE_START) {
+                        Rectangle oldPreviewBounds = wirePreviewScreenBounds();
+                        updateWireGestureMovement(event.getPoint());
+                        if (gestureMoved) {
+                            gesture = Gesture.DRAW_WIRE;
+                            chooseWireAxis(event.getPoint());
+                            pointerFromScreen(event.getPoint());
+                        }
+                        repaintUnion(oldPreviewBounds, wirePreviewScreenBounds());
+                        return;
+                    }
+                    if (gesture == Gesture.DRAW_WIRE) {
+                        Rectangle oldPreviewBounds = wirePreviewScreenBounds();
+                        updateWireGestureMovement(event.getPoint());
+                        chooseWireAxis(event.getPoint());
+                        pointerFromScreen(event.getPoint());
+                        repaintUnion(oldPreviewBounds, wirePreviewScreenBounds());
+                        return;
+                    }
                     Rectangle oldGestureBounds = gestureVisualScreenBounds();
                     pointerFromScreen(event.getPoint());
                     updateGestureMovement(event.getPoint());
@@ -443,10 +478,53 @@ public final class CanvasPanel extends JPanel {
         gestureStartScreen = event.getPoint();
         gestureMoved = false;
 
+        boolean shift = event.isShiftDown();
+        Connectivity.PinPosition pin = pinNear(world.x, world.y);
+        double wireTolerance = 6.0 / transform.scale();
+        WireSegment wireHit = schematic.wireAt(world.x, world.y, wireTolerance).orElse(null);
+
+        if (wireHit != null && selectedWires.contains(wireHit) && !shift) {
+            gesture = Gesture.MOVE_SELECTION;
+            Map<String, PlacedComponent> starting = new LinkedHashMap<>();
+            for (PlacedComponent component : selectedComponents()) {
+                starting.put(component.id(), component);
+            }
+            moveStartComponents = Map.copyOf(starting);
+            moveStartWires = Set.copyOf(selectedWires);
+            repaintUnion(oldSelectionBounds, selectionScreenBounds());
+            return;
+        }
+        if (wireHit != null && shift) {
+            if (!selectedWires.add(wireHit)) {
+                selectedWires.remove(wireHit);
+            }
+            notifySelectionChanged();
+            repaintUnion(oldSelectionBounds, selectionScreenBounds());
+            return;
+        }
+
+        if (pin != null) {
+            startWireGesture(pin.x(), pin.y());
+            if (wireHit != null) {
+                // A click selects the line; a drag from this pin starts a branch.
+                pendingWireHit = wireHit;
+                gesture = Gesture.PENDING_WIRE_START;
+            }
+            repaintUnion(oldSelectionBounds, wirePreviewScreenBounds());
+            return;
+        }
+
+        if (wireHit != null) {
+            Connectivity.Point start = wireGridPoint(wireHit, world.x, world.y);
+            startWireGesture(start.x(), start.y());
+            pendingWireHit = wireHit;
+            gesture = Gesture.PENDING_WIRE_START;
+            return;
+        }
+
         int hitX = (int) Math.floor(world.x);
         int hitY = (int) Math.floor(world.y);
         PlacedComponent hit = schematic.componentAt(hitX, hitY).orElse(null);
-        boolean shift = event.isShiftDown();
 
         if (hit != null && shift) {
             if (!selectedIds.add(hit.id())) {
@@ -461,17 +539,20 @@ public final class CanvasPanel extends JPanel {
         if (hit == null) {
             if (!shift) {
                 selectedIds.clear();
+                selectedWires.clear();
                 notifySelectionChanged();
             }
             additiveMarquee = shift;
             gesture = Gesture.SELECT_RECTANGLE;
             moveStartComponents = Map.of();
+            moveStartWires = Set.of();
             repaintUnion(oldSelectionBounds, marqueeScreenBounds());
             return;
         }
 
         if (!selectedIds.contains(hit.id())) {
             selectedIds.clear();
+            selectedWires.clear();
             selectedIds.add(hit.id());
             notifySelectionChanged();
         }
@@ -481,6 +562,90 @@ public final class CanvasPanel extends JPanel {
             starting.put(component.id(), component);
         }
         moveStartComponents = Map.copyOf(starting);
+        moveStartWires = Set.copyOf(selectedWires);
+        repaintUnion(oldSelectionBounds, selectionScreenBounds());
+    }
+
+    private Connectivity.PinPosition pinNear(double worldX, double worldY) {
+        Connectivity.PinPosition nearest = null;
+        double nearestDistance = PlacedComponent.GRID_SPACING / 2.0;
+        for (Connectivity.PinPosition pin : schematic.pinPositions()) {
+            double distance = Math.hypot(worldX - pin.x(), worldY - pin.y());
+            if (distance <= nearestDistance) {
+                nearest = pin;
+                nearestDistance = distance;
+            }
+        }
+        return nearest;
+    }
+
+    private void startWireGesture(int x, int y) {
+        wireStartPoint = new Connectivity.Point(x, y);
+        wireAxisChosen = false;
+        wireHorizontalFirst = true;
+        pendingWireHit = null;
+        gesture = Gesture.DRAW_WIRE;
+    }
+
+    private Connectivity.Point wireGridPoint(
+            WireSegment wire, double worldX, double worldY) {
+        if (wire.isHorizontal()) {
+            int x = Math.max(wire.x1(), Math.min(wire.x2(), snapToGrid(worldX)));
+            return new Connectivity.Point(x, wire.y1());
+        }
+        int y = Math.max(wire.y1(), Math.min(wire.y2(), snapToGrid(worldY)));
+        return new Connectivity.Point(wire.x1(), y);
+    }
+
+    private void updateWireGestureMovement(Point screenPoint) {
+        if (gestureStartScreen == null || screenPoint == null) {
+            return;
+        }
+        double dx = screenPoint.x - gestureStartScreen.x;
+        double dy = screenPoint.y - gestureStartScreen.y;
+        // A grid step is only 2.5 screen pixels at minimum zoom.
+        if (dx * dx + dy * dy >= 4.0) {
+            gestureMoved = true;
+        }
+    }
+
+    private void chooseWireAxis(Point screenPoint) {
+        if (wireAxisChosen || gestureStartScreen == null) {
+            return;
+        }
+        int dx = screenPoint.x - gestureStartScreen.x;
+        int dy = screenPoint.y - gestureStartScreen.y;
+        if (dx != 0 || dy != 0) {
+            wireHorizontalFirst = Math.abs(dx) >= Math.abs(dy);
+            wireAxisChosen = true;
+        }
+    }
+
+    private List<WireSegment> wirePreviewSegments() {
+        if (wireStartPoint == null) {
+            return List.of();
+        }
+        int targetX = snapToGrid(pointerWorldX);
+        int targetY = snapToGrid(pointerWorldY);
+        int cornerX = wireHorizontalFirst ? targetX : wireStartPoint.x();
+        int cornerY = wireHorizontalFirst ? wireStartPoint.y() : targetY;
+        List<WireSegment> preview = new ArrayList<>(2);
+        if (wireStartPoint.x() != cornerX || wireStartPoint.y() != cornerY) {
+            preview.add(new WireSegment(
+                    wireStartPoint.x(), wireStartPoint.y(), cornerX, cornerY));
+        }
+        if (cornerX != targetX || cornerY != targetY) {
+            preview.add(new WireSegment(cornerX, cornerY, targetX, targetY));
+        }
+        return List.copyOf(preview);
+    }
+
+    private void selectWireClick(WireSegment wire) {
+        Rectangle oldSelectionBounds = selectionScreenBounds();
+        selectedIds.clear();
+        selectedWires.clear();
+        selectedWires.add(wire);
+        notifySelectionChanged();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());
     }
 
@@ -498,7 +663,38 @@ public final class CanvasPanel extends JPanel {
     private void finishEditGesture(MouseEvent event) {
         Rectangle oldGestureBounds = gestureVisualScreenBounds();
         pointerFromScreen(event.getPoint());
-        updateGestureMovement(event.getPoint());
+        if (gesture == Gesture.PENDING_WIRE_START || gesture == Gesture.DRAW_WIRE) {
+            updateWireGestureMovement(event.getPoint());
+        } else {
+            updateGestureMovement(event.getPoint());
+        }
+
+        if (gesture == Gesture.PENDING_WIRE_START && !gestureMoved) {
+            if (pendingWireHit != null) {
+                selectWireClick(pendingWireHit);
+            }
+            resetGesture();
+            repaintUnion(oldGestureBounds, selectionScreenBounds());
+            return;
+        }
+        if (gesture == Gesture.PENDING_WIRE_START) {
+            gesture = Gesture.DRAW_WIRE;
+        }
+
+        if (gesture == Gesture.DRAW_WIRE) {
+            Rectangle finalWireBounds = wirePreviewScreenBounds();
+            if (gestureMoved) {
+                chooseWireAxis(event.getPoint());
+                for (WireSegment segment : wirePreviewSegments()) {
+                    schematic.addWire(segment);
+                    finalWireBounds = union(finalWireBounds,
+                            wireSegmentScreenBounds(segment, DIRTY_REGION_MARGIN + 3));
+                }
+            }
+            resetGesture();
+            repaintUnion(oldGestureBounds, finalWireBounds);
+            return;
+        }
 
         if (gesture == Gesture.MOVE_SELECTION && gestureMoved) {
             int deltaX = snapToGrid(pointerWorldX - gestureStartWorldX);
@@ -506,18 +702,25 @@ public final class CanvasPanel extends JPanel {
             for (PlacedComponent starting : moveStartComponents.values()) {
                 schematic.move(starting.id(), starting.x() + deltaX, starting.y() + deltaY);
             }
+            if (!moveStartWires.isEmpty()) {
+                selectedWires.clear();
+                selectedWires.addAll(schematic.moveWires(moveStartWires, deltaX, deltaY));
+            }
             notifySelectionChanged();
         } else if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
             GateGeometry.Bounds rectangle = selectionRectangle(
                     gestureStartWorldX, gestureStartWorldY,
                     pointerWorldX, pointerWorldY);
             List<PlacedComponent> hits = schematic.componentsIntersecting(rectangle);
+            List<WireSegment> wireHits = schematic.wiresIntersecting(rectangle);
             if (!additiveMarquee) {
                 selectedIds.clear();
+                selectedWires.clear();
             }
             for (PlacedComponent component : hits) {
                 selectedIds.add(component.id());
             }
+            selectedWires.addAll(wireHits);
             notifySelectionChanged();
         }
 
@@ -575,14 +778,18 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void deleteSelection() {
-        if (selectedIds.isEmpty() || activeTool == Tool.ADD) {
+        if ((selectedIds.isEmpty() && selectedWires.isEmpty()) || activeTool == Tool.ADD) {
             return;
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
         for (String id : List.copyOf(selectedIds)) {
             schematic.remove(id);
         }
+        for (WireSegment wire : List.copyOf(selectedWires)) {
+            schematic.removeWire(wire);
+        }
         selectedIds.clear();
+        selectedWires.clear();
         notifySelectionChanged();
         repaintIfPresent(oldSelectionBounds);
     }
@@ -607,6 +814,10 @@ public final class CanvasPanel extends JPanel {
         gestureMoved = false;
         additiveMarquee = false;
         moveStartComponents = Map.of();
+        moveStartWires = Set.of();
+        wireStartPoint = null;
+        pendingWireHit = null;
+        wireAxisChosen = false;
     }
 
     @Override
@@ -744,6 +955,16 @@ public final class CanvasPanel extends JPanel {
             int moveDeltaY = gesture == Gesture.MOVE_SELECTION && gestureMoved
                     ? snapToGrid(pointerWorldY - gestureStartWorldY) : 0;
 
+            for (WireSegment wire : schematic.wires()) {
+                boolean selected = selectedWires.contains(wire);
+                boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
+                WireSegment rendered = moving
+                        ? translateWire(wire, moveDeltaX, moveDeltaY) : wire;
+                if (screenClip.intersects(wireSegmentScreenBounds(rendered, 5))) {
+                    paintWireSegment(worldGraphics, rendered, selected);
+                }
+            }
+
             for (PlacedComponent component : schematic.components()) {
                 boolean selected = selectedIds.contains(component.id());
                 boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
@@ -770,6 +991,32 @@ public final class CanvasPanel extends JPanel {
                 }
             }
 
+            Connectivity.Result topology = Connectivity.analyze(
+                    schematic.pinPositions(), schematic.wires());
+            worldGraphics.setColor(Color.BLACK);
+            for (Connectivity.Point junction : topology.junctions()) {
+                Point2D.Double screen = transform.worldToScreen(junction.x(), junction.y());
+                if (screenClip.contains(screen.x, screen.y)) {
+                    worldGraphics.fillOval(junction.x() - 3, junction.y() - 3, 6, 6);
+                }
+            }
+
+            if (gesture == Gesture.DRAW_WIRE && gestureMoved) {
+                Graphics2D previewGraphics = (Graphics2D) worldGraphics.create();
+                try {
+                    previewGraphics.setColor(new Color(36, 112, 214));
+                    previewGraphics.setStroke(new BasicStroke(
+                            2.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER,
+                            10.0f, new float[]{5.0f, 4.0f}, 0.0f));
+                    for (WireSegment segment : wirePreviewSegments()) {
+                        previewGraphics.drawLine(
+                                segment.x1(), segment.y1(), segment.x2(), segment.y2());
+                    }
+                } finally {
+                    previewGraphics.dispose();
+                }
+            }
+
             if (activeTool == Tool.ADD && previewTypeId != null) {
                 GateDef previewDefinition = gateLibrary.get(previewTypeId);
                 if (screenClip.intersects(componentScreenBounds(
@@ -787,6 +1034,25 @@ public final class CanvasPanel extends JPanel {
             }
         } finally {
             worldGraphics.dispose();
+        }
+    }
+
+    private void paintWireSegment(
+            Graphics2D graphics, WireSegment wire, boolean selected) {
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            if (selected) {
+                g2.setStroke(new BasicStroke(5.0f,
+                        BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.setColor(new Color(36, 112, 214));
+                g2.drawLine(wire.x1(), wire.y1(), wire.x2(), wire.y2());
+            }
+            g2.setStroke(new BasicStroke(2.0f,
+                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.setColor(Color.BLACK);
+            g2.drawLine(wire.x1(), wire.y1(), wire.x2(), wire.y2());
+        } finally {
+            g2.dispose();
         }
     }
 
@@ -837,6 +1103,9 @@ public final class CanvasPanel extends JPanel {
         for (PlacedComponent component : selectedComponents()) {
             result = union(result, componentScreenBounds(component, 0, 0, DIRTY_REGION_MARGIN));
         }
+        for (WireSegment wire : selectedWires) {
+            result = union(result, wireSegmentScreenBounds(wire, DIRTY_REGION_MARGIN + 3));
+        }
         return result;
     }
 
@@ -845,12 +1114,16 @@ public final class CanvasPanel extends JPanel {
         int deltaY = gestureMoved ? snapToGrid(pointerWorldY - gestureStartWorldY) : 0;
         Rectangle result = null;
         for (PlacedComponent component : moveStartComponents.values()) {
-            // Include the source position as well as the live ghost position.
-            // This also clears the ghost correctly when the user switches tools mid-drag.
+            // Include source and live ghost bounds so switching tools clears both.
             result = union(result, componentScreenBounds(
                     component, 0, 0, DIRTY_REGION_MARGIN));
             result = union(result, componentScreenBounds(
                     component, deltaX, deltaY, DIRTY_REGION_MARGIN));
+        }
+        for (WireSegment wire : moveStartWires) {
+            result = union(result, wireSegmentScreenBounds(wire, DIRTY_REGION_MARGIN + 3));
+            result = union(result, wireSegmentScreenBounds(translateWire(wire, deltaX, deltaY),
+                    DIRTY_REGION_MARGIN + 3));
         }
         return result;
     }
@@ -868,8 +1141,31 @@ public final class CanvasPanel extends JPanel {
         return switch (gesture) {
             case MOVE_SELECTION -> movingSelectionScreenBounds();
             case SELECT_RECTANGLE -> marqueeScreenBounds();
+            case DRAW_WIRE -> wirePreviewScreenBounds();
             default -> null;
         };
+    }
+
+    private Rectangle wirePreviewScreenBounds() {
+        Rectangle result = null;
+        for (WireSegment segment : wirePreviewSegments()) {
+            result = union(result, wireSegmentScreenBounds(segment, DIRTY_REGION_MARGIN + 3));
+        }
+        return result;
+    }
+
+    private Rectangle wireSegmentScreenBounds(WireSegment wire, int margin) {
+        int left = Math.min(wire.x1(), wire.x2());
+        int top = Math.min(wire.y1(), wire.y2());
+        int width = Math.abs(wire.x2() - wire.x1());
+        int height = Math.abs(wire.y2() - wire.y1());
+        return worldBoundsToScreen(new GateGeometry.Bounds(left, top, width, height), margin);
+    }
+
+    private static WireSegment translateWire(WireSegment wire, int deltaX, int deltaY) {
+        return new WireSegment(
+                wire.x1() + deltaX, wire.y1() + deltaY,
+                wire.x2() + deltaX, wire.y2() + deltaY);
     }
 
     private Rectangle worldBoundsToScreen(GateGeometry.Bounds bounds, int margin) {

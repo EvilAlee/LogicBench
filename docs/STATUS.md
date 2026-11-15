@@ -27,4 +27,4 @@
 ## Workflow
 - One task, one branch from fresh main, one PR, base always main. Check the base before merging.
 - ./gradlew test must be green. No screenshots, capture scripts, or throwaway workflows committed.
-- User merges PRs; user wants to understand and write the engine core and routing himself.
+- User reviews and merges PRs; keep each milestone isolated to one branch and one PR.
