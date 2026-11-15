@@ -103,7 +103,7 @@ class SchematicTest {
         PlacedComponent bottom = schematic.add("and", 100, 100, Facing.EAST);
         PlacedComponent top = schematic.add("or", 100, 100, Facing.EAST);
 
-        assertEquals(top, schematic.componentAt(110, 120).orElseThrow());
+        assertEquals(top, schematic.componentAt(85, 100).orElseThrow());
         assertEquals(List.of(bottom, top), schematic.componentsIntersecting(
                 new GateGeometry.Bounds(100, 100, 30, 40)));
     }
