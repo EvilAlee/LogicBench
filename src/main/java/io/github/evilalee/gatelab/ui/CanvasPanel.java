@@ -193,8 +193,8 @@ public final class CanvasPanel extends JPanel {
     public void placeFromDrop(String typeId, Point screenPoint) {
         GateDef definition = gateLibrary.get(typeId);
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
-        PlacedComponent placed = schematic.add(
-                definition.id(), snapToGrid(world.x), snapToGrid(world.y), Facing.EAST);
+        PlacedComponent placed = placeAtWorld(
+                definition.id(), world.x, world.y, Facing.EAST);
         selectedIds.clear();
         selectedIds.add(placed.id());
         setEditMode();
@@ -358,7 +358,7 @@ public final class CanvasPanel extends JPanel {
                 if (activeTool == Tool.ADD && gesture == Gesture.ADD_CLICK) {
                     updateGestureMovement(event.getPoint());
                     if (!gestureMoved && previewTypeId != null) {
-                        schematic.add(previewTypeId, previewX, previewY, previewFacing);
+                        placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
                         repaint();
                     }
                     resetGesture();
@@ -485,6 +485,12 @@ public final class CanvasPanel extends JPanel {
         return new GateGeometry.Bounds(left, top, right - left, bottom - top);
     }
 
+    private PlacedComponent placeAtWorld(
+            String typeId, double worldX, double worldY, Facing facing) {
+        return schematic.add(
+                typeId, snapToGrid(worldX), snapToGrid(worldY), facing);
+    }
+
     private void pointerFromScreen(Point screenPoint) {
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
         pointerWorldX = world.x;
@@ -518,7 +524,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void deleteSelection() {
-        if (selectedIds.isEmpty() || activeTool != Tool.EDIT) {
+        if (selectedIds.isEmpty() || activeTool == Tool.ADD) {
             return;
         }
         for (String id : List.copyOf(selectedIds)) {

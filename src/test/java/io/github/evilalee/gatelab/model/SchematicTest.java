@@ -98,6 +98,17 @@ class SchematicTest {
     }
 
     @Test
+    void overlappingComponentsReturnTheLastAddedComponentFirst() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent bottom = schematic.add("and", 100, 100, Facing.EAST);
+        PlacedComponent top = schematic.add("or", 100, 100, Facing.EAST);
+
+        assertEquals(top, schematic.componentAt(110, 120).orElseThrow());
+        assertEquals(List.of(bottom, top), schematic.componentsIntersecting(
+                new GateGeometry.Bounds(100, 100, 30, 40)));
+    }
+
+    @Test
     void componentAndMoveCoordinatesMustStayOnTheTenUnitGrid() {
         Schematic schematic = new Schematic(DEFINITIONS);
         assertThrows(IllegalArgumentException.class, () ->
