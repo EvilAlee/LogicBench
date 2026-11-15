@@ -836,6 +836,10 @@ public final class CanvasPanel extends JPanel {
         int deltaY = gestureMoved ? snapToGrid(pointerWorldY - gestureStartWorldY) : 0;
         Rectangle result = null;
         for (PlacedComponent component : moveStartComponents.values()) {
+            // Include the source position as well as the live ghost position.
+            // This also clears the ghost correctly when the user switches tools mid-drag.
+            result = union(result, componentScreenBounds(
+                    component, 0, 0, DIRTY_REGION_MARGIN));
             result = union(result, componentScreenBounds(
                     component, deltaX, deltaY, DIRTY_REGION_MARGIN));
         }
