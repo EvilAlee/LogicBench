@@ -34,7 +34,7 @@ public final class Schematic {
     private record GestureCommit(boolean linksFollowed, boolean committed) {
     }
 
-    private final Map<String, GateDef> definitionsById;
+    private final Map<String, List<GateDef>> definitionsByFamily;
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<WireSegment> wires = new ArrayList<>();
     private final Map<String, Boolean> inputValues = new HashMap<>();
@@ -44,30 +44,53 @@ public final class Schematic {
 
     public Schematic(Collection<GateDef> definitions) {
         Objects.requireNonNull(definitions, "definitions");
-        Map<String, GateDef> indexed = new HashMap<>();
+        Map<String, List<GateDef>> grouped = new LinkedHashMap<>();
+        Set<String> ids = new HashSet<>();
+        Set<String> variants = new HashSet<>();
         for (GateDef definition : definitions) {
             Objects.requireNonNull(definition, "definition");
-            if (indexed.putIfAbsent(definition.id(), definition) != null) {
-                throw new IllegalArgumentException("duplicate component type: " + definition.id());
+            if (!ids.add(definition.id())) {
+                throw new IllegalArgumentException("duplicate component definition: " + definition.id());
             }
+            String variantKey = definition.family() + "|" + definition.size()
+                    + "|" + definition.inputCount();
+            if (!variants.add(variantKey)) {
+                throw new IllegalArgumentException("duplicate component variant: " + variantKey);
+            }
+            grouped.computeIfAbsent(definition.family(), ignored -> new ArrayList<>())
+                    .add(definition);
         }
-        if (indexed.isEmpty()) {
+        if (grouped.isEmpty()) {
             throw new IllegalArgumentException("at least one component definition is required");
         }
-        definitionsById = Map.copyOf(indexed);
+        Map<String, List<GateDef>> immutable = new LinkedHashMap<>();
+        for (Map.Entry<String, List<GateDef>> entry : grouped.entrySet()) {
+            immutable.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        definitionsByFamily = Map.copyOf(immutable);
+        for (String family : definitionsByFamily.keySet()) {
+            defaultDefinition(family);
+        }
     }
 
-    /** Adds a new instance and allocates an id that is unique for this schematic. */
+    /** Adds a new instance with default variant attributes. */
     public PlacedComponent add(String typeId, int x, int y, Facing facing) {
+        return add(typeId, x, y, facing, Map.of());
+    }
+
+    /** Adds a new instance with validated non-default variant attributes. */
+    public PlacedComponent add(
+            String typeId, int x, int y, Facing facing, Map<String, String> attributes) {
         requireKnownType(typeId);
         String id;
         do {
             id = "component-" + nextComponentNumber++;
         } while (containsId(id));
 
-        PlacedComponent component = new PlacedComponent(id, typeId, x, y, facing);
+        PlacedComponent component = new PlacedComponent(
+                id, typeId, x, y, facing, normalizeStoredAttributes(typeId, attributes));
         add(component);
-        return component;
+        return components.getLast();
     }
 
     /** Adds a component with a caller-supplied id, rejecting duplicates. */
@@ -77,8 +100,43 @@ public final class Schematic {
         if (containsId(component.id())) {
             throw new IllegalArgumentException("duplicate component id: " + component.id());
         }
-        components.add(component);
+        Map<String, String> normalized = normalizeStoredAttributes(
+                component.typeId(), component.attributes());
+        PlacedComponent validated = new PlacedComponent(
+                component.id(), component.typeId(), component.x(), component.y(),
+                component.facing(), normalized);
+        definitionFor(validated);
+        components.add(validated);
         notifyChanged();
+    }
+
+    /** Returns the current effective value for an editable component attribute. */
+    public String attributeValue(String id, String key) {
+        PlacedComponent component = components.get(indexOf(id));
+        ComponentAttributeRegistry.AttributeSpec spec =
+                ComponentAttributeRegistry.require(component.typeId(), key);
+        return switch (key) {
+            case "facing" -> component.facing().name();
+            default -> component.attributes().getOrDefault(key, spec.defaultValue());
+        };
+    }
+
+    /** Variant options are always derived from the definitions supplied to this schematic. */
+    public List<String> attributeOptions(String family, String key) {
+        ComponentAttributeRegistry.require(family, key);
+        if (key.equals("facing")) {
+            return List.of("EAST", "NORTH", "WEST", "SOUTH");
+        }
+        List<GateDef> variants = variantsFor(family);
+        if (key.equals("size")) {
+            return variants.stream().map(GateDef::size).distinct()
+                    .sorted(java.util.Comparator.comparingInt(Schematic::sizeOrder)).toList();
+        }
+        if (key.equals("inputs")) {
+            return variants.stream().map(GateDef::inputCount).distinct().sorted()
+                    .map(String::valueOf).toList();
+        }
+        throw new IllegalArgumentException("unsupported attribute: " + key);
     }
 
     /** Removes the component with this id; returns false when it is not present. */
@@ -167,7 +225,7 @@ public final class Schematic {
 
     /** Changes one component's facing and safely follows its stationary connections. */
     public boolean setFacing(String id, Facing facing) {
-        return setFacing(List.of(id), facing);
+        return setAttribute(id, "facing", Objects.requireNonNull(facing, "facing").name());
     }
 
     /** Changes the facing of a complete component selection in one validated gesture. */
@@ -183,7 +241,8 @@ public final class Schematic {
         for (PlacedComponent current : components) {
             if (selected.contains(current.id()) && current.facing() != facing) {
                 replacements.put(current.id(), new PlacedComponent(
-                        current.id(), current.typeId(), current.x(), current.y(), facing));
+                        current.id(), current.typeId(), current.x(), current.y(),
+                        facing, current.attributes()));
             }
         }
         if (replacements.isEmpty()) {
@@ -191,6 +250,41 @@ public final class Schematic {
         }
         return commitValidatedGesture(
                 replacements, Set.of(), List.copyOf(wires)).linksFollowed();
+    }
+
+    /**
+     * Changes one registered attribute through the same atomic mutation path as
+     * facing changes. Size/input variants therefore use M8b-v2's validated links.
+     */
+    public boolean setAttribute(String id, String key, String value) {
+        PlacedComponent current = components.get(indexOf(id));
+        String normalized = ComponentAttributeRegistry.normalizeValue(
+                current.typeId(), key, value);
+        if (key.equals("facing")) {
+            return setFacing(id, Facing.valueOf(normalized));
+        }
+
+        Map<String, String> attributes = new LinkedHashMap<>(current.attributes());
+        ComponentAttributeRegistry.AttributeSpec spec =
+                ComponentAttributeRegistry.require(current.typeId(), key);
+        if (normalized.equals(spec.defaultValue())) {
+            attributes.remove(key);
+        } else {
+            attributes.put(key, normalized);
+        }
+        PlacedComponent replacement = new PlacedComponent(
+                current.id(), current.typeId(), current.x(), current.y(),
+                current.facing(), normalizeStoredAttributes(current.typeId(), attributes));
+        try {
+            definitionFor(replacement);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Not available: " + exception.getMessage(), exception);
+        }
+        if (current.equals(replacement)) {
+            return true;
+        }
+        return commitValidatedGesture(
+                Map.of(id, replacement), Set.of(), List.copyOf(wires)).linksFollowed();
     }
 
     /**
@@ -317,7 +411,7 @@ public final class Schematic {
     private void newPinsFor(
             PlacedComponent component,
             Map<PinKey, Connectivity.PinPosition> target) {
-        GateDef definition = requireKnownType(component.typeId());
+        GateDef definition = definitionFor(component);
         for (int index = 0; index < definition.inputs().size(); index++) {
             GateGeometry.Offset offset = GateGeometry.pinOffset(
                     definition, definition.inputs().get(index), component.facing());
@@ -374,7 +468,7 @@ public final class Schematic {
             for (Connectivity.PinPosition pin : net.pins()) {
                 Integer pinNet = beforeNetIds.get(key(pin));
                 if (pinNet == null) {
-                    return false;
+                    continue;
                 }
                 if (originalNet == null) {
                     originalNet = pinNet;
@@ -395,7 +489,7 @@ public final class Schematic {
         for (Map.Entry<PinKey, Integer> entry : beforeNetIds.entrySet()) {
             Integer afterNet = afterNetIds.get(entry.getKey());
             if (afterNet == null) {
-                return false;
+                continue;
             }
             Integer previousNet = afterNetForOriginalNet.putIfAbsent(entry.getValue(), afterNet);
             if (previousNet != null && !previousNet.equals(afterNet)) {
@@ -518,6 +612,8 @@ public final class Schematic {
         Set<String> replacementIds = new LinkedHashSet<>();
         for (PlacedComponent component : replacementComponents) {
             requireKnownType(component.typeId());
+            normalizeStoredAttributes(component.typeId(), component.attributes());
+            definitionFor(component);
             if (!replacementIds.add(component.id())) {
                 throw new IllegalArgumentException("duplicate component id: " + component.id());
             }
@@ -605,7 +701,18 @@ public final class Schematic {
 
     public GateDef definitionFor(PlacedComponent component) {
         Objects.requireNonNull(component, "component");
-        return requireKnownType(component.typeId());
+        List<GateDef> variants = variantsFor(component.typeId());
+        String size = component.attributes().getOrDefault("size", "narrow");
+        int inputCount = ComponentAttributeRegistry.supports(component.typeId(), "inputs")
+                ? Integer.parseInt(component.attributes().getOrDefault("inputs", "2"))
+                : defaultDefinition(component.typeId()).inputCount();
+        return variants.stream()
+                .filter(definition -> definition.size().equals(size)
+                        && definition.inputCount() == inputCount)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Not available: " + component.typeId() + " " + size
+                                + " with " + inputCount + " inputs"));
     }
 
     /**
@@ -656,7 +763,7 @@ public final class Schematic {
 
     private GateGeometry.Bounds worldBounds(PlacedComponent component) {
         GateGeometry.Bounds relative = GateGeometry.bounds(
-                requireKnownType(component.typeId()), component.facing());
+                definitionFor(component), component.facing());
         return new GateGeometry.Bounds(
                 component.x() + relative.x(),
                 component.y() + relative.y(),
@@ -776,7 +883,7 @@ public final class Schematic {
     public List<Connectivity.PinPosition> pinPositions() {
         List<Connectivity.PinPosition> pins = new ArrayList<>();
         for (PlacedComponent component : components) {
-            GateDef definition = requireKnownType(component.typeId());
+            GateDef definition = definitionFor(component);
             for (int index = 0; index < definition.inputs().size(); index++) {
                 GateGeometry.Offset offset = GateGeometry.pinOffset(
                         definition, definition.inputs().get(index), component.facing());
@@ -811,13 +918,62 @@ public final class Schematic {
         }
     }
 
-    private GateDef requireKnownType(String typeId) {
-        Objects.requireNonNull(typeId, "typeId");
-        GateDef definition = definitionsById.get(typeId);
-        if (definition == null) {
-            throw new IllegalArgumentException("unknown component type: " + typeId);
+    private GateDef requireKnownType(String family) {
+        return defaultDefinition(Objects.requireNonNull(family, "family"));
+    }
+
+    private List<GateDef> variantsFor(String family) {
+        List<GateDef> variants = definitionsByFamily.get(Objects.requireNonNull(family, "family"));
+        if (variants == null) {
+            throw new IllegalArgumentException("unknown component type: " + family);
         }
-        return definition;
+        return variants;
+    }
+
+    private GateDef defaultDefinition(String family) {
+        List<GateDef> variants = variantsFor(family);
+        int inputCount = ComponentAttributeRegistry.supports(family, "inputs")
+                ? 2
+                : variants.stream()
+                        .filter(definition -> definition.size().equals("narrow"))
+                        .mapToInt(GateDef::inputCount)
+                        .min().orElse(0);
+        return variants.stream()
+                .filter(definition -> definition.size().equals("narrow")
+                        && definition.inputCount() == inputCount)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "component family " + family + " has no narrow default"));
+    }
+
+    private Map<String, String> normalizeStoredAttributes(
+            String family, Map<String, String> attributes) {
+        Objects.requireNonNull(attributes, "attributes");
+        Map<String, String> normalized = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : attributes.entrySet()) {
+            String key = Objects.requireNonNull(entry.getKey(), "attribute key");
+            if (key.equals("facing")) {
+                throw new IllegalArgumentException(
+                        "attribute 'facing' is stored in the top-level facing field");
+            }
+            ComponentAttributeRegistry.AttributeSpec spec =
+                    ComponentAttributeRegistry.require(family, key);
+            String value = ComponentAttributeRegistry.normalizeValue(
+                    family, key, Objects.requireNonNull(entry.getValue(), "attribute value"));
+            if (!value.equals(spec.defaultValue())) {
+                normalized.put(key, value);
+            }
+        }
+        return Map.copyOf(normalized);
+    }
+
+    private static int sizeOrder(String size) {
+        return switch (size) {
+            case "narrow" -> 0;
+            case "normal" -> 1;
+            case "wide" -> 2;
+            default -> 3;
+        };
     }
 
     private int indexOf(String id) {
