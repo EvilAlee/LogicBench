@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.model;
 
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.io.SchematicJson;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -126,6 +127,42 @@ class ComponentAttributeTest {
         assertTrue(old.components().getFirst().attributes().isEmpty());
         assertEquals("narrow", old.attributeValue("legacy", "size"));
         assertEquals("2", old.attributeValue("legacy", "inputs"));
+    }
+
+    @Test
+    void threeInputAndVariantCompilesToAThreeInputEngineGate() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent first = schematic.add("input", 50, -20, Facing.EAST);
+        PlacedComponent second = schematic.add("input", 50, 0, Facing.EAST);
+        PlacedComponent third = schematic.add("input", 50, 20, Facing.EAST);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        PlacedComponent output = schematic.add("output", 160, 0, Facing.EAST);
+        assertTrue(schematic.setAttribute(gate.id(), "inputs", "3"));
+
+        for (PlacedComponent input : List.of(first, second, third)) {
+            Connectivity.PinPosition outputPin = pin(schematic, input.id(), "out");
+            Connectivity.PinPosition gatePin = pin(schematic, gate.id(),
+                    "in" + List.of(first, second, third).indexOf(input));
+            assertEquals(outputPin.x(), gatePin.x());
+            assertEquals(outputPin.y(), gatePin.y());
+        }
+        schematic.addWire(100, 0, 160, 0);
+        schematic.setInputValue(first.id(), true);
+        schematic.setInputValue(second.id(), true);
+        schematic.setInputValue(third.id(), true);
+        assertEquals(Value.ONE, SchematicCompiler.compileAndSettle(schematic)
+                .outputValues().get(output.id()));
+
+        schematic.setInputValue(third.id(), false);
+        assertEquals(Value.ZERO, SchematicCompiler.compileAndSettle(schematic)
+                .outputValues().get(output.id()));
+    }
+
+    private static Connectivity.PinPosition pin(Schematic schematic, String componentId, String pinId) {
+        return schematic.pinPositions().stream()
+                .filter(position -> position.componentId().equals(componentId)
+                        && position.pinId().equals(pinId))
+                .findFirst().orElseThrow();
     }
 
     @Test

@@ -4,6 +4,9 @@ import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ComponentWireFollowSafetyTest {
     private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
+    private static final List<GateDef> VARIANT_DEFINITIONS = loadVariantDefinitions();
 
     @Test
     void movedAndGateKeepsBothInputNetsSeparateForOffsetsIncludingSmallVerticalMoves() {
@@ -174,24 +178,35 @@ class ComponentWireFollowSafetyTest {
                 int previousUndoDepth = history.undoDepth();
                 history.begin(schematic);
 
-                PlacedComponent gate = circuit.gates().get(random.nextInt(circuit.gates().size()));
+                PlacedComponent gate = schematic.components().stream()
+                        .filter(component -> component.id().equals(
+                                circuit.gates().get(random.nextInt(circuit.gates().size())).id()))
+                        .findFirst().orElseThrow();
                 boolean linksFollowed;
-                if (random.nextBoolean()) {
-                    PlacedComponent original = circuit.originalPositions().get(gate.id());
-                    int nextX = original.x() + (random.nextInt(7) - 3) * 10;
-                    int nextY = original.y() + (random.nextInt(7) - 3) * 10;
+                int operation = random.nextInt(3);
+                if (operation == 0) {
+                    int nextX = gate.x() + (random.nextInt(7) - 3) * 10;
+                    int nextY = gate.y() + (random.nextInt(7) - 3) * 10;
                     if (nextX == gate.x() && nextY == gate.y()) {
                         nextX += 10;
                     }
                     Schematic.MoveResult result = schematic.moveSelection(
                             Set.of(gate.id()), Set.of(), nextX - gate.x(), nextY - gate.y());
                     linksFollowed = result.linksFollowed();
-                } else {
-                    Facing facing = gate.facing();
-                    while (facing == gate.facing()) {
-                        facing = Facing.values()[random.nextInt(Facing.values().length)];
-                    }
+                } else if (operation == 1 || !gate.typeId().equals("and")) {
+                    Facing facing = Facing.values()[random.nextInt(Facing.values().length)];
                     linksFollowed = schematic.setFacing(gate.id(), facing);
+                } else {
+                    String key = random.nextBoolean() ? "size" : "inputs";
+                    List<String> options = schematic.attributeOptions(gate.typeId(), key);
+                    String value = options.get(random.nextInt(options.size()));
+                    try {
+                        linksFollowed = schematic.setAttribute(gate.id(), key, value);
+                    } catch (IllegalArgumentException unavailable) {
+                        assertTrue(unavailable.getMessage().contains("Not available"),
+                                unavailable.getMessage());
+                        linksFollowed = true;
+                    }
                 }
 
                 SchematicSnapshot after = SchematicSnapshot.capture(schematic);
@@ -220,6 +235,19 @@ class ComponentWireFollowSafetyTest {
                     assertEquals(previousUndoDepth, history.undoDepth());
                 }
             }
+        }
+    }
+
+    private static List<GateDef> loadVariantDefinitions() {
+        try (InputStream stream = ComponentWireFollowSafetyTest.class.getResourceAsStream(
+                "/gates-variants.json")) {
+            if (stream == null) {
+                throw new IllegalStateException("missing test gate variant fixture");
+            }
+            return GateLibrary.fromJson(
+                    new String(stream.readAllBytes(), StandardCharsets.UTF_8)).all();
+        } catch (IOException exception) {
+            throw new IllegalStateException("could not read gate variant fixture", exception);
         }
     }
 
@@ -260,7 +288,7 @@ class ComponentWireFollowSafetyTest {
     }
 
     private static RandomCircuit randomCircuit(Random random) {
-        Schematic schematic = new Schematic(DEFINITIONS);
+        Schematic schematic = new Schematic(VARIANT_DEFINITIONS);
         schematic.add("input", -100, -100, Facing.EAST);
         schematic.add("input", -100, 100, Facing.EAST);
         int count = 3 + random.nextInt(3);
@@ -330,7 +358,10 @@ class ComponentWireFollowSafetyTest {
         for (Connectivity.Net net : after.nets()) {
             Set<Integer> originalNets = new HashSet<>();
             for (Connectivity.PinPosition pin : net.pins()) {
-                originalNets.add(beforeNets.get(new PinKey(pin.componentId(), pin.pinId())));
+                Integer original = beforeNets.get(new PinKey(pin.componentId(), pin.pinId()));
+                if (original != null) {
+                    originalNets.add(original);
+                }
             }
             assertTrue(originalNets.size() <= 1,
                     "a net contains pins from different before nets; " + message + ": " + net);
@@ -348,8 +379,10 @@ class ComponentWireFollowSafetyTest {
         Map<Integer, Integer> currentNetPerBeforeNet = new HashMap<>();
         for (Map.Entry<PinKey, Integer> entry : beforeNets.entrySet()) {
             Integer currentNet = afterNets.get(entry.getKey());
+            if (currentNet == null) {
+                continue;
+            }
             Integer previous = currentNetPerBeforeNet.putIfAbsent(entry.getValue(), currentNet);
-            assertNotNull(currentNet, message);
             assertTrue(previous == null || previous.equals(currentNet),
                     "previously connected pins were disconnected; " + message);
         }
