@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -40,6 +41,7 @@ import java.awt.event.MouseWheelEvent;
 import java.awt.geom.Point2D;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -70,6 +72,33 @@ public final class CanvasPanel extends JPanel {
         ADD
     }
 
+    public record AttributeOption(String value, String label) {
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    public record AttributeRow(
+            String key,
+            String label,
+            AttributeOption selected,
+            List<AttributeOption> options) {
+        public AttributeRow {
+            options = List.copyOf(options);
+        }
+    }
+
+    public record AttributePanelState(String title, List<AttributeRow> rows) {
+        public AttributePanelState {
+            rows = List.copyOf(rows);
+        }
+
+        public static AttributePanelState empty() {
+            return new AttributePanelState("", List.of());
+        }
+    }
+
     private enum Gesture {
         NONE,
         ADD_CLICK,
@@ -86,7 +115,7 @@ public final class CanvasPanel extends JPanel {
     private Schematic schematic;
     private final SchematicHistory history = new SchematicHistory();
     private Runnable historyStateListener = () -> { };
-    private final Runnable schematicSimulationListener = this::recomputeSimulation;
+    private final Runnable schematicSimulationListener = this::schematicChanged;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private SimulationResult simulationResult;
     private long simulationRecomputeCount;
@@ -120,6 +149,9 @@ public final class CanvasPanel extends JPanel {
     private Consumer<List<PlacedComponent>> selectionListener = ignored -> { };
     private Consumer<Tool> toolModeListener = ignored -> { };
     private Consumer<String> statusMessageListener = ignored -> { };
+    private Runnable attributeStateListener = () -> { };
+    private final Map<String, Map<String, String>> toolAttributesByFamily = new HashMap<>();
+    private final Map<String, Facing> toolFacingByFamily = new HashMap<>();
 
     private Gesture gesture = Gesture.NONE;
     private Point gestureStartScreen;
@@ -301,23 +333,146 @@ public final class CanvasPanel extends JPanel {
     public void setStatusMessageListener(Consumer<String> listener) {
         statusMessageListener = listener == null ? ignored -> { } : listener;
     }
+    public void setAttributeStateListener(Runnable listener) {
+        attributeStateListener = listener == null ? () -> { } : listener;
+        notifyAttributeStateChanged();
+    }
+
+    public AttributePanelState attributePanelState() {
+        if (activeTool == Tool.ADD && previewTypeId != null) {
+            return attributeStateForTool(previewTypeId);
+        }
+        if (selectedIds.size() != 1) {
+            return AttributePanelState.empty();
+        }
+        String selectedId = selectedIds.iterator().next();
+        PlacedComponent selected = schematic.components().stream()
+                .filter(component -> component.id().equals(selectedId))
+                .findFirst().orElse(null);
+        return selected == null ? AttributePanelState.empty() : attributeStateForComponent(selected);
+    }
+
+    /** Applies an attribute edit from the attribute table or the Add-mode tool preview. */
+    public boolean setSelectedAttribute(String key, String value) {
+        if (activeTool == Tool.ADD && previewTypeId != null) {
+            return setToolAttribute(previewTypeId, key, value);
+        }
+        if (selectedIds.size() != 1) {
+            return false;
+        }
+        String id = selectedIds.iterator().next();
+        try {
+            beginHistoryGesture();
+            boolean linksFollowed = schematic.setAttribute(id, key, value);
+            commitHistoryGesture();
+            statusMessageListener.accept(linksFollowed ? "" : "Some wires could not follow");
+            notifySelectionChanged();
+            repaint();
+            return true;
+        } catch (IllegalArgumentException exception) {
+            history.cancelPending();
+            statusMessageListener.accept("Not available");
+            notifyAttributeStateChanged();
+            return false;
+        }
+    }
+
+    private boolean setToolAttribute(String family, String key, String value) {
+        try {
+            String normalized = ComponentAttributeRegistry.normalizeValue(family, key, value);
+            if (key.equals("facing")) {
+                toolFacingByFamily.put(family, Facing.valueOf(normalized));
+            } else {
+                Map<String, String> changed = new LinkedHashMap<>(
+                        toolAttributesByFamily.getOrDefault(family, Map.of()));
+                ComponentAttributeRegistry.AttributeSpec spec =
+                        ComponentAttributeRegistry.require(family, key);
+                if (normalized.equals(spec.defaultValue())) {
+                    changed.remove(key);
+                } else {
+                    changed.put(key, normalized);
+                }
+                resolveToolDefinition(family, changed);
+                toolAttributesByFamily.put(family, Map.copyOf(changed));
+            }
+            statusMessageListener.accept("");
+            notifyAttributeStateChanged();
+            repaint();
+            return true;
+        } catch (IllegalArgumentException exception) {
+            statusMessageListener.accept("Not available");
+            notifyAttributeStateChanged();
+            return false;
+        }
+    }
+
+    private GateDef resolveToolDefinition(String family, Map<String, String> attributes) {
+        int inputCount = ComponentAttributeRegistry.supports(family, "inputs")
+                ? Integer.parseInt(attributes.getOrDefault("inputs", "2"))
+                : gateLibrary.defaultDefinition(family).inputCount();
+        return gateLibrary.resolve(
+                family, attributes.getOrDefault("size", "narrow"), inputCount);
+    }
+
+    private AttributePanelState attributeStateForTool(String family) {
+        Facing facing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
+        Map<String, String> attributes = toolAttributesByFamily.getOrDefault(family, Map.of());
+        return buildAttributeState(family, facing, attributes);
+    }
+
+    private AttributePanelState attributeStateForComponent(PlacedComponent component) {
+        return buildAttributeState(component.typeId(), component.facing(), component.attributes());
+    }
+
+    private AttributePanelState buildAttributeState(
+            String family, Facing facing, Map<String, String> attributes) {
+        List<AttributeRow> rows = new ArrayList<>();
+        for (ComponentAttributeRegistry.AttributeSpec spec
+                : ComponentAttributeRegistry.forFamily(family)) {
+            List<AttributeOption> options = schematic.attributeOptions(family, spec.key()).stream()
+                    .map(value -> new AttributeOption(
+                            value, ComponentAttributeRegistry.displayValue(spec.key(), value)))
+                    .toList();
+            String selectedValue = spec.key().equals("facing")
+                    ? facing.name() : attributes.getOrDefault(spec.key(), spec.defaultValue());
+            AttributeOption selected = options.stream()
+                    .filter(option -> option.value().equals(selectedValue))
+                    .findFirst()
+                    .orElse(new AttributeOption(selectedValue,
+                            ComponentAttributeRegistry.displayValue(spec.key(), selectedValue)));
+            rows.add(new AttributeRow(spec.key(), spec.label(), selected, options));
+        }
+        String title = family.isEmpty() ? "" : family.toUpperCase(Locale.ROOT);
+        return new AttributePanelState(title, rows);
+    }
+
+    private void notifyAttributeStateChanged() {
+        attributeStateListener.run();
+    }
+
+    private void schematicChanged() {
+        recomputeSimulation();
+        notifyAttributeStateChanged();
+    }
+
 
     /** Enters repeated-click placement mode for a catalogue type. */
     public void enterAddMode(String typeId) {
         if (galleryMode) {
             return;
         }
-        String resolvedTypeId = gateLibrary.get(typeId).id();
-        if (activeTool == Tool.ADD && resolvedTypeId.equals(previewTypeId)) {
+        String family = gateLibrary.get(typeId).family();
+        if (activeTool == Tool.ADD && family.equals(previewTypeId)) {
             requestFocusInWindow();
             return;
         }
-        previewTypeId = resolvedTypeId;
-        previewFacing = Facing.EAST;
+        previewTypeId = family;
+        previewFacing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
+        toolAttributesByFamily.putIfAbsent(family, Map.of());
         selectedIds.clear();
         selectedWires.clear();
-        notifySelectionChanged();
         activeTool = Tool.ADD;
+        notifySelectionChanged();
         Point2D.Double center = transform.screenToWorld(
                 Math.max(0, getWidth()) / 2.0, Math.max(0, getHeight()) / 2.0);
         updatePreviewPosition(center.x, center.y);
@@ -335,6 +490,7 @@ public final class CanvasPanel extends JPanel {
         activeTool = Tool.EDIT;
         resetGesture();
         toolModeListener.accept(activeTool);
+        notifyAttributeStateChanged();
         requestFocusInWindow();
         repaintIfPresent(oldTransientBounds);
     }
@@ -347,17 +503,19 @@ public final class CanvasPanel extends JPanel {
         activeTool = Tool.POKE;
         resetGesture();
         toolModeListener.accept(activeTool);
+        notifyAttributeStateChanged();
         requestFocusInWindow();
         repaintIfPresent(oldTransientBounds);
     }
 
     /** One-shot tree drag/drop placement, sharing the same grid-snapped origin rule. */
     public void placeFromDrop(String typeId, Point screenPoint) {
-        GateDef definition = gateLibrary.get(typeId);
+        String family = gateLibrary.get(typeId).family();
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        Facing facing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         beginHistoryGesture();
         PlacedComponent placed = placeAtWorld(
-                definition.id(), world.x, world.y, Facing.EAST);
+                family, world.x, world.y, facing);
         commitHistoryGesture();
         selectedIds.clear();
         selectedWires.clear();
@@ -876,7 +1034,8 @@ public final class CanvasPanel extends JPanel {
     private PlacedComponent placeAtWorld(
             String typeId, double worldX, double worldY, Facing facing) {
         return schematic.add(
-                typeId, snapToGrid(worldX), snapToGrid(worldY), facing);
+                typeId, snapToGrid(worldX), snapToGrid(worldY), facing,
+                toolAttributesByFamily.getOrDefault(typeId, Map.of()));
     }
 
     private void pointerFromScreen(Point screenPoint) {
@@ -898,7 +1057,8 @@ public final class CanvasPanel extends JPanel {
     private void setFacing(Facing facing) {
         if (activeTool == Tool.ADD) {
             Rectangle oldPreviewBounds = previewScreenBounds();
-            previewFacing = facing;
+            setToolAttribute(previewTypeId, "facing", facing.name());
+            previewFacing = toolFacingByFamily.getOrDefault(previewTypeId, facing);
             repaintUnion(oldPreviewBounds, previewScreenBounds());
             return;
         }
@@ -945,6 +1105,7 @@ public final class CanvasPanel extends JPanel {
 
     private void notifySelectionChanged() {
         selectionListener.accept(selectedComponents());
+        notifyAttributeStateChanged();
     }
 
     private void resetGesture() {
@@ -1110,7 +1271,7 @@ public final class CanvasPanel extends JPanel {
                 boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
                 int x = component.x() + (moving ? moveDeltaX : 0);
                 int y = component.y() + (moving ? moveDeltaY : 0);
-                GateDef definition = gateLibrary.get(component.typeId());
+                GateDef definition = schematic.definitionFor(component);
                 if (!screenClip.intersects(componentScreenBounds(
                         definition, component.facing(), x, y, DIRTY_REGION_MARGIN))) {
                     continue;
@@ -1159,7 +1320,8 @@ public final class CanvasPanel extends JPanel {
             }
 
             if (activeTool == Tool.ADD && previewTypeId != null) {
-                GateDef previewDefinition = gateLibrary.get(previewTypeId);
+                GateDef previewDefinition = resolveToolDefinition(previewTypeId,
+                    toolAttributesByFamily.getOrDefault(previewTypeId, Map.of()));
                 if (screenClip.intersects(componentScreenBounds(
                         previewDefinition, previewFacing, previewX, previewY, DIRTY_REGION_MARGIN))) {
                     worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
@@ -1260,13 +1422,14 @@ public final class CanvasPanel extends JPanel {
             return null;
         }
         return componentScreenBounds(
-                gateLibrary.get(previewTypeId), previewFacing,
+                resolveToolDefinition(previewTypeId,
+                        toolAttributesByFamily.getOrDefault(previewTypeId, Map.of())), previewFacing,
                 previewX, previewY, DIRTY_REGION_MARGIN);
     }
 
     private Rectangle componentScreenBounds(
             PlacedComponent component, int deltaX, int deltaY, int margin) {
-        GateDef definition = gateLibrary.get(component.typeId());
+        GateDef definition = schematic.definitionFor(component);
         return componentScreenBounds(definition, component.facing(),
                 component.x() + deltaX, component.y() + deltaY, margin);
     }
