@@ -9,11 +9,12 @@
 - M6: live schematic simulation, Poke tool, value-colored wires, I/O digits and oscillation reporting
 
 ## In progress
-- M7a: versioned `.lbc` Save/Open (legacy `.logicbench.json` remains readable), unsaved-change prompts and modification tracking
-  - Branch: m7a-saveload
+- M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
+  - Branch: m7b-undo
+  - PR pending review
 
 ## Next
-- M7b undo/redo → M8 polish
+- M8 polish
 
 ## Decisions
 - Save files contain version, components (including input-only HIGH state), and geometric wires only.
@@ -24,7 +25,9 @@
 - Input state is stored per input in Schematic; default LOW.
 - ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255); selected wires use an orange translucent halo.
 - Component origin, rotation, 10-unit grid, and M5 wire independence remain unchanged.
-- M7b undo/redo wraps Schematic mutation methods.
+- M7b history snapshots contain only placed components and geometric wire segments; input poke values are not history state.
+- Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
+- New/Open clear history; Save leaves it intact.
 
 ## Workflow
 - One task, one branch from fresh main, one PR with base main.

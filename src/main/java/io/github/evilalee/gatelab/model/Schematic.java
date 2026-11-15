@@ -100,6 +100,47 @@ public final class Schematic {
         notifyChanged();
     }
 
+    /**
+     * Replaces editable topology with a prior snapshot. Input values are external state:
+     * values survive only for input ids that exist both before and after restoration.
+     */
+    public void restoreSnapshot(SchematicSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        List<PlacedComponent> replacementComponents = snapshot.components();
+        List<WireSegment> replacementWires = snapshot.wires();
+        Set<String> replacementIds = new LinkedHashSet<>();
+        for (PlacedComponent component : replacementComponents) {
+            requireKnownType(component.typeId());
+            if (!replacementIds.add(component.id())) {
+                throw new IllegalArgumentException("duplicate component id: " + component.id());
+            }
+        }
+        if (components.equals(replacementComponents) && wires.equals(replacementWires)) {
+            return;
+        }
+
+        Map<String, Boolean> survivingInputValues = new HashMap<>();
+        for (PlacedComponent current : components) {
+            if ("input".equals(current.typeId())
+                    && Boolean.TRUE.equals(inputValues.get(current.id()))) {
+                survivingInputValues.put(current.id(), true);
+            }
+        }
+
+        components.clear();
+        components.addAll(replacementComponents);
+        wires.clear();
+        wires.addAll(replacementWires);
+        inputValues.clear();
+        for (PlacedComponent replacement : replacementComponents) {
+            if ("input".equals(replacement.typeId())
+                    && Boolean.TRUE.equals(survivingInputValues.get(replacement.id()))) {
+                inputValues.put(replacement.id(), true);
+            }
+        }
+        notifyChanged();
+    }
+
     /** Returns an immutable snapshot in paint order (oldest first, newest on top). */
     public List<PlacedComponent> components() {
         return List.copyOf(components);

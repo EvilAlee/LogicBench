@@ -7,6 +7,7 @@ import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.SchematicHistory;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
@@ -83,6 +84,8 @@ public final class CanvasPanel extends JPanel {
     private final GateLibrary gateLibrary;
     private final GateRenderer gateRenderer;
     private Schematic schematic;
+    private final SchematicHistory history = new SchematicHistory();
+    private Runnable historyStateListener = () -> { };
     private final Runnable schematicSimulationListener = this::recomputeSimulation;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private SimulationResult simulationResult;
@@ -191,6 +194,7 @@ public final class CanvasPanel extends JPanel {
         }
         Schematic next = java.util.Objects.requireNonNull(replacement, "replacement");
         schematic.removeChangeListener(schematicSimulationListener);
+        history.clear();
         schematic = next;
         schematic.addChangeListener(schematicSimulationListener);
 
@@ -206,10 +210,66 @@ public final class CanvasPanel extends JPanel {
         notifySelectionChanged();
         toolModeListener.accept(activeTool);
         schematicReplacementListener.accept(schematic);
+        notifyHistoryStateChanged();
         recomputeSimulation();
     }
 
     public SimulationResult simulationResult() { return simulationResult; }
+
+    public boolean canUndo() {
+        return history.canUndo();
+    }
+
+    public boolean canRedo() {
+        return history.canRedo();
+    }
+
+    public void setHistoryStateListener(Runnable listener) {
+        historyStateListener = listener == null ? () -> { } : listener;
+        notifyHistoryStateChanged();
+    }
+
+    public boolean undo() {
+        if (!history.undo(schematic)) {
+            notifyHistoryStateChanged();
+            return false;
+        }
+        clearSelectionAfterHistoryChange();
+        return true;
+    }
+
+    public boolean redo() {
+        if (!history.redo(schematic)) {
+            notifyHistoryStateChanged();
+            return false;
+        }
+        clearSelectionAfterHistoryChange();
+        return true;
+    }
+
+    private void clearSelectionAfterHistoryChange() {
+        selectedIds.clear();
+        selectedWires.clear();
+        resetGesture();
+        notifySelectionChanged();
+        notifyHistoryStateChanged();
+        // restoreSnapshot notifies the simulation listener; repaint also clears stale selection.
+        repaint();
+    }
+
+    private void beginHistoryGesture() {
+        history.begin(schematic);
+    }
+
+    private void commitHistoryGesture() {
+        if (history.commit(schematic)) {
+            notifyHistoryStateChanged();
+        }
+    }
+
+    private void notifyHistoryStateChanged() {
+        historyStateListener.run();
+    }
 
     long simulationRecomputeCount() { return simulationRecomputeCount; }
 
@@ -290,8 +350,10 @@ public final class CanvasPanel extends JPanel {
     public void placeFromDrop(String typeId, Point screenPoint) {
         GateDef definition = gateLibrary.get(typeId);
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        beginHistoryGesture();
         PlacedComponent placed = placeAtWorld(
                 definition.id(), world.x, world.y, Facing.EAST);
+        commitHistoryGesture();
         selectedIds.clear();
         selectedWires.clear();
         selectedIds.add(placed.id());
@@ -410,6 +472,7 @@ public final class CanvasPanel extends JPanel {
                 }
 
                 if (activeTool == Tool.ADD) {
+                    beginHistoryGesture();
                     gesture = Gesture.ADD_CLICK;
                     gestureStartScreen = event.getPoint();
                     Rectangle oldPreviewBounds = previewScreenBounds();
@@ -493,6 +556,7 @@ public final class CanvasPanel extends JPanel {
                     if (!gestureMoved && previewTypeId != null) {
                         Rectangle previewBounds = previewScreenBounds();
                         placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
+                        commitHistoryGesture();
                         repaintIfPresent(previewBounds);
                     }
                     resetGesture();
@@ -554,6 +618,7 @@ public final class CanvasPanel extends JPanel {
             }
             moveStartComponents = Map.copyOf(starting);
             moveStartWires = Set.copyOf(selectedWires);
+            beginHistoryGesture();
             repaintUnion(oldSelectionBounds, selectionScreenBounds());
             return;
         }
@@ -626,6 +691,7 @@ public final class CanvasPanel extends JPanel {
         }
         moveStartComponents = Map.copyOf(starting);
         moveStartWires = Set.copyOf(selectedWires);
+        beginHistoryGesture();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());
     }
 
@@ -643,6 +709,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void startWireGesture(int x, int y) {
+        beginHistoryGesture();
         wireStartPoint = new Connectivity.Point(x, y);
         wireAxisChosen = false;
         wireHorizontalFirst = true;
@@ -754,6 +821,7 @@ public final class CanvasPanel extends JPanel {
                             wireSegmentScreenBounds(segment, DIRTY_REGION_MARGIN + 3));
                 }
             }
+            commitHistoryGesture();
             resetGesture();
             repaintUnion(oldGestureBounds, finalWireBounds);
             return;
@@ -770,6 +838,7 @@ public final class CanvasPanel extends JPanel {
                 selectedWires.addAll(schematic.moveWires(moveStartWires, deltaX, deltaY));
             }
             notifySelectionChanged();
+            commitHistoryGesture();
         } else if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved) {
             GateGeometry.Bounds rectangle = selectionRectangle(
                     gestureStartWorldX, gestureStartWorldY,
@@ -833,9 +902,11 @@ public final class CanvasPanel extends JPanel {
             return;
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
+        beginHistoryGesture();
         for (PlacedComponent component : selectedComponents()) {
             schematic.setFacing(component.id(), facing);
         }
+        commitHistoryGesture();
         notifySelectionChanged();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());
     }
@@ -845,6 +916,7 @@ public final class CanvasPanel extends JPanel {
             return;
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
+        beginHistoryGesture();
         for (String id : List.copyOf(selectedIds)) {
             schematic.remove(id);
         }
@@ -853,6 +925,7 @@ public final class CanvasPanel extends JPanel {
         }
         selectedIds.clear();
         selectedWires.clear();
+        commitHistoryGesture();
         notifySelectionChanged();
         repaintIfPresent(oldSelectionBounds);
     }
@@ -872,6 +945,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void resetGesture() {
+        history.cancelPending();
         gesture = Gesture.NONE;
         gestureStartScreen = null;
         gestureMoved = false;
