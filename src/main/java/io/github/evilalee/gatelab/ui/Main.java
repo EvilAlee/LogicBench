@@ -26,7 +26,7 @@ import javax.swing.UIManager;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreePath;
-import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.filechooser.FileFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Container;
@@ -40,6 +40,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -269,7 +270,7 @@ public final class Main {
 
     private static Path withExtension(Path path) {
         String name = path.getFileName().toString();
-        if (!name.endsWith(SchematicJson.FILE_EXTENSION)) {
+        if (!hasSchematicExtension(name)) {
             return path.resolveSibling(name + SchematicJson.FILE_EXTENSION);
         }
         return path;
@@ -278,10 +279,31 @@ public final class Main {
     private static JFileChooser schematicChooser() {
         JFileChooser chooser = new JFileChooser();
         chooser.setAcceptAllFileFilterUsed(false);
-        chooser.setFileFilter(new FileNameExtensionFilter(
-                "LogicBench schematic (*" + SchematicJson.FILE_EXTENSION + ")",
-                "logicbench.json"));
+        chooser.setFileFilter(schematicFileFilter());
         return chooser;
+    }
+
+    static FileFilter schematicFileFilter() {
+        return new FileFilter() {
+            @Override
+            public boolean accept(File file) {
+                return file.isDirectory() || hasSchematicExtension(file.getName());
+            }
+
+            @Override
+            public String getDescription() {
+                return "LogicBench schematic (*" + SchematicJson.FILE_EXTENSION + ")";
+            }
+        };
+    }
+
+    static boolean hasSchematicExtension(String fileName) {
+        String extension = SchematicJson.FILE_EXTENSION;
+        return fileName != null
+                && fileName.length() >= extension.length()
+                && fileName.regionMatches(
+                        true, fileName.length() - extension.length(),
+                        extension, 0, extension.length());
     }
 
     private static boolean confirmUnsavedChanges(
