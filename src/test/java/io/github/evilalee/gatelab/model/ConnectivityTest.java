@@ -109,11 +109,12 @@ class ConnectivityTest {
 
         List<Connectivity.PinPosition> pins = schematic.pinPositions();
         for (int index = 0; index < definition.inputs().size(); index++) {
+            int inputIndex = index;
             GateGeometry.Offset offset = GateGeometry.pinOffset(
-                    definition, definition.inputs().get(index), Facing.WEST);
+                    definition, definition.inputs().get(inputIndex), Facing.WEST);
             Connectivity.PinPosition pin = pins.stream()
                     .filter(candidate -> candidate.componentId().equals(placed.id())
-                            && candidate.pinId().equals("in" + index))
+                            && candidate.pinId().equals("in" + inputIndex))
                     .findFirst().orElseThrow();
             assertEquals(placed.x() + offset.x(), pin.x());
             assertEquals(placed.y() + offset.y(), pin.y());
