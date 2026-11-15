@@ -27,7 +27,7 @@
 - ONE=(0,210,0), ZERO=(0,100,0), X=(0,0,255); selected wires use an orange translucent halo.
 - Component origin, rotation, and 10-unit grid remain unchanged.
 - Moving/rotating components leaves old wire segments as stubs and adds orthogonal links where stationary wires or pins touched changed pin positions; selected wires still move with the selection.
-- Link routing avoids existing wire and pin coordinates; it skips links when the destination is already attached, and otherwise prefers the larger displacement axis (horizontal on ties) with safe orthogonal detours.
+- Link routing can branch from any grid point on the pin's original stationary net, so crowded junctions remain routable after repeated moves/rotations. Unrelated wires and pins remain obstacles; attached destinations are reused, and the larger displacement axis is preferred first (horizontal on ties).
 - M7b history snapshots contain only placed components and geometric wire segments; input poke values are not history state.
 - Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
 - New/Open clear history; Save leaves it intact.

@@ -252,6 +252,72 @@ class ComponentWireLinkTest {
     }
 
     @Test
+    void repeatedMovesKeepBothInputNetsConnectedWhenOnePinIsSurroundedByItsOwnBranches() {
+        CircuitFixture fixture = completeAndCircuit();
+        Schematic schematic = fixture.schematic();
+        Connectivity.PinPosition firstInputPin = pin(schematic, fixture.gate(), "in0");
+
+        // This is one net: the old pin already has a branch in every direction.
+        schematic.addWire(new WireSegment(firstInputPin.x(), firstInputPin.y() - 10,
+                firstInputPin.x(), firstInputPin.y()));
+        schematic.addWire(new WireSegment(firstInputPin.x(), firstInputPin.y(),
+                firstInputPin.x() + 10, firstInputPin.y()));
+        schematic.addWire(new WireSegment(firstInputPin.x(), firstInputPin.y(),
+                firstInputPin.x(), firstInputPin.y() + 10));
+
+        for (int[] position : List.of(
+                new int[]{120, 0},
+                new int[]{140, 0},
+                new int[]{140, 20},
+                new int[]{120, 20},
+                new int[]{130, 30})) {
+            schematic.move(fixture.gate().id(), position[0], position[1]);
+            assertCircuitNetsRemainSeparate(fixture);
+        }
+    }
+
+    @Test
+    void repeatedRotationsKeepEachInputConnectedToItsOriginalNet() {
+        CircuitFixture fixture = completeAndCircuit();
+        Schematic schematic = fixture.schematic();
+        Connectivity.PinPosition firstInputPin = pin(schematic, fixture.gate(), "in0");
+
+        schematic.addWire(new WireSegment(firstInputPin.x(), firstInputPin.y() - 10,
+                firstInputPin.x(), firstInputPin.y()));
+        schematic.addWire(new WireSegment(firstInputPin.x(), firstInputPin.y(),
+                firstInputPin.x() + 10, firstInputPin.y()));
+        schematic.addWire(new WireSegment(firstInputPin.x(), firstInputPin.y(),
+                firstInputPin.x(), firstInputPin.y() + 10));
+
+        for (Facing facing : List.of(
+                Facing.NORTH, Facing.WEST, Facing.SOUTH, Facing.EAST, Facing.NORTH)) {
+            schematic.setFacing(fixture.gate().id(), facing);
+            assertCircuitNetsRemainSeparate(fixture);
+        }
+    }
+
+    private static void assertCircuitNetsRemainSeparate(CircuitFixture fixture) {
+        Schematic schematic = fixture.schematic();
+        assertConnected(schematic,
+                pin(schematic, fixture.inputA(), "out"),
+                pin(schematic, fixture.gate(), "in0"));
+        assertConnected(schematic,
+                pin(schematic, fixture.inputB(), "out"),
+                pin(schematic, fixture.gate(), "in1"));
+        assertConnected(schematic,
+                pin(schematic, fixture.gate(), "out"),
+                pin(schematic, fixture.output(), "in0"));
+        assertNotConnected(schematic,
+                pin(schematic, fixture.gate(), "in0"),
+                pin(schematic, fixture.gate(), "in1"));
+        assertEquals(schematic.wires().size(), Set.copyOf(schematic.wires()).size(),
+                "repeated edits must not append exact duplicate segments");
+        assertEquals(Value.ONE, SchematicCompiler.compileAndSettle(schematic)
+                .outputValues().get(fixture.output().id()),
+                "the circuit's output must remain stable after every move or rotation");
+    }
+
+    @Test
     void undoRestoresExactOriginalGeometryAndRedoReappliesAllGeneratedLinksInOneStep() {
         CircuitFixture fixture = completeAndCircuit();
         Schematic schematic = fixture.schematic();
