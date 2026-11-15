@@ -192,7 +192,7 @@ public final class Schematic {
                 replacements.put(current.id(), new PlacedComponent(
                         current.id(), current.typeId(),
                         current.x() + deltaX, current.y() + deltaY,
-                        current.facing()));
+                        current.facing(), current.attributes()));
             }
         }
 

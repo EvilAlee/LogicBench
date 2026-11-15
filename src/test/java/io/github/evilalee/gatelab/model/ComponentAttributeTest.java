@@ -101,6 +101,40 @@ class ComponentAttributeTest {
     }
 
     @Test
+    void componentMovesFacingChangesAndUndoPreserveNonDefaultAttributes() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent gate = schematic.add("and", 100, 100, Facing.EAST);
+        assertTrue(schematic.setAttribute(gate.id(), "size", "wide"));
+        assertTrue(schematic.setAttribute(gate.id(), "inputs", "3"));
+        SchematicHistory history = new SchematicHistory();
+
+        SchematicSnapshot beforeMove = SchematicSnapshot.capture(schematic);
+        history.begin(schematic);
+        schematic.move(gate.id(), 150, 130);
+        assertTrue(history.commit(schematic));
+        PlacedComponent moved = schematic.components().getFirst();
+        assertEquals(Map.of("size", "wide", "inputs", "3"), moved.attributes());
+        assertEquals(3, schematic.definitionFor(moved).inputCount());
+
+        SchematicSnapshot beforeFacing = SchematicSnapshot.capture(schematic);
+        history.begin(schematic);
+        assertTrue(schematic.setFacing(gate.id(), Facing.NORTH));
+        assertTrue(history.commit(schematic));
+        PlacedComponent rotated = schematic.components().getFirst();
+        assertEquals(Map.of("size", "wide", "inputs", "3"), rotated.attributes());
+        assertEquals(3, schematic.definitionFor(rotated).inputCount());
+
+        assertTrue(history.undo(schematic));
+        assertEquals(beforeFacing, SchematicSnapshot.capture(schematic));
+        assertEquals(Map.of("size", "wide", "inputs", "3"),
+                schematic.components().getFirst().attributes());
+        assertTrue(history.undo(schematic));
+        assertEquals(beforeMove, SchematicSnapshot.capture(schematic));
+        assertEquals(Map.of("size", "wide", "inputs", "3"),
+                schematic.components().getFirst().attributes());
+    }
+
+    @Test
     void attributesRoundTripAndOldFilesWithoutAttrsRemainCompatible() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent gate = schematic.add("and", 100, 100, Facing.EAST);
