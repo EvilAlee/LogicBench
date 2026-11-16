@@ -1,46 +1,42 @@
 # LogicBench — Program Overview
 
-**LogicBench** is a desktop logic-circuit editor and simulator. Users place logic components on a grid, connect their pins with orthogonal wires, edit component attributes, and observe the resulting logic values. The editable schematic is the source of truth; the simulation circuit is compiled from it whenever the schematic changes.
+**LogicBench** is a Java desktop application for drawing and simulating logic circuits. Users place components on a grid, connect pins with orthogonal wires, edit component attributes, and observe logic values. The editable schematic is the source of truth; the simulation circuit is rebuilt from it after changes.
 
 ## Technology and startup
 
-The application uses **Java 25**, **Swing** with FlatLaf for the desktop UI, **jSVG** to draw catalogue artwork, **Gson** for schematic files, and Gradle for build/run/test tasks. The entry point is `io.github.evilalee.gatelab.ui.Main`. It configures the look and feel, creates the main window, then connects the canvas, menus, component explorer, attribute table, status area, and document actions.
+The project uses **Java 25**, **Swing/FlatLaf** for the interface, **jSVG** for component artwork, **Gson** for files, and Gradle. The entry point is `io.github.evilalee.gatelab.ui.Main`. It creates the window and connects the canvas, menus, component explorer, attribute table, status area, and file actions.
 
-At startup, `CanvasPanel` loads the `GateLibrary`, creates a `Schematic`, and creates a `GateRenderer`. The library reads `src/main/resources/gates.json`, validates the component definitions, and indexes visual variants by family, size, and input count. SVG resources provide the component artwork; `GateGeometry` provides the pin offsets and rotated bounds.
+On startup, `CanvasPanel` loads the `GateLibrary`, creates the editable `Schematic`, and prepares the `GateRenderer`. The library reads `src/main/resources/gates.json`, validates definitions, and indexes variants by family, size, and input count. SVG files supply artwork; `GateGeometry` calculates rotated pin positions and bounds.
 
-## Main program layers
+## Main layers
 
-| Layer | Main responsibility |
+| Code | Responsibility |
 |---|---|
-| `ui/Main` and `ui/CanvasPanel` | Window, menus, tools, mouse/keyboard input, attribute editor, painting, and user feedback. |
-| `io/GateLibrary` and `ui/GateRenderer` | Load catalogue definitions, resolve variants, and render SVG artwork. |
-| `model/Schematic` | Store placed components, facing, non-default attributes, input states, and wire segments; validate and publish edits. |
-| `model/Connectivity` | Derive electrical nets from pin coordinates and wire geometry. Nets are calculated, not stored in the document. |
-| `sim/SchematicCompiler` and `sim/Simulator` | Translate the schematic into an engine circuit, propagate logic values, and return simulation results. |
-| `io/SchematicJson` and `model/SchematicHistory` | Validate/read/write `.lbc` documents and provide snapshot-based undo/redo. |
+| `ui/Main`, `ui/CanvasPanel` | Window, tools, user input, table editing, drawing, and feedback. |
+| `io/GateLibrary`, `ui/GateRenderer` | Component catalogue, variant selection, and SVG rendering. |
+| `model/Schematic` | Components, attributes, input states, wires, and validated edits. |
+| `model/Connectivity` | Derives electrical nets from pin coordinates and wire geometry. |
+| `sim/SchematicCompiler`, `sim/Simulator` | Builds the engine circuit and propagates logic values. |
+| `io/SchematicJson`, `model/SchematicHistory` | Validated `.lbc` files and snapshot-based undo/redo. |
 
-## What happens when a user edits a circuit?
+## How a circuit edit works
 
-1. A user selects a component or tool, places a component, draws or moves a wire, changes Facing/Size/Number of Inputs, or changes an input's value. Add-mode attributes are remembered per component family for the current session.
-2. The UI calls a method on `Schematic`; it does not maintain a second copy of the electrical design. The model validates the change and increments its modification counter when a mutation is committed.
-3. Component pin coordinates are calculated from the resolved `GateDef` and its facing. `Connectivity.analyze` uses those coordinates plus the orthogonal wire segments to derive nets. A pin or wire endpoint on a segment joins it; a plain crossing without a joining point does not.
-4. For component moves, rotations, and pin-moving attribute changes, the model tries safe orthogonal wire-follow routes. It checks that routes do not short previously separate nets. If a route cannot be made safely, generated links are discarded; if the destination pins themselves would create a short, the edit is rejected.
-5. The schematic change listener asks `SchematicCompiler` to build a fresh engine `Circuit`. It creates engine inputs, gates (using the resolved variant's actual input count), and output probes, then connects their pins according to the derived nets.
-6. `Simulator` builds its net groups using union-find and settles the circuit with an event queue. Changed outputs update their nets and schedule only affected gates for later ticks. The result is returned to the canvas for wire colours, output values, status, and repainting.
+1. A user places, moves, or rotates a component; draws or moves a wire; changes an attribute; or pokes an input. Add-mode settings are remembered per component family for the session.
+2. The UI calls `Schematic`. The model validates the operation, updates its data, and notifies listeners. Completed gestures are grouped into one undo step.
+3. The model resolves each component's `GateDef` variant and calculates its pins. `Connectivity.analyze` derives nets from those pins and the wire segments. Pins or endpoints on a wire join it; a plain crossing does not.
+4. For moves, rotations, and pin-moving attribute changes, safe orthogonal wire-follow routes are tested against the previous net groups. Unsafe generated links are discarded; an edit whose destination pins would create a short is rejected.
+5. `SchematicCompiler` builds a fresh engine `Circuit`, creates inputs, gates (with the selected input count), and output probes, then connects their pins using the derived nets.
+6. `Simulator` groups engine pins into nets with union-find and settles an event queue. Changed outputs schedule affected gates. The resulting wire and probe values are sent back to the canvas for rendering.
 
-## Documents and history
+## Files, history, and commands
 
-A `.lbc` file is versioned JSON containing component IDs/types/positions/facing, non-default `size` and `inputs` overrides in optional `attrs`, input HIGH states, and geometric wires. Nets and computed simulation values are not saved. Opening first parses and validates a separate schematic; the active document is replaced only after a successful load. Older version-1 files without `attrs` use the default narrow/2-input settings.
+A `.lbc` file is versioned JSON containing component IDs/types/positions/facing, optional non-default `attrs` (size and input count), input HIGH states, and wire geometry. Derived nets and simulation caches are not saved. Opening validates a detached schematic before replacing the active one; older v1 files without `attrs` retain the narrow/2-input defaults. Undo/redo stores up to 100 schematic snapshots.
 
-Undo/redo stores schematic snapshots (up to 100 steps). A completed user gesture—such as moving a selection or changing an attribute—is one history step. Saving updates the document's saved modification revision; unsaved changes are reflected in the window title.
-
-## Run and test
-
-From the repository root with JDK 25 installed:
+From the repository root with JDK 25:
 
 ```bash
-./gradlew run       # launch the desktop application
-./gradlew test      # run headless model, connectivity, compiler, and UI tests
+./gradlew run       # launch LogicBench
+./gradlew test      # run the headless and UI-model tests
 ```
 
-See [the program flowchart](PROGRAM_FLOW.md) for the same lifecycle as a diagram.
+See [the flowchart](PROGRAM_FLOW.md) for the full high-level execution path.
