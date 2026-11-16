@@ -7,19 +7,21 @@
 - M4: placed-component Schematic, add/select/move/rotate/delete interactions
 - M5: orthogonal wires, selection/movement/deletion, geometric connectivity, junctions and tests
 - M6: live schematic simulation, Poke tool, value-colored wires, I/O digits and oscillation reporting
+- M7a: versioned .lbc Save/Open, input state persistence, dirty-document prompts
+- M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
+- M8b-v2: validated move/rotation wire-follow links with no-short fallback and safe no-link behavior
 
 ## In progress
-- M8b-v2: per-gesture validated wire-follow links with no-short fallback
-  - Branch: m8b-v2
-  - PR pending review
-- M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
-  - Branch: m7b-undo
+- M9a: per-component Facing/Size/Input-count attributes, variant resolution, save/load, undo and attribute table
+  - Branch: m9a-attributes
   - PR pending review
 
 ## Next
 - M8 polish
 
 ## Decisions
+- M9a stores only non-default `size` and `inputs` overrides in each component's `attrs` map; Facing remains top-level. Variant choices are derived from the matching family entries in `gates.json`; unavailable combinations are rejected.
+- M9a tool-attribute values are remembered per component family for the current session and copied into subsequently placed components.
 - Save files contain version, components (including input-only HIGH state), and geometric wires only.
 - Nets and simulation results are not serialized; loading rebuilds the simulation from the loaded schematic.
 - Invalid files are parsed into a detached schematic and never replace the active document.

@@ -1,0 +1,369 @@
+{
+  "gates": [
+    {
+      "id": "and",
+      "svg": "svg/and.svg",
+      "width": 30,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 30,
+        "y": 20
+      }
+    },
+    {
+      "id": "or",
+      "svg": "svg/or.svg",
+      "width": 30,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 30,
+        "y": 20
+      }
+    },
+    {
+      "id": "nand",
+      "svg": "svg/nand.svg",
+      "width": 40,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 40,
+        "y": 20
+      }
+    },
+    {
+      "id": "nor",
+      "svg": "svg/nor.svg",
+      "width": 40,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 40,
+        "y": 20
+      }
+    },
+    {
+      "id": "xor",
+      "svg": "svg/xor.svg",
+      "width": 40,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 40,
+        "y": 20
+      }
+    },
+    {
+      "id": "xnor",
+      "svg": "svg/xnor.svg",
+      "width": 50,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 50,
+        "y": 20
+      }
+    },
+    {
+      "id": "not",
+      "svg": "svg/not.svg",
+      "width": 30,
+      "height": 20,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        }
+      ],
+      "output": {
+        "x": 30,
+        "y": 10
+      }
+    },
+    {
+      "id": "buffer",
+      "svg": "svg/buffer.svg",
+      "width": 20,
+      "height": 20,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        }
+      ],
+      "output": {
+        "x": 20,
+        "y": 10
+      }
+    },
+    {
+      "id": "input",
+      "svg": "svg/input.svg",
+      "width": 20,
+      "height": 20,
+      "inputs": [],
+      "output": {
+        "x": 20,
+        "y": 10
+      }
+    },
+    {
+      "id": "output",
+      "svg": "svg/output.svg",
+      "width": 20,
+      "height": 20,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        }
+      ],
+      "output": null
+    },
+    {
+      "id": "and-normal-2",
+      "family": "and",
+      "size": "normal",
+      "inputCount": 2,
+      "svg": "svg/and.svg",
+      "width": 40,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 40,
+        "y": 20
+      }
+    },
+    {
+      "id": "and-wide-2",
+      "family": "and",
+      "size": "wide",
+      "inputCount": 2,
+      "svg": "svg/and.svg",
+      "width": 50,
+      "height": 40,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        }
+      ],
+      "output": {
+        "x": 50,
+        "y": 20
+      }
+    },
+    {
+      "id": "and-narrow-3",
+      "family": "and",
+      "size": "narrow",
+      "inputCount": 3,
+      "svg": "svg/and.svg",
+      "width": 30,
+      "height": 60,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        },
+        {
+          "x": 0,
+          "y": 50
+        }
+      ],
+      "output": {
+        "x": 30,
+        "y": 30
+      }
+    },
+    {
+      "id": "and-normal-3",
+      "family": "and",
+      "size": "normal",
+      "inputCount": 3,
+      "svg": "svg/and.svg",
+      "width": 40,
+      "height": 60,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        },
+        {
+          "x": 0,
+          "y": 50
+        }
+      ],
+      "output": {
+        "x": 40,
+        "y": 30
+      }
+    },
+    {
+      "id": "and-wide-3",
+      "family": "and",
+      "size": "wide",
+      "inputCount": 3,
+      "svg": "svg/and.svg",
+      "width": 50,
+      "height": 60,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        },
+        {
+          "x": 0,
+          "y": 50
+        }
+      ],
+      "output": {
+        "x": 50,
+        "y": 30
+      }
+    },
+    {
+      "id": "and-narrow-4",
+      "family": "and",
+      "size": "narrow",
+      "inputCount": 4,
+      "svg": "svg/and.svg",
+      "width": 30,
+      "height": 70,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        },
+        {
+          "x": 0,
+          "y": 50
+        },
+        {
+          "x": 0,
+          "y": 70
+        }
+      ],
+      "output": {
+        "x": 30,
+        "y": 40
+      }
+    },
+    {
+      "id": "and-normal-4",
+      "family": "and",
+      "size": "normal",
+      "inputCount": 4,
+      "svg": "svg/and.svg",
+      "width": 40,
+      "height": 70,
+      "inputs": [
+        {
+          "x": 0,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 30
+        },
+        {
+          "x": 0,
+          "y": 50
+        },
+        {
+          "x": 0,
+          "y": 70
+        }
+      ],
+      "output": {
+        "x": 40,
+        "y": 40
+      }
+    }
+  ]
+}

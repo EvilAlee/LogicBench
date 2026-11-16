@@ -89,6 +89,26 @@ from the components and wire geometry after loading.
 - \`settle()\` has a tick cap; on hitting it, set the oscillating flag and return.
 - Conflicting drivers on one net resolve to X.
 
+## 7a. Component attributes and variants
+- Each placed component carries immutable, non-default string overrides; Facing
+  remains a dedicated model field and top-level save property. Missing Size and
+  Number of Inputs values mean narrow and 2 respectively.
+- Component attribute definitions live in `ComponentAttributeRegistry`.
+  Size and input-count options come only from variants actually present in
+  `gates.json` for that family. `GateLibrary` resolves a family/size/input
+  count to one definition; an unavailable combination is rejected rather than
+  approximated.
+- A variant entry identifies its visual family with optional `family`,
+  `size`, and `inputCount` metadata. The old six-field `GateDef`
+  constructor remains a default narrow variant for source compatibility.
+- Facing, Size, and Number of Inputs changes use the Schematic mutation API.
+  Pin-moving attribute changes reuse validated wire-follow routing; rejected
+  routes use the same no-short fallback as other committed geometry changes.
+- Save files keep Facing at top level and store only non-default Size/input
+  overrides in optional per-component `attrs`. Version 1 files without attrs
+  retain their original defaults; unknown attribute keys/values and missing
+  variants are rejected during detached load.
+
 ## 7. Wiring
 - Wires are normalized horizontal or vertical segments between grid points.
 - Connectivity is derived from segment geometry and component-pin positions;

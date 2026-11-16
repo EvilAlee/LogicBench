@@ -7,6 +7,9 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 
 import javax.swing.AbstractAction;
+import javax.swing.AbstractCellEditor;
+import javax.swing.JComboBox;
+import javax.swing.SwingUtilities;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JFrame;
@@ -26,7 +29,8 @@ import javax.swing.JToolBar;
 import javax.swing.JTree;
 import javax.swing.TransferHandler;
 import javax.swing.UIManager;
-import javax.swing.table.DefaultTableModel;
+import javax.swing.table.AbstractTableModel;
+import javax.swing.table.TableCellEditor;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreePath;
 import javax.swing.filechooser.FileFilter;
@@ -48,6 +52,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 
 /** Swing application entry point for the LogicBench desktop window. */
 public final class Main {
@@ -111,25 +116,21 @@ public final class Main {
         JToggleButton poke = new JToggleButton("Poke");
         content.add(createToolbar(canvas, edit, poke), BorderLayout.NORTH);
 
-        DefaultTableModel attributesModel = new DefaultTableModel(
-                new Object[]{"Attribute", "Value"}, 0) {
+        AttributeTableModel attributesModel = new AttributeTableModel(canvas);
+        JTable attributes = new JTable(attributesModel) {
             @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
+            public TableCellEditor getCellEditor(int row, int column) {
+                if (column == 1 && row >= 0 && row < attributesModel.getRowCount()) {
+                    return new AttributeComboEditor(attributesModel);
+                }
+                return super.getCellEditor(row, column);
             }
         };
-        JTable attributes = new JTable(attributesModel);
         attributes.setFillsViewportHeight(true);
         attributes.setRowHeight(22);
         attributes.getTableHeader().setReorderingAllowed(false);
-        canvas.setSelectionListener(selection -> {
-            attributesModel.setRowCount(0);
-            if (selection.size() == 1) {
-                PlacedComponent component = selection.getFirst();
-                attributesModel.addRow(new Object[]{"Type", component.typeId()});
-                attributesModel.addRow(new Object[]{"Facing", component.facing().name()});
-            }
-        });
+        canvas.setAttributeStateListener(
+                () -> attributesModel.setState(canvas.attributePanelState()));
 
         JSplitPane leftColumn = createLeftColumn(canvas, attributes);
         JSplitPane workspace = new JSplitPane(
@@ -466,10 +467,10 @@ public final class Main {
         DefaultMutableTreeNode gates = new DefaultMutableTreeNode("Gates");
         DefaultMutableTreeNode pins = new DefaultMutableTreeNode("Pins");
 
-        for (var definition : GateLibrary.load().all()) {
+        for (String family : GateLibrary.load().families()) {
             ComponentTreeItem item = new ComponentTreeItem(
-                    definition.id(), treeLabel(definition.id()));
-            if (definition.id().equals("input") || definition.id().equals("output")) {
+                    family, treeLabel(family));
+            if (family.equals("input") || family.equals("output")) {
                 pins.add(new DefaultMutableTreeNode(item));
             } else {
                 gates.add(new DefaultMutableTreeNode(item));
@@ -553,6 +554,96 @@ public final class Main {
             case "output" -> "Output";
             default -> id;
         };
+    }
+
+    private static final class AttributeTableModel extends AbstractTableModel {
+        private final CanvasPanel canvas;
+        private List<CanvasPanel.AttributeRow> rows = List.of();
+
+        private AttributeTableModel(CanvasPanel canvas) {
+            this.canvas = canvas;
+        }
+
+        void setState(CanvasPanel.AttributePanelState state) {
+            rows = state.rows();
+            fireTableDataChanged();
+        }
+
+        CanvasPanel.AttributeRow row(int index) {
+            return rows.get(index);
+        }
+
+        @Override
+        public int getRowCount() {
+            return rows.size();
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 2;
+        }
+
+        @Override
+        public String getColumnName(int column) {
+            return column == 0 ? "Attribute" : "Value";
+        }
+
+        @Override
+        public Object getValueAt(int rowIndex, int columnIndex) {
+            CanvasPanel.AttributeRow row = rows.get(rowIndex);
+            return columnIndex == 0 ? row.label() : row.selected();
+        }
+
+        @Override
+        public boolean isCellEditable(int rowIndex, int columnIndex) {
+            return columnIndex == 1 && !rows.get(rowIndex).options().isEmpty();
+        }
+
+        @Override
+        public void setValueAt(Object value, int rowIndex, int columnIndex) {
+            if (columnIndex != 1 || !(value instanceof CanvasPanel.AttributeOption option)) {
+                return;
+            }
+            CanvasPanel.AttributeRow row = rows.get(rowIndex);
+            canvas.setSelectedAttribute(row.key(), option.value());
+            SwingUtilities.invokeLater(canvas::requestFocusInWindow);
+        }
+    }
+
+    private static final class AttributeComboEditor extends AbstractCellEditor
+            implements TableCellEditor {
+        private final AttributeTableModel model;
+        private JComboBox<CanvasPanel.AttributeOption> combo =
+                new JComboBox<>();
+
+        private AttributeComboEditor(AttributeTableModel model) {
+            this.model = model;
+        }
+
+        @Override
+        public java.awt.Component getTableCellEditorComponent(
+                JTable table, Object value, boolean selected, int row, int column) {
+            CanvasPanel.AttributeRow attribute = model.row(row);
+            combo = new JComboBox<>(attribute.options().toArray(
+                    CanvasPanel.AttributeOption[]::new));
+            combo.setSelectedItem(attribute.selected());
+            combo.getInputMap(JComponent.WHEN_FOCUSED).put(
+                    KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+                    "cancel-attribute-edit");
+            combo.getActionMap().put("cancel-attribute-edit", new AbstractAction() {
+                @Override
+                public void actionPerformed(java.awt.event.ActionEvent event) {
+                    cancelCellEditing();
+                }
+            });
+            combo.addActionListener(event -> fireEditingStopped());
+            return combo;
+        }
+
+        @Override
+        public Object getCellEditorValue() {
+            return combo.getSelectedItem();
+        }
     }
 
     private record ComponentTreeItem(String typeId, String label) {
