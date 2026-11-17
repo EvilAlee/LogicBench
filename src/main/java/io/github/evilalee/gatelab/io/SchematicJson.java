@@ -54,6 +54,9 @@ public final class SchematicJson {
                 component.attributes().forEach(attributes::addProperty);
                 item.add("attrs", attributes);
             }
+            if (!component.label().isEmpty()) {
+                item.addProperty("label", component.label());
+            }
             if ("input".equals(component.typeId())) {
                 item.addProperty("high", schematic.inputValue(component.id()));
             }
@@ -150,6 +153,20 @@ public final class SchematicJson {
                 high = highElement.getAsBoolean();
             }
 
+            String label = "";
+            if (item.has("label")) {
+                JsonElement labelElement = item.get("label");
+                if (labelElement == null || !labelElement.isJsonPrimitive()
+                        || !labelElement.getAsJsonPrimitive().isString()) {
+                    throw new IllegalArgumentException(context + ".label must be a string");
+                }
+                label = labelElement.getAsString();
+                if (!label.isEmpty() && !type.equals("input") && !type.equals("output")) {
+                    throw new IllegalArgumentException(
+                            context + ".label is only valid for input and output components");
+                }
+            }
+
             Map<String, String> attributes = new LinkedHashMap<>();
             if (item.has("attrs")) {
                 JsonElement attrsElement = item.get("attrs");
@@ -170,7 +187,7 @@ public final class SchematicJson {
 
             try {
                 PlacedComponent component = new PlacedComponent(
-                        id, type, x, y, facing, attributes);
+                        id, type, x, y, facing, attributes, label);
                 schematic.add(component);
                 if (high) {
                     schematic.setInputValue(id, true);

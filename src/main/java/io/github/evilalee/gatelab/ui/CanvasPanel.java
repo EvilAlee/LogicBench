@@ -9,6 +9,7 @@ import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicHistory;
+import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
@@ -19,6 +20,7 @@ import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.TransferHandler;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
@@ -249,6 +251,78 @@ public final class CanvasPanel extends JPanel {
 
     public SimulationResult simulationResult() { return simulationResult; }
 
+    /**
+     * Replaces the current topology as one history gesture, retaining the active
+     * Schematic object so document listeners and the current save path stay valid.
+     */
+    public void replaceWithGeneratedCircuit(Schematic generated) {
+        if (galleryMode) {
+            throw new IllegalStateException("the gallery does not own an editable schematic");
+        }
+        Schematic replacement = java.util.Objects.requireNonNull(generated, "generated");
+        history.begin(schematic);
+        schematic.restoreSnapshot(SchematicSnapshot.capture(replacement));
+        for (PlacedComponent component : replacement.components()) {
+            if ("input".equals(component.typeId())) {
+                // All expression inputs start LOW; a folded constant-one source is HIGH.
+                schematic.setInputValue(component.id(), component.label().equals("1"));
+            }
+        }
+        if (!history.commit(schematic)) {
+            history.cancelPending();
+        }
+
+        selectedIds.clear();
+        selectedWires.clear();
+        previewTypeId = null;
+        activeTool = Tool.EDIT;
+        panning = false;
+        lastPanPoint = null;
+        resetGesture();
+        toolModeListener.accept(activeTool);
+        notifySelectionChanged();
+        notifyAttributeStateChanged();
+        notifyHistoryStateChanged();
+        fitToView();
+        recomputeSimulation();
+        requestFocusInWindow();
+    }
+
+    /** Fits every placed component and wire endpoint into the visible canvas. */
+    public void fitToView() {
+        if (galleryMode || getWidth() <= 0 || getHeight() <= 0) {
+            transform.resetToDefault();
+            repaint();
+            return;
+        }
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        for (PlacedComponent component : schematic.components()) {
+            GateGeometry.Bounds bounds = GateGeometry.bounds(
+                    schematic.definitionFor(component), component.facing());
+            minX = Math.min(minX, component.x() + bounds.x());
+            minY = Math.min(minY, component.y() + bounds.y());
+            maxX = Math.max(maxX, component.x() + bounds.x() + bounds.width());
+            maxY = Math.max(maxY, component.y() + bounds.y() + bounds.height());
+        }
+        for (WireSegment wire : schematic.wires()) {
+            minX = Math.min(minX, Math.min(wire.x1(), wire.x2()));
+            minY = Math.min(minY, Math.min(wire.y1(), wire.y2()));
+            maxX = Math.max(maxX, Math.max(wire.x1(), wire.x2()));
+            maxY = Math.max(maxY, Math.max(wire.y1(), wire.y2()));
+        }
+        if (!Double.isFinite(minX)) {
+            transform.resetToDefault();
+        } else {
+            transform.fitToBounds(
+                    minX, minY, maxX, maxY, getWidth(), getHeight(), 36.0);
+        }
+        gridImage = null;
+        repaint();
+    }
+
     public boolean canUndo() {
         return history.canUndo();
     }
@@ -332,6 +406,11 @@ public final class CanvasPanel extends JPanel {
 
     public void setStatusMessageListener(Consumer<String> listener) {
         statusMessageListener = listener == null ? ignored -> { } : listener;
+    }
+
+    /** Posts a one-off result or diagnostic to the application's status bar. */
+    public void setStatusMessage(String message) {
+        statusMessageListener.accept(message == null ? "" : message);
     }
     public void setAttributeStateListener(Runnable listener) {
         attributeStateListener = listener == null ? () -> { } : listener;
@@ -1276,8 +1355,11 @@ public final class CanvasPanel extends JPanel {
                 int x = component.x() + (moving ? moveDeltaX : 0);
                 int y = component.y() + (moving ? moveDeltaY : 0);
                 GateDef definition = schematic.definitionFor(component);
+                int labelMargin = component.label().isEmpty()
+                        ? DIRTY_REGION_MARGIN : Math.max(
+                                DIRTY_REGION_MARGIN, component.label().length() * 7 + 10);
                 if (!screenClip.intersects(componentScreenBounds(
-                        definition, component.facing(), x, y, DIRTY_REGION_MARGIN))) {
+                        definition, component.facing(), x, y, labelMargin))) {
                     continue;
                 }
 
@@ -1289,6 +1371,7 @@ public final class CanvasPanel extends JPanel {
                 gateRenderer.render(
                         worldGraphics, definition, component.facing(), x, y);
                 worldGraphics.setComposite(AlphaComposite.SrcOver);
+                paintComponentLabel(screenGraphics, component, definition, x, y);
 
                 if (selected) {
                     paintSelectionOutline(worldGraphics, definition,
@@ -1351,6 +1434,39 @@ public final class CanvasPanel extends JPanel {
             } finally {
                 status.dispose();
             }
+        }
+    }
+
+    /** Labels are screen-sized text outside the artwork and use the active Look & Feel color. */
+    private void paintComponentLabel(
+            Graphics2D graphics,
+            PlacedComponent component,
+            GateDef definition,
+            int originX,
+            int originY) {
+        if (component.label().isEmpty()) {
+            return;
+        }
+        GateGeometry.Bounds bounds = GateGeometry.bounds(definition, component.facing());
+        double labelX = component.typeId().equals("input")
+                ? originX + bounds.x() : originX + bounds.x() + bounds.width();
+        double labelY = originY + bounds.y() + bounds.height() / 2.0;
+        Point2D.Double screen = transform.worldToScreen(labelX, labelY);
+
+        Graphics2D labelGraphics = (Graphics2D) graphics.create();
+        try {
+            Color foreground = UIManager.getColor("Label.foreground");
+            labelGraphics.setColor(foreground == null ? Color.DARK_GRAY : foreground);
+            labelGraphics.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10));
+            java.awt.FontMetrics metrics = labelGraphics.getFontMetrics();
+            int textWidth = metrics.stringWidth(component.label());
+            float x = (float) (component.typeId().equals("input")
+                    ? screen.x - textWidth - 6.0 : screen.x + 6.0);
+            float baseline = (float) (screen.y
+                    + (metrics.getAscent() - metrics.getDescent()) / 2.0);
+            labelGraphics.drawString(component.label(), x, baseline);
+        } finally {
+            labelGraphics.dispose();
         }
     }
 

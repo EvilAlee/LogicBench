@@ -106,7 +106,7 @@ public final class Schematic {
                 component.typeId(), component.attributes());
         PlacedComponent validated = new PlacedComponent(
                 component.id(), component.typeId(), component.x(), component.y(),
-                component.facing(), normalized);
+                component.facing(), normalized, component.label());
         definitionFor(validated);
         components.add(validated);
         notifyChanged();
@@ -193,7 +193,7 @@ public final class Schematic {
                 replacements.put(current.id(), new PlacedComponent(
                         current.id(), current.typeId(),
                         current.x() + deltaX, current.y() + deltaY,
-                        current.facing(), current.attributes()));
+                        current.facing(), current.attributes(), current.label()));
             }
         }
 
@@ -244,7 +244,7 @@ public final class Schematic {
             if (selected.contains(current.id()) && current.facing() != facing) {
                 replacements.put(current.id(), new PlacedComponent(
                         current.id(), current.typeId(), current.x(), current.y(),
-                        facing, current.attributes()));
+                        facing, current.attributes(), current.label()));
             }
         }
         if (replacements.isEmpty()) {
@@ -276,7 +276,7 @@ public final class Schematic {
         }
         PlacedComponent replacement = new PlacedComponent(
                 current.id(), current.typeId(), current.x(), current.y(),
-                current.facing(), normalizeStoredAttributes(current.typeId(), attributes));
+                current.facing(), normalizeStoredAttributes(current.typeId(), attributes), current.label());
         try {
             definitionFor(replacement);
         } catch (IllegalArgumentException exception) {
@@ -615,6 +615,8 @@ public final class Schematic {
         for (PlacedComponent component : replacementComponents) {
             requireKnownType(component.typeId());
             normalizeStoredAttributes(component.typeId(), component.attributes());
+            new PlacedComponent(component.id(), component.typeId(), component.x(), component.y(),
+                    component.facing(), component.attributes(), component.label());
             definitionFor(component);
             if (!replacementIds.add(component.id())) {
                 throw new IllegalArgumentException("duplicate component id: " + component.id());

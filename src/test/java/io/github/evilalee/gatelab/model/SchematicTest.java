@@ -37,6 +37,19 @@ class SchematicTest {
     }
 
     @Test
+    void optionalLabelsSurviveMoveFacingAndAttributeReplacement() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent input = new PlacedComponent(
+                "labeled-input", "input", 0, 0, Facing.EAST, java.util.Map.of(), "CLK");
+        schematic.add(input);
+
+        schematic.move(input.id(), 40, 20);
+        assertEquals("CLK", schematic.components().getFirst().label());
+        assertTrue(schematic.setFacing(input.id(), Facing.SOUTH));
+        assertEquals("CLK", schematic.components().getFirst().label());
+    }
+
+    @Test
     void generatedAndExplicitIdsMustBeUnique() {
         Schematic schematic = new Schematic(DEFINITIONS);
         schematic.add(new PlacedComponent("component-1", "and", 0, 0, Facing.EAST));
