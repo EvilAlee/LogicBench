@@ -522,6 +522,9 @@ public final class SchematicLayout {
                 }
             }
 
+            if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+                continue;
+            }
             long length = totalVerticalWireLength(routeSteps);
             if (length < bestLength) {
                 bestLength = length;
@@ -606,6 +609,31 @@ public final class SchematicLayout {
      * T-junction at the other trunk endpoint (or a pin-on-wire connection).
      * Select the closest grid shift that keeps those rows distinct.
      */
+    /**
+     * A candidate from a reverse sweep may have changed the source side of
+     * a channel that was made safe earlier in that sweep. Only score snapshots
+     * whose every adjacent-column interface remains cross-signal conflict-free.
+     */
+    private static boolean allChannelsHaveConflictFreePinRows(
+            List<RouteStep> routeSteps, int columnCount) {
+        for (int channel = 0; channel < columnCount - 1; channel++) {
+            List<PinRow> sourceRows = new ArrayList<>();
+            List<PinRow> targetRows = new ArrayList<>();
+            for (RouteStep step : routeSteps) {
+                if (step.channel() == channel) {
+                    sourceRows.add(new PinRow(
+                            step.signal(), sourcePinY(step.source())));
+                    targetRows.add(new PinRow(
+                            step.signal(), targetPinY(step)));
+                }
+            }
+            if (hasForeignRowCollision(targetRows, sourceRows, 0)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static int closestConflictFreeShift(
             List<RouteStep> routeSteps,
             int channel,
