@@ -9,7 +9,9 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.Netlist;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -29,8 +31,8 @@ class SchematicLayoutTest {
 
     private final SchematicLayout layout = new SchematicLayout(GateLibrary.load().all());
 
-    @Test
-    void handWrittenExpressionsLayoutAndVerifyThroughPlacedSchematic() {
+    @TestFactory
+    List<DynamicTest> handWrittenExpressionsLayoutAndVerifyThroughPlacedSchematic() {
         List<String> examples = List.of(
                 "F = A & B",
                 "F = A | B",
@@ -52,7 +54,7 @@ class SchematicLayoutTest {
                 Carry = (A & B) | (Cin & (A ^ B))
                 """,
                 "F = A ^ B ^ C ^ D");
-        for (String source : examples) {
+        return examples.stream().map(source -> DynamicTest.dynamicTest(source, () -> {
             ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
             SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
             SchematicExpressionVerifier.VerificationResult verification =
@@ -62,7 +64,7 @@ class SchematicLayoutTest {
             assertEquals(1 << compilation.netlist().inputs().size(), verification.rowCount());
             assertNoComponentOverlaps(placed.schematic());
             assertLabelsMatchSignalNames(compilation.netlist(), placed);
-        }
+        })).toList();
     }
 
     @Test
@@ -114,29 +116,45 @@ class SchematicLayoutTest {
         assertNoComponentOverlaps(second.schematic());
     }
 
+    @TestFactory
+    List<DynamicTest> twoHundredFixedSeedRandomExpressionsVerifyAfterPlacement() {
+        Random random = new Random(0x5EEDC0DEL);
+        List<String> examples = new java.util.ArrayList<>();
+        for (int index = 0; index < 200; index++) {
+            examples.add("F = " + randomExpression(random, 4));
+        }
+        return java.util.stream.IntStream.range(0, examples.size())
+                .mapToObj(index -> {
+                    String source = examples.get(index);
+                    return DynamicTest.dynamicTest("random " + index + ": " + source, () -> {
+                        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
+                        SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
+                        SchematicExpressionVerifier.VerificationResult verification =
+                                SchematicExpressionVerifier.verify(compilation, placed);
+
+                        assertTrue(verification.verified(),
+                                source + " mismatches=" + verification.mismatches());
+                        assertTrue(compilation.netlist().inputs().size() <= 5);
+                        assertNoComponentOverlaps(placed.schematic());
+
+                        LayoutMetrics actual = dimensions(placed.schematic());
+                        LayoutMetrics legacy = legacyMetrics(compilation.netlist());
+                        assertTrue(actual.height() <= legacy.height(),
+                                "became taller: " + source
+                                        + "; old=" + legacy + ", new=" + actual);
+                    });
+                }).toList();
+    }
+
     @Test
-    void twoHundredFixedSeedRandomExpressionsVerifyAfterPlacement() {
+    void atLeastOneHundredFiftyOfTwoHundredRandomLayoutsAreStrictlyShorter() {
         Random random = new Random(0x5EEDC0DEL);
         int strictlyShorter = 0;
         for (int index = 0; index < 200; index++) {
             String source = "F = " + randomExpression(random, 4);
-            ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
-            SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
-            SchematicExpressionVerifier.VerificationResult verification =
-                    SchematicExpressionVerifier.verify(compilation, placed);
-
-            assertTrue(verification.verified(),
-                    "random expression " + index + ": " + source
-                            + " mismatches=" + verification.mismatches());
-            assertTrue(compilation.netlist().inputs().size() <= 5);
-            assertNoComponentOverlaps(placed.schematic());
-
-            LayoutMetrics actual = dimensions(placed.schematic());
-            LayoutMetrics legacy = legacyMetrics(compilation.netlist());
-            assertTrue(actual.height() <= legacy.height(),
-                    "random expression " + index + " became taller: " + source
-                            + "; old=" + legacy + ", new=" + actual);
-            if (actual.height() < legacy.height()) {
+            Netlist netlist = ExpressionCompiler.compile(source).netlist();
+            LayoutMetrics actual = dimensions(layout.layout(netlist).schematic());
+            if (actual.height() < legacyMetrics(netlist).height()) {
                 strictlyShorter++;
             }
         }
