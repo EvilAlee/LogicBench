@@ -54,17 +54,20 @@ class SchematicLayoutTest {
                 Carry = (A & B) | (Cin & (A ^ B))
                 """,
                 "F = A ^ B ^ C ^ D");
-        return examples.stream().map(source -> DynamicTest.dynamicTest(source, () -> {
-            ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
-            SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
-            SchematicExpressionVerifier.VerificationResult verification =
-                    SchematicExpressionVerifier.verify(compilation, placed);
-            assertTrue(verification.verified(),
-                    source + " mismatches=" + verification.mismatches());
-            assertEquals(1 << compilation.netlist().inputs().size(), verification.rowCount());
-            assertNoComponentOverlaps(placed.schematic());
-            assertLabelsMatchSignalNames(compilation.netlist(), placed);
-        })).toList();
+        return examples.stream().map(source -> {
+            String testName = layoutDiagnosticName(source);
+            return DynamicTest.dynamicTest(testName, () -> {
+                ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
+                SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
+                SchematicExpressionVerifier.VerificationResult verification =
+                        SchematicExpressionVerifier.verify(compilation, placed);
+                assertTrue(verification.verified(),
+                        source + " mismatches=" + verification.mismatches());
+                assertEquals(1 << compilation.netlist().inputs().size(), verification.rowCount());
+                assertNoComponentOverlaps(placed.schematic());
+                assertLabelsMatchSignalNames(compilation.netlist(), placed);
+            });
+        }).toList();
     }
 
     @Test
@@ -126,7 +129,8 @@ class SchematicLayoutTest {
         return java.util.stream.IntStream.range(0, examples.size())
                 .mapToObj(index -> {
                     String source = examples.get(index);
-                    return DynamicTest.dynamicTest("random " + index + ": " + source, () -> {
+                    String testName = "random " + index + ": " + layoutDiagnosticName(source);
+                    return DynamicTest.dynamicTest(testName, () -> {
                         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
                         SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
                         SchematicExpressionVerifier.VerificationResult verification =
@@ -220,6 +224,15 @@ class SchematicLayoutTest {
             assertEquals(entry.getKey().equals("1"), schematic.inputValue(component.id()));
         }
         assertTrue(SchematicExpressionVerifier.verify(compilation, placed).verified());
+    }
+
+    private String layoutDiagnosticName(String source) {
+        try {
+            layout.layout(ExpressionCompiler.compile(source).netlist());
+            return source;
+        } catch (IllegalStateException failure) {
+            return source + " [layout diagnostic: " + failure.getMessage() + "]";
+        }
     }
 
     private record LayoutMetrics(int width, int height, int maxNodesInColumn) {
