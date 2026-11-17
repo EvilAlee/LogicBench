@@ -2,6 +2,8 @@ package io.github.evilalee.gatelab.synth.layout;
 
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.Facing;
+import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
@@ -9,6 +11,9 @@ import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.Netlist;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -17,6 +22,11 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SchematicLayoutTest {
+    private static final int LEGACY_ROW_GAP = 40;
+    private static final int LEGACY_LAYER_GAP = 60;
+    private static final int LEGACY_TRUNK_MARGIN = 20;
+    private static final int LEGACY_TRUNK_PITCH = 20;
+
     private final SchematicLayout layout = new SchematicLayout(GateLibrary.load().all());
 
     @Test
@@ -107,6 +117,7 @@ class SchematicLayoutTest {
     @Test
     void twoHundredFixedSeedRandomExpressionsVerifyAfterPlacement() {
         Random random = new Random(0x5EEDC0DEL);
+        int strictlyShorter = 0;
         for (int index = 0; index < 200; index++) {
             String source = "F = " + randomExpression(random, 4);
             ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(source);
@@ -119,7 +130,61 @@ class SchematicLayoutTest {
                             + " mismatches=" + verification.mismatches());
             assertTrue(compilation.netlist().inputs().size() <= 5);
             assertNoComponentOverlaps(placed.schematic());
+
+            LayoutMetrics actual = dimensions(placed.schematic());
+            LayoutMetrics legacy = legacyMetrics(compilation.netlist());
+            assertTrue(actual.height() <= legacy.height(),
+                    "random expression " + index + " became taller: " + source
+                            + "; old=" + legacy + ", new=" + actual);
+            if (actual.height() < legacy.height()) {
+                strictlyShorter++;
+            }
         }
+        assertTrue(strictlyShorter >= 150,
+                "only " + strictlyShorter + " of 200 random layouts became shorter");
+    }
+
+    @Test
+    void fullAdderCompactsIntoIndependentColumnsAndKeepsDepthAlignment() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                Sum = A ^ B ^ Cin
+                Cout = (A & B) | (Cin & (A ^ B))
+                """);
+        SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
+        LayoutMetrics actual = dimensions(placed.schematic());
+        LayoutMetrics legacy = legacyMetrics(compilation.netlist());
+
+        Map<String, Integer> depths = gateDepths(compilation.netlist());
+        Map<Integer, Integer> xByDepth = new LinkedHashMap<>();
+        for (Netlist.Gate gate : compilation.netlist().gates()) {
+            PlacedComponent gateComponent = component(
+                    placed.schematic(), "expr-gate-" + gate.id());
+            int bodyX = bounds(placed.schematic(), gateComponent).x();
+            Integer previousX = xByDepth.putIfAbsent(depths.get(gate.id()), bodyX);
+            assertTrue(previousX == null || previousX == bodyX,
+                    "gates at depth " + depths.get(gate.id()) + " must share a column");
+        }
+
+        assertTrue(actual.height() <= legacy.maxNodesInColumn() * 80 + 40,
+                "height " + actual.height() + " exceeds compact-column bound for "
+                        + legacy.maxNodesInColumn() + " nodes");
+        assertTrue(actual.width() >= actual.height(),
+                "full-adder width/height ratio must be at least 1: " + actual);
+        assertTrue(actual.height() < legacy.height(),
+                "full adder should be shorter than its old banded layout: old="
+                        + legacy + ", new=" + actual);
+        assertTrue(SchematicExpressionVerifier.verify(compilation, placed).verified());
+    }
+
+    @Test
+    void fourVariableXorChainIsShorterThanTheOldBandedLayout() {
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile("F = A ^ B ^ C ^ D");
+        LayoutMetrics actual = dimensions(layout.layout(compilation.netlist()).schematic());
+        LayoutMetrics legacy = legacyMetrics(compilation.netlist());
+
+        assertTrue(actual.height() < legacy.height(),
+                "four-variable XOR chain should be shorter: old=" + legacy + ", new=" + actual);
     }
 
     @Test
@@ -137,6 +202,158 @@ class SchematicLayoutTest {
             assertEquals(entry.getKey().equals("1"), schematic.inputValue(component.id()));
         }
         assertTrue(SchematicExpressionVerifier.verify(compilation, placed).verified());
+    }
+
+    private record LayoutMetrics(int width, int height, int maxNodesInColumn) {
+    }
+
+    private static LayoutMetrics dimensions(Schematic schematic) {
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        for (PlacedComponent component : schematic.components()) {
+            GateGeometry.Bounds bounds = bounds(schematic, component);
+            minX = Math.min(minX, bounds.x());
+            minY = Math.min(minY, bounds.y());
+            maxX = Math.max(maxX, bounds.x() + bounds.width());
+            maxY = Math.max(maxY, bounds.y() + bounds.height());
+        }
+        for (var wire : schematic.wires()) {
+            minX = Math.min(minX, Math.min(wire.x1(), wire.x2()));
+            minY = Math.min(minY, Math.min(wire.y1(), wire.y2()));
+            maxX = Math.max(maxX, Math.max(wire.x1(), wire.x2()));
+            maxY = Math.max(maxY, Math.max(wire.y1(), wire.y2()));
+        }
+        assertTrue(minX != Integer.MAX_VALUE && minY != Integer.MAX_VALUE,
+                "generated schematic must have a measurable bounding box");
+        return new LayoutMetrics(maxX - minX, maxY - minY, 0);
+    }
+
+    /**
+     * Recreates only the previous coordinate dimensions from the former
+     * global-band algorithm. This is a test fixture, not production code.
+     */
+    private static LayoutMetrics legacyMetrics(Netlist netlist) {
+        Map<String, Integer> depths = new LinkedHashMap<>();
+        netlist.inputs().forEach(input -> depths.put(input, 0));
+        LinkedHashSet<String> constants = new LinkedHashSet<>();
+        for (Netlist.Output output : netlist.outputs()) {
+            if (output.source().equals("0") || output.source().equals("1")) {
+                constants.add(output.source());
+                depths.putIfAbsent(output.source(), 0);
+            }
+        }
+
+        int lastGateDepth = 0;
+        for (Netlist.Gate gate : netlist.topologicalGates()) {
+            int depth = 1;
+            for (String input : gate.inputs()) {
+                depth = Math.max(depth, depths.get(input) + 1);
+            }
+            depths.put(gate.id(), depth);
+            lastGateDepth = Math.max(lastGateDepth, depth);
+        }
+        int outputColumn = lastGateDepth + 1;
+        int columnCount = outputColumn + 1;
+        int[] counts = new int[columnCount];
+        int[] heights = new int[columnCount];
+        int[] widths = new int[columnCount];
+
+        GateLibrary library = GateLibrary.load();
+        GateDef inputDefinition = library.defaultDefinition("input");
+        GateDef outputDefinition = library.defaultDefinition("output");
+        for (String ignored : netlist.inputs()) {
+            addLegacyNode(0, inputDefinition, counts, heights, widths);
+        }
+        for (String ignored : constants) {
+            addLegacyNode(0, inputDefinition, counts, heights, widths);
+        }
+        for (Netlist.Gate gate : netlist.topologicalGates()) {
+            String family = gate.type().name().toLowerCase(java.util.Locale.ROOT);
+            addLegacyNode(depths.get(gate.id()),
+                    library.defaultDefinition(family), counts, heights, widths);
+        }
+        for (Netlist.Output ignored : netlist.outputs()) {
+            addLegacyNode(outputColumn, outputDefinition, counts, heights, widths);
+        }
+
+        Map<Integer, Set<String>> signalsByChannel = new HashMap<>();
+        for (Netlist.Gate gate : netlist.topologicalGates()) {
+            for (String signal : gate.inputs()) {
+                addLegacyConnection(signal, depths.get(signal), depths.get(gate.id()),
+                        counts, heights, signalsByChannel);
+            }
+        }
+        for (Netlist.Output output : netlist.outputs()) {
+            addLegacyConnection(output.source(), depths.get(output.source()), outputColumn,
+                    counts, heights, signalsByChannel);
+        }
+
+        int height = 0;
+        int maxNodes = 0;
+        for (int column = 0; column < columnCount; column++) {
+            int columnHeight = heights[column];
+            if (counts[column] > 1) {
+                columnHeight += LEGACY_ROW_GAP * (counts[column] - 1);
+            }
+            height += columnHeight;
+            maxNodes = Math.max(maxNodes, counts[column]);
+        }
+        height += LEGACY_LAYER_GAP * (columnCount - 1);
+
+        int width = 0;
+        for (int column = 0; column < columnCount; column++) {
+            width += widths[column];
+            if (column < outputColumn) {
+                int trunks = signalsByChannel.getOrDefault(column, Set.of()).size();
+                width += LEGACY_TRUNK_MARGIN * 2 + trunks * LEGACY_TRUNK_PITCH;
+            }
+        }
+        return new LayoutMetrics(width, height, maxNodes);
+    }
+
+    private static void addLegacyNode(
+            int column, GateDef definition,
+            int[] counts, int[] heights, int[] widths) {
+        counts[column]++;
+        heights[column] += GateGeometry.bounds(definition, Facing.EAST).height();
+        widths[column] = Math.max(widths[column], definition.width());
+    }
+
+    private static void addLegacyConnection(
+            String signal,
+            int sourceColumn,
+            int targetColumn,
+            int[] counts,
+            int[] heights,
+            Map<Integer, Set<String>> signalsByChannel) {
+        for (int column = sourceColumn + 1; column < targetColumn; column++) {
+            counts[column]++;
+            heights[column] += 20;
+        }
+        for (int channel = sourceColumn; channel < targetColumn; channel++) {
+            signalsByChannel.computeIfAbsent(channel, ignored -> new LinkedHashSet<>())
+                    .add(signal);
+        }
+    }
+
+    private static Map<String, Integer> gateDepths(Netlist netlist) {
+        Map<String, Integer> depths = new LinkedHashMap<>();
+        netlist.inputs().forEach(input -> depths.put(input, 0));
+        for (Netlist.Output output : netlist.outputs()) {
+            if (output.source().equals("0") || output.source().equals("1")) {
+                depths.putIfAbsent(output.source(), 0);
+            }
+        }
+        for (Netlist.Gate gate : netlist.topologicalGates()) {
+            int depth = 1;
+            for (String input : gate.inputs()) {
+                depth = Math.max(depth, depths.get(input) + 1);
+            }
+            depths.put(gate.id(), depth);
+        }
+        return depths;
     }
 
     private static void assertLabelsMatchSignalNames(
