@@ -507,14 +507,18 @@ public final class SchematicLayout {
         for (int sweep = 0; sweep < 3; sweep++) {
             if (sweep == 1) {
                 for (int column = outputColumn - 1; column >= 1; column--) {
-                    assignColumn(columns.get(column), routeSteps, rowGap, false);
+                    assignColumn(
+                            columns.get(column), routeSteps, rowGap,
+                            false, column, true);
                 }
             } else {
                 for (int column = 1; column <= outputColumn; column++) {
                     List<Node> ordered = column == outputColumn
                             ? new ArrayList<>(outputNodes.values())
                             : columns.get(column);
-                    assignColumn(ordered, routeSteps, rowGap, true);
+                    assignColumn(
+                            ordered, routeSteps, rowGap,
+                            true, column - 1, false);
                 }
             }
 
@@ -540,7 +544,9 @@ public final class SchematicLayout {
             List<Node> ordered,
             List<RouteStep> routeSteps,
             int rowGap,
-            boolean fromPredecessors) {
+            boolean fromPredecessors,
+            int conflictChannel,
+            boolean movingSources) {
         if (ordered.isEmpty()) {
             return;
         }
@@ -581,12 +587,75 @@ public final class SchematicLayout {
         }
         currentMean /= ordered.size();
         double desiredMean = desiredTotal / ordered.size();
-        int shift = roundToGrid(desiredMean - currentMean);
+        int preferredShift = roundToGrid(desiredMean - currentMean);
+        int shift = closestConflictFreeShift(
+                routeSteps, conflictChannel, movingSources, preferredShift);
         if (shift != 0) {
             for (Node node : ordered) {
                 node.y += shift;
             }
         }
+    }
+
+    private record PinRow(String signal, int y) {
+    }
+
+    /**
+     * A horizontal branch crosses other lanes in its channel. A pin-row
+     * equality between different signals would turn that crossing into a
+     * T-junction at the other trunk endpoint (or a pin-on-wire connection).
+     * Select the closest grid shift that keeps those rows distinct.
+     */
+    private static int closestConflictFreeShift(
+            List<RouteStep> routeSteps,
+            int channel,
+            boolean movingSources,
+            int preferredShift) {
+        List<PinRow> fixedRows = new ArrayList<>();
+        List<PinRow> movingRows = new ArrayList<>();
+        for (RouteStep step : routeSteps) {
+            if (step.channel() != channel) {
+                continue;
+            }
+            if (movingSources) {
+                fixedRows.add(new PinRow(step.signal(), targetPinY(step)));
+                movingRows.add(new PinRow(step.signal(), sourcePinY(step.source())));
+            } else {
+                fixedRows.add(new PinRow(step.signal(), sourcePinY(step.source())));
+                movingRows.add(new PinRow(step.signal(), targetPinY(step)));
+            }
+        }
+
+        if (movingRows.isEmpty() || fixedRows.isEmpty()) {
+            return preferredShift;
+        }
+
+        for (int distance = 0; ; distance++) {
+            int lower = preferredShift - distance * PlacedComponent.GRID_SPACING;
+            if (!hasForeignRowCollision(movingRows, fixedRows, lower)) {
+                return lower;
+            }
+            if (distance > 0) {
+                int upper = preferredShift + distance * PlacedComponent.GRID_SPACING;
+                if (!hasForeignRowCollision(movingRows, fixedRows, upper)) {
+                    return upper;
+                }
+            }
+        }
+    }
+
+    private static boolean hasForeignRowCollision(
+            List<PinRow> movingRows, List<PinRow> fixedRows, int shift) {
+        for (PinRow moving : movingRows) {
+            int translatedY = moving.y() + shift;
+            for (PinRow fixed : fixedRows) {
+                if (!moving.signal().equals(fixed.signal())
+                        && translatedY == fixed.y()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static int minimumVerticalSeparation(Node previous, Node current, int rowGap) {

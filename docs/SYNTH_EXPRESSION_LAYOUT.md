@@ -28,8 +28,11 @@ component bounds would collide, the later node is pushed down until the
 40-unit minimum body clearance is restored, snapped to the 10-unit grid. The
 column is then shifted uniformly so its mean is as close as possible to the
 mean desired row without changing any clearance. Dummies use the same rule
-with a 20-unit virtual slot. Gate/output rows are based on GateGeometry pin
-offsets rather than assuming that every pin is at the component origin.
+with a 20-unit virtual slot. The selected shift also avoids aligning
+pins from different signals across an adjacent channel, preventing a horizontal
+branch from joining another signal at a trunk endpoint. Gate/output rows are
+based on GateGeometry pin offsets rather than assuming every pin is at the
+component origin.
 
 Coordinate placement runs three alternating sweeps: left-to-right from
 predecessor source pins, right-to-left from successor destination pins, then
