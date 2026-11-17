@@ -35,7 +35,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /** Live expression editor and engine-backed truth-table preview. */
 public final class ExpressionDialog extends JDialog {

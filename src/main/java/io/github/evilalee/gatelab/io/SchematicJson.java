@@ -161,7 +161,7 @@ public final class SchematicJson {
                     throw new IllegalArgumentException(context + ".label must be a string");
                 }
                 label = labelElement.getAsString();
-                if (!label.isEmpty() && !type.equals("input") && !type.equals("output")) {
+                if (!label.isBlank() && !type.equals("input") && !type.equals("output")) {
                     throw new IllegalArgumentException(
                             context + ".label is only valid for input and output components");
                 }

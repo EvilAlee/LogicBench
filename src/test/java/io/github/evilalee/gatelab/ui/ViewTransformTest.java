@@ -46,6 +46,22 @@ class ViewTransformTest {
     }
 
     @Test
+    void fitToBoundsCentersAndScalesTheWorldRectangleInsideTheViewport() {
+        ViewTransform transform = new ViewTransform(2.0, 50.0, 70.0);
+
+        transform.fitToBounds(-100.0, -50.0, 300.0, 150.0,
+                800, 600, 40.0);
+
+        assertEquals(1.8, transform.scale(), 1.0e-9);
+        Point2D.Double topLeft = transform.worldToScreen(-100.0, -50.0);
+        Point2D.Double bottomRight = transform.worldToScreen(300.0, 150.0);
+        assertEquals(40.0, topLeft.x, 1.0e-9);
+        assertEquals(120.0, topLeft.y, 1.0e-9);
+        assertEquals(760.0, bottomRight.x, 1.0e-9);
+        assertEquals(480.0, bottomRight.y, 1.0e-9);
+    }
+
+    @Test
     void rejectsInvalidZoomFactors() {
         ViewTransform transform = new ViewTransform();
         assertThrows(IllegalArgumentException.class, () -> transform.zoomAt(0, 0, 0));

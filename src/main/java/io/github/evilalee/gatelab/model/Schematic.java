@@ -276,7 +276,8 @@ public final class Schematic {
         }
         PlacedComponent replacement = new PlacedComponent(
                 current.id(), current.typeId(), current.x(), current.y(),
-                current.facing(), normalizeStoredAttributes(current.typeId(), attributes), current.label());
+                current.facing(), normalizeStoredAttributes(current.typeId(), attributes),
+                current.label());
         try {
             definitionFor(replacement);
         } catch (IllegalArgumentException exception) {
@@ -615,8 +616,6 @@ public final class Schematic {
         for (PlacedComponent component : replacementComponents) {
             requireKnownType(component.typeId());
             normalizeStoredAttributes(component.typeId(), component.attributes());
-            new PlacedComponent(component.id(), component.typeId(), component.x(), component.y(),
-                    component.facing(), component.attributes(), component.label());
             definitionFor(component);
             if (!replacementIds.add(component.id())) {
                 throw new IllegalArgumentException("duplicate component id: " + component.id());

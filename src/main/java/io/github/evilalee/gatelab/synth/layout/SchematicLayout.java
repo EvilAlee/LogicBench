@@ -7,7 +7,6 @@ import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
-import io.github.evilalee.gatelab.synth.GateOperator;
 import io.github.evilalee.gatelab.synth.Netlist;
 
 import java.util.ArrayList;
@@ -35,7 +34,7 @@ import java.util.TreeSet;
  * trunk endpoint in the adjacent layer. Real component height comes from
  * GateDef/GateGeometry; dummy nodes reserve a 20-unit slot. The standard
  * gaps are 40 units between rows, 60 units between layer bands, and 20 units
- * at each side of every trunk lane. All dimensions are doubled on the single
+ * at each side of every trunk lane. All spacing dimensions are doubled on the single
  * retry after a failed connectivity self-check.
  */
 public final class SchematicLayout {
