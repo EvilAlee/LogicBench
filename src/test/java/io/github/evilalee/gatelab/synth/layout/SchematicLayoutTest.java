@@ -9,7 +9,9 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.Netlist;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -185,6 +187,38 @@ class SchematicLayoutTest {
 
         assertTrue(actual.height() < legacy.height(),
                 "four-variable XOR chain should be shorter: old=" + legacy + ", new=" + actual);
+    }
+
+    @TestFactory
+    List<DynamicTest> reportFullAdderAndXorBoundingBoxDimensions() {
+        ExpressionCompiler.Compilation fullAdder = ExpressionCompiler.compile("""
+                Sum = A ^ B ^ Cin
+                Cout = (A & B) | (Cin & (A ^ B))
+                """);
+        LayoutMetrics oldFullAdder = legacyMetrics(fullAdder.netlist());
+        LayoutMetrics newFullAdder = dimensions(layout.layout(fullAdder.netlist()).schematic());
+
+        ExpressionCompiler.Compilation xorChain =
+                ExpressionCompiler.compile("F = A ^ B ^ C ^ D");
+        LayoutMetrics oldXorChain = legacyMetrics(xorChain.netlist());
+        LayoutMetrics newXorChain = dimensions(layout.layout(xorChain.netlist()).schematic());
+
+        return List.of(
+                DynamicTest.dynamicTest(
+                        "Full adder W/H old " + size(oldFullAdder)
+                                + " -> new " + size(newFullAdder),
+                        () -> {
+                            assertTrue(newFullAdder.height() < oldFullAdder.height());
+                            assertTrue(newFullAdder.width() >= newFullAdder.height());
+                        }),
+                DynamicTest.dynamicTest(
+                        "4-variable XOR W/H old " + size(oldXorChain)
+                                + " -> new " + size(newXorChain),
+                        () -> assertTrue(newXorChain.height() < oldXorChain.height())));
+    }
+
+    private static String size(LayoutMetrics metrics) {
+        return metrics.width() + "x" + metrics.height();
     }
 
     @Test
