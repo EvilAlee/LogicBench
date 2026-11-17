@@ -13,6 +13,8 @@ import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.WireSegment;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SchematicCompilerTest {
     private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
+    private static final List<GateDef> VARIANT_DEFINITIONS = loadVariantDefinitions();
 
     @Test
     void schematicOwnsInputStateAndNotifiesOnToggleAndReset() {
@@ -205,7 +208,7 @@ class SchematicCompilerTest {
 
     @Test
     void threeInputGateWithOneBarePinBehavesAsTwoInputGate() {
-        Schematic schematic = new Schematic(DEFINITIONS);
+        Schematic schematic = new Schematic(VARIANT_DEFINITIONS);
         PlacedComponent gate = schematic.add(
                 "and", 100, 0, Facing.EAST, Map.of("inputs", "3"));
         PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
@@ -300,6 +303,18 @@ class SchematicCompilerTest {
         return schematic.pinPositions().stream()
                 .filter(p -> p.componentId().equals(c.id()) && p.pinId().equals(id))
                 .findFirst().orElseThrow();
+    }
+
+    private static List<GateDef> loadVariantDefinitions() {
+        try (var stream = SchematicCompilerTest.class.getResourceAsStream("/gates-variants.json")) {
+            if (stream == null) {
+                throw new IllegalStateException("missing /gates-variants.json test fixture");
+            }
+            String json = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            return GateLibrary.fromJson(json).all();
+        } catch (IOException exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
     }
 
     private static Value singleInputExpected(String type, boolean high) {
