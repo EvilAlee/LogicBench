@@ -10,12 +10,18 @@ import io.github.evilalee.gatelab.model.OutputProbe;
 import io.github.evilalee.gatelab.model.Pin;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.WireSegment;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Compiles geometric schematic nets into a fresh engine pin graph. */
 public final class SchematicCompiler {
@@ -34,11 +40,25 @@ public final class SchematicCompiler {
             Schematic schematic, SimulationResult previous) {
         Objects.requireNonNull(schematic, "schematic");
 
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        Set<PinKey> barePins = new HashSet<>();
+        for (Connectivity.Net net : topology.nets()) {
+            if (net.segments().isEmpty() && net.pins().size() == 1) {
+                Connectivity.PinPosition onlyPin = net.pins().iterator().next();
+                barePins.add(new PinKey(onlyPin.componentId(), onlyPin.pinId()));
+            }
+        }
+
         Circuit circuit = new Circuit();
         Map<PinKey, Pin> pinsByKey = new LinkedHashMap<>();
         Map<String, InputPin> inputs = new LinkedHashMap<>();
         Map<String, OutputProbe> outputs = new LinkedHashMap<>();
         Map<String, Gate> gates = new LinkedHashMap<>();
+        Set<String> gateIds = new LinkedHashSet<>();
+        Set<PinKey> ignoredInputs = new HashSet<>();
+        boolean ignoreBareInputs =
+                schematic.undefinedInputMode() == UndefinedInputMode.IGNORE;
 
         for (PlacedComponent placed : schematic.components()) {
             GateDef definition = schematic.definitionFor(placed);
@@ -56,28 +76,63 @@ public final class SchematicCompiler {
                     pinsByKey.put(new PinKey(placed.id(), "in0"), output.input());
                 }
                 default -> {
-                    Gate gate = new Gate(placed.id(),
-                            GateType.valueOf(placed.typeId().toUpperCase(java.util.Locale.ROOT)),
-                            definition.inputs().size());
-                    circuit.addComponent(gate);
-                    gates.put(placed.id(), gate);
-                    for (int i=0; i<gate.inputs().size(); i++) {
-                        pinsByKey.put(new PinKey(placed.id(), "in"+i), gate.input(i));
+                    gateIds.add(placed.id());
+                    List<Integer> retainedInputIndexes = new ArrayList<>();
+                    for (int index = 0; index < definition.inputs().size(); index++) {
+                        PinKey key = new PinKey(placed.id(), "in" + index);
+                        if (ignoreBareInputs && supportsUnconnectedInputPruning(placed.typeId())
+                                && barePins.contains(key)) {
+                            ignoredInputs.add(key);
+                        } else {
+                            retainedInputIndexes.add(index);
+                        }
                     }
-                    pinsByKey.put(new PinKey(placed.id(), "out"), gate.output());
+
+                    if (retainedInputIndexes.isEmpty()) {
+                        // Preserve the gate's output net as a passive terminal, without
+                        // introducing a driver for a gate that has no defined inputs.
+                        OutputProbe undrivenOutput = new OutputProbe(placed.id());
+                        circuit.addComponent(undrivenOutput);
+                        pinsByKey.put(new PinKey(placed.id(), "out"), undrivenOutput.input());
+                    } else {
+                        GateType gateType = GateType.valueOf(
+                                placed.typeId().toUpperCase(java.util.Locale.ROOT));
+                        if (retainedInputIndexes.size() == 1
+                                && supportsUnconnectedInputPruning(placed.typeId())) {
+                            gateType = singleInputEquivalent(gateType);
+                        }
+                        Gate gate = new Gate(
+                                placed.id(), gateType, retainedInputIndexes.size());
+                        circuit.addComponent(gate);
+                        gates.put(placed.id(), gate);
+                        for (int engineIndex = 0;
+                                engineIndex < retainedInputIndexes.size(); engineIndex++) {
+                            int schematicIndex = retainedInputIndexes.get(engineIndex);
+                            pinsByKey.put(new PinKey(placed.id(), "in" + schematicIndex),
+                                    gate.input(engineIndex));
+                        }
+                        pinsByKey.put(new PinKey(placed.id(), "out"), gate.output());
+                    }
                 }
             }
         }
 
-        Connectivity.Result topology = Connectivity.analyze(
-                schematic.pinPositions(), schematic.wires());
         for (Connectivity.Net net : topology.nets()) {
             Pin first = null;
             for (Connectivity.PinPosition position : net.pins()) {
-                Pin current = pinsByKey.get(new PinKey(position.componentId(), position.pinId()));
-                if (current == null) throw new IllegalStateException("no engine pin for "+position);
-                if (first == null) first = current;
-                else if (first != current) circuit.connect(first, current);
+                PinKey key = new PinKey(position.componentId(), position.pinId());
+                Pin current = pinsByKey.get(key);
+                if (current == null && ignoredInputs.contains(key)) {
+                    continue;
+                }
+                if (current == null) {
+                    throw new IllegalStateException("no engine pin for " + position);
+                }
+                if (first == null) {
+                    first = current;
+                } else if (first != current) {
+                    circuit.connect(first, current);
+                }
             }
         }
 
@@ -96,11 +151,15 @@ public final class SchematicCompiler {
             Pin representative = null;
             for (Connectivity.PinPosition position : net.pins()) {
                 representative = pinsByKey.get(new PinKey(position.componentId(), position.pinId()));
-                if (representative != null) break;
+                if (representative != null) {
+                    break;
+                }
             }
             Value value = representative == null ? Value.X : simulator.getNetValue(representative);
             netValues.put(net, value);
-            for (WireSegment segment : net.segments()) wireValues.put(segment, value);
+            for (WireSegment segment : net.segments()) {
+                wireValues.put(segment, value);
+            }
         }
 
         Map<String, Value> inputValues = new LinkedHashMap<>();
@@ -112,12 +171,30 @@ public final class SchematicCompiler {
             outputValues.put(entry.getKey(), entry.getValue().value());
         }
         Map<String, Value> gateOutputValues = new LinkedHashMap<>();
-        for (Map.Entry<String, Gate> entry : gates.entrySet()) {
-            gateOutputValues.put(entry.getKey(), simulator.getGateOutputValue(entry.getValue()));
+        for (String id : gateIds) {
+            Gate gate = gates.get(id);
+            gateOutputValues.put(id,
+                    gate == null ? Value.X : simulator.getGateOutputValue(gate));
         }
 
         return new SimulationResult(topology, netValues, wireValues, outputValues,
                 inputValues, gateOutputValues, simulator.isOscillating());
+    }
+
+    private static boolean supportsUnconnectedInputPruning(String typeId) {
+        return switch (typeId) {
+            case "and", "or", "nand", "nor", "xor", "xnor" -> true;
+            default -> false;
+        };
+    }
+
+    private static GateType singleInputEquivalent(GateType type) {
+        return switch (type) {
+            case AND, OR, XOR -> GateType.BUFFER;
+            case NAND, NOR, XNOR -> GateType.NOT;
+            default -> throw new IllegalArgumentException(
+                    "no single-input equivalent for " + type);
+        };
     }
 
     private record PinKey(String componentId, String pinId) { }
@@ -139,8 +216,10 @@ public final class SchematicCompiler {
             inputValues = Map.copyOf(Objects.requireNonNull(inputValues, "inputValues"));
             gateOutputValues = Map.copyOf(Objects.requireNonNull(gateOutputValues, "gateOutputValues"));
         }
+
         public Value valueOf(WireSegment wire) {
-            return wireValues.getOrDefault(Objects.requireNonNull(wire, "wire"), Value.X);
+            return wireValues.getOrDefault(
+                    Objects.requireNonNull(wire, "wire"), Value.X);
         }
     }
 }

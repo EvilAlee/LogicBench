@@ -5,6 +5,7 @@ import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.io.SchematicJson;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.UndefinedInputMode;
 
 import javax.swing.AbstractAction;
 import javax.swing.AbstractCellEditor;
@@ -20,6 +21,9 @@ import javax.swing.KeyStroke;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
+import javax.swing.JRadioButtonMenuItem;
+import javax.swing.event.MenuEvent;
+import javax.swing.event.MenuListener;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JLabel;
@@ -195,15 +199,56 @@ public final class Main {
         installUndoRedoBindings(frame, canvas);
         menuBar.add(edit);
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
+        menuBar.add(createSimulateMenu(canvas));
+        menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
+        menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
+        return menuBar;
+    }
+
+    static JMenu createSimulateMenu(CanvasPanel canvas) {
         JMenu simulate = menuWithDisabledItems("Simulate", "Tick Once", "Ticks Enabled");
         JMenuItem reset = new JMenuItem("Reset");
         reset.addActionListener(event -> canvas.resetInputs());
         simulate.insert(reset, 0);
         simulate.insertSeparator(1);
-        menuBar.add(simulate);
-        menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
-        menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
-        return menuBar;
+
+        JRadioButtonMenuItem ignore =
+                new JRadioButtonMenuItem("Ignore unconnected inputs");
+        JRadioButtonMenuItem error =
+                new JRadioButtonMenuItem("Error for undefined inputs");
+        ButtonGroup modes = new ButtonGroup();
+        modes.add(ignore);
+        modes.add(error);
+        ignore.addActionListener(event -> canvas.schematic().setUndefinedInputMode(
+                UndefinedInputMode.IGNORE));
+        error.addActionListener(event -> canvas.schematic().setUndefinedInputMode(
+                UndefinedInputMode.ERROR));
+        syncUndefinedInputModeSelection(canvas, ignore, error);
+        simulate.addSeparator();
+        simulate.add(ignore);
+        simulate.add(error);
+        simulate.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent event) {
+                syncUndefinedInputModeSelection(canvas, ignore, error);
+            }
+
+            @Override
+            public void menuDeselected(MenuEvent event) {
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent event) {
+            }
+        });
+        return simulate;
+    }
+
+    private static void syncUndefinedInputModeSelection(
+            CanvasPanel canvas, JRadioButtonMenuItem ignore, JRadioButtonMenuItem error) {
+        boolean ignoreMode = canvas.schematic().undefinedInputMode() == UndefinedInputMode.IGNORE;
+        ignore.setSelected(ignoreMode);
+        error.setSelected(!ignoreMode);
     }
 
     private static void installUndoRedoBindings(JFrame frame, CanvasPanel canvas) {

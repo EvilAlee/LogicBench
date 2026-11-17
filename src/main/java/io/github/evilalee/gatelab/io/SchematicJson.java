@@ -11,6 +11,7 @@ import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.model.WireSegment;
 
 import java.math.BigDecimal;
@@ -36,6 +37,9 @@ public final class SchematicJson {
         Objects.requireNonNull(schematic, "schematic");
         JsonObject root = new JsonObject();
         root.addProperty("version", CURRENT_VERSION);
+        JsonObject options = new JsonObject();
+        options.addProperty("undefinedInputs", schematic.undefinedInputMode().jsonValue());
+        root.add("options", options);
 
         JsonArray components = new JsonArray();
         for (PlacedComponent component : schematic.components()) {
@@ -96,11 +100,14 @@ public final class SchematicJson {
                             + " (supported version: " + CURRENT_VERSION + ")");
         }
 
+        UndefinedInputMode undefinedInputMode = readUndefinedInputMode(root);
+
         Set<String> knownTypes = new HashSet<>();
         for (GateDef definition : definitions) {
             knownTypes.add(definition.family());
         }
         Schematic schematic = new Schematic(definitions);
+        schematic.setUndefinedInputMode(undefinedInputMode);
         JsonArray componentArray = array(root, "components", "document");
         Set<String> ids = new HashSet<>();
         for (int index = 0; index < componentArray.size(); index++) {
@@ -192,6 +199,32 @@ public final class SchematicJson {
             }
         }
         return schematic;
+    }
+
+    private static UndefinedInputMode readUndefinedInputMode(JsonObject root) {
+        if (!root.has("options")) {
+            return UndefinedInputMode.IGNORE;
+        }
+        JsonElement optionsElement = root.get("options");
+        if (optionsElement == null || !optionsElement.isJsonObject()) {
+            throw new IllegalArgumentException("document.options must be an object");
+        }
+        JsonObject options = optionsElement.getAsJsonObject();
+        if (!options.has("undefinedInputs")) {
+            return UndefinedInputMode.IGNORE;
+        }
+        JsonElement value = options.get("undefinedInputs");
+        if (value == null || !value.isJsonPrimitive()
+                || !value.getAsJsonPrimitive().isString()) {
+            throw new IllegalArgumentException(
+                    "document.options.undefinedInputs must be a string");
+        }
+        try {
+            return UndefinedInputMode.fromJsonValue(value.getAsString());
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                    "document.options.undefinedInputs " + exception.getMessage(), exception);
+        }
     }
 
     private static JsonArray array(JsonObject object, String field, String context) {
