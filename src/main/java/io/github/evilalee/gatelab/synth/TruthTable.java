@@ -37,8 +37,8 @@ public record TruthTable(
             }
             Objects.requireNonNull(inputBits, "inputBits");
             outputValues = List.copyOf(Objects.requireNonNull(outputValues, "outputValues"));
-            for (int index = 0; index < inputBits.length(); index++) {
-                char bit = inputBits.charAt(index);
+            for (int bitIndex = 0; bitIndex < inputBits.length(); bitIndex++) {
+                char bit = inputBits.charAt(bitIndex);
                 if (bit != '0' && bit != '1') {
                     throw new IllegalArgumentException("inputBits must contain only 0 and 1");
                 }
