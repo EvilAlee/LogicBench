@@ -36,6 +36,7 @@ public final class Schematic {
     }
 
     private final Map<String, List<GateDef>> definitionsByFamily;
+    private UndefinedInputMode undefinedInputMode = UndefinedInputMode.IGNORE;
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<WireSegment> wires = new ArrayList<>();
     private final Map<String, Boolean> inputValues = new HashMap<>();
@@ -664,6 +665,21 @@ public final class Schematic {
 
     public void removeChangeListener(Runnable listener) {
         changeListeners.remove(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /** Current document option for handling electrically bare gate inputs. */
+    public UndefinedInputMode undefinedInputMode() {
+        return undefinedInputMode;
+    }
+
+    /** Changes a persisted document option without adding an undoable topology step. */
+    public void setUndefinedInputMode(UndefinedInputMode mode) {
+        Objects.requireNonNull(mode, "mode");
+        if (undefinedInputMode == mode) {
+            return;
+        }
+        undefinedInputMode = mode;
+        notifyChanged();
     }
 
     /** Input switches are LOW by default and keep their state through rebuilds. */

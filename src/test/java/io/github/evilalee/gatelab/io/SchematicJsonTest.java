@@ -4,6 +4,7 @@ import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.model.WireSegment;
 import org.junit.jupiter.api.Test;
 
@@ -43,6 +44,26 @@ class SchematicJsonTest {
                 assertEquals(original.inputValue(component.id()), loaded.inputValue(component.id()));
             }
         }
+    }
+
+    @Test
+    void undefinedInputModeRoundTripsAndLegacyDocumentsDefaultToIgnore() {
+        Schematic original = new Schematic(DEFINITIONS);
+        original.setUndefinedInputMode(UndefinedInputMode.ERROR);
+        String json = SchematicJson.toJson(original);
+        assertTrue(json.contains("\"undefinedInputs\": \"error\""));
+        Schematic loaded = SchematicJson.fromJson(json, DEFINITIONS);
+        assertEquals(UndefinedInputMode.ERROR, loaded.undefinedInputMode());
+
+        Schematic legacy = SchematicJson.fromJson(
+                "{\"version\":1,\"components\":[],\"wires\":[]}", DEFINITIONS);
+        assertEquals(UndefinedInputMode.IGNORE, legacy.undefinedInputMode());
+    }
+
+    @Test
+    void rejectsUnknownUndefinedInputMode() {
+        assertInvalid("{\"version\":1,\"options\":{\"undefinedInputs\":\"x\"},"
+                + "\"components\":[],\"wires\":[]}", "ignore' or 'error");
     }
 
     @Test

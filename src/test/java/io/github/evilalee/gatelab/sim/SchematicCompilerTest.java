@@ -8,17 +8,22 @@ import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.WireSegment;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class SchematicCompilerTest {
     private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
+    private static final List<GateDef> VARIANT_DEFINITIONS = loadVariantDefinitions();
 
     @Test
     void schematicOwnsInputStateAndNotifiesOnToggleAndReset() {
@@ -105,18 +110,160 @@ class SchematicCompilerTest {
     }
 
     @Test
-    void unconnectedGateInputIsUnknownAndEachWireHasItsNetValue() {
+    void ignoreModePrunesOneBareInputForAllSixGateFamilies() {
+        for (String type : List.of("and", "or", "nand", "nor", "xor", "xnor")) {
+            for (int drivenIndex = 0; drivenIndex < 2; drivenIndex++) {
+                for (boolean high : new boolean[]{false, true}) {
+                    Schematic schematic = new Schematic(DEFINITIONS);
+                    PlacedComponent gate = schematic.add(type, 100, 0, Facing.EAST);
+                    Connectivity.PinPosition gateInput = pin(schematic, gate, "in" + drivenIndex);
+                    PlacedComponent input = schematic.add(
+                            "input", gateInput.x() - 40, gateInput.y(), Facing.EAST);
+                    PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+                    connect(schematic, input, "out", gate, "in" + drivenIndex);
+                    connect(schematic, gate, "out", output, "in0");
+                    schematic.setInputValue(input.id(), high);
+
+                    assertEquals(singleInputExpected(type, high),
+                            SchematicCompiler.compileAndSettle(schematic)
+                                    .outputValues().get(output.id()),
+                            type + " driven in" + drivenIndex + " high=" + high);
+                }
+            }
+        }
+    }
+
+    @Test
+    void strictModePreservesLegacyThreeValuedResultsForOneBareInput() {
+        for (String type : List.of("and", "or", "nand", "nor", "xor", "xnor")) {
+            for (int drivenIndex = 0; drivenIndex < 2; drivenIndex++) {
+                for (boolean high : new boolean[]{false, true}) {
+                    Schematic schematic = new Schematic(DEFINITIONS);
+                    schematic.setUndefinedInputMode(UndefinedInputMode.ERROR);
+                    PlacedComponent gate = schematic.add(type, 100, 0, Facing.EAST);
+                    Connectivity.PinPosition gateInput = pin(schematic, gate, "in" + drivenIndex);
+                    PlacedComponent input = schematic.add(
+                            "input", gateInput.x() - 40, gateInput.y(), Facing.EAST);
+                    PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+                    connect(schematic, input, "out", gate, "in" + drivenIndex);
+                    connect(schematic, gate, "out", output, "in0");
+                    schematic.setInputValue(input.id(), high);
+
+                    assertEquals(strictTwoInputExpected(type, high),
+                            SchematicCompiler.compileAndSettle(schematic)
+                                    .outputValues().get(output.id()),
+                            type + " strict driven in" + drivenIndex + " high=" + high);
+                }
+            }
+        }
+    }
+
+    @Test
+    void allBareInputsLeaveTheGateOutputUndrivenInBothModes() {
+        for (UndefinedInputMode mode : UndefinedInputMode.values()) {
+            Schematic schematic = new Schematic(DEFINITIONS);
+            schematic.setUndefinedInputMode(mode);
+            PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+            PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+            connect(schematic, gate, "out", output, "in0");
+
+            SimulationResult result = SchematicCompiler.compileAndSettle(schematic);
+            assertEquals(Value.X, result.outputValues().get(output.id()), mode.name());
+            assertEquals(Value.X, result.gateOutputValues().get(gate.id()), mode.name());
+        }
+    }
+
+    @Test
+    void aWireAttachedToAnUndrivenInputIsNotPrunedInEitherMode() {
+        for (UndefinedInputMode mode : UndefinedInputMode.values()) {
+            Schematic schematic = new Schematic(DEFINITIONS);
+            schematic.setUndefinedInputMode(mode);
+            PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+            PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+            Connectivity.PinPosition firstInput = pin(schematic, gate, "in0");
+            schematic.addWire(firstInput.x(), firstInput.y(),
+                    firstInput.x() - 20, firstInput.y());
+            connect(schematic, gate, "out", output, "in0");
+
+            assertEquals(Value.X,
+                    SchematicCompiler.compileAndSettle(schematic).outputValues().get(output.id()),
+                    mode.name());
+        }
+    }
+
+    @Test
+    void aPinSharingANetWithAnotherPinWithoutWireIsStillConnected() {
         Schematic schematic = new Schematic(DEFINITIONS);
-        PlacedComponent input = schematic.add("input", 0, -10, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        Connectivity.PinPosition gateInput = pin(schematic, gate, "in0");
+        PlacedComponent input = schematic.add(
+                "input", gateInput.x(), gateInput.y(), Facing.EAST);
+        PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+        connect(schematic, gate, "out", output, "in0");
+        schematic.setInputValue(input.id(), true);
+
+        assertEquals(Value.ONE,
+                SchematicCompiler.compileAndSettle(schematic).outputValues().get(output.id()));
+    }
+
+    @Test
+    void threeInputGateWithOneBarePinBehavesAsTwoInputGate() {
+        Schematic schematic = new Schematic(VARIANT_DEFINITIONS);
+        PlacedComponent gate = schematic.add(
+                "and", 100, 0, Facing.EAST, Map.of("inputs", "3"));
+        PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+        Connectivity.PinPosition firstPosition = pin(schematic, gate, "in0");
+        Connectivity.PinPosition secondPosition = pin(schematic, gate, "in1");
+        PlacedComponent first = schematic.add(
+                "input", firstPosition.x() - 40, firstPosition.y(), Facing.EAST);
+        PlacedComponent second = schematic.add(
+                "input", secondPosition.x() - 40, secondPosition.y(), Facing.EAST);
+        connect(schematic, first, "out", gate, "in0");
+        connect(schematic, second, "out", gate, "in1");
+        connect(schematic, gate, "out", output, "in0");
+
+        schematic.setInputValue(first.id(), true);
+        schematic.setInputValue(second.id(), true);
+        assertEquals(Value.ONE,
+                SchematicCompiler.compileAndSettle(schematic).outputValues().get(output.id()));
+
+        schematic.setInputValue(second.id(), false);
+        assertEquals(Value.ZERO,
+                SchematicCompiler.compileAndSettle(schematic).outputValues().get(output.id()));
+    }
+
+    @Test
+    void notAndBufferKeepTheirUnconnectedInputAsUnknownInBothModes() {
+        for (String type : List.of("not", "buffer")) {
+            for (UndefinedInputMode mode : UndefinedInputMode.values()) {
+                Schematic schematic = new Schematic(DEFINITIONS);
+                schematic.setUndefinedInputMode(mode);
+                PlacedComponent gate = schematic.add(type, 100, 0, Facing.EAST);
+                PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+                connect(schematic, gate, "out", output, "in0");
+                assertEquals(Value.X,
+                        SchematicCompiler.compileAndSettle(schematic).outputValues().get(output.id()),
+                        type + " " + mode);
+            }
+        }
+    }
+
+    @Test
+    void bareInputsAreIgnoredAndEachWireHasItsNetValue() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        Connectivity.PinPosition gateInput = pin(schematic, gate, "in0");
+        PlacedComponent input = schematic.add(
+                "input", gateInput.x() - 40, gateInput.y(), Facing.EAST);
         PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
         connect(schematic, input, "out", gate, "in0");
         connect(schematic, gate, "out", output, "in0");
         schematic.setInputValue(input.id(), true);
+
         SimulationResult result = SchematicCompiler.compileAndSettle(schematic);
-        assertEquals(Value.X, result.outputValues().get(output.id()));
+        assertEquals(Value.ONE, result.outputValues().get(output.id()));
         WireSegment wire = schematic.wires().getLast();
-        assertEquals(Value.X, result.valueOf(wire));
+        assertEquals(Value.ONE, result.valueOf(wire));
         Connectivity.Net net = result.topology().nets().stream()
                 .filter(n -> n.segments().contains(wire)).findFirst().orElseThrow();
         assertEquals(result.netValues().get(net), result.valueOf(wire));
@@ -156,6 +303,37 @@ class SchematicCompilerTest {
         return schematic.pinPositions().stream()
                 .filter(p -> p.componentId().equals(c.id()) && p.pinId().equals(id))
                 .findFirst().orElseThrow();
+    }
+
+    private static List<GateDef> loadVariantDefinitions() {
+        try (var stream = SchematicCompilerTest.class.getResourceAsStream("/gates-variants.json")) {
+            if (stream == null) {
+                throw new IllegalStateException("missing /gates-variants.json test fixture");
+            }
+            String json = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            return GateLibrary.fromJson(json).all();
+        } catch (IOException exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    private static Value singleInputExpected(String type, boolean high) {
+        boolean result = switch (type) {
+            case "nand", "nor", "xnor" -> !high;
+            default -> high;
+        };
+        return result ? Value.ONE : Value.ZERO;
+    }
+
+    private static Value strictTwoInputExpected(String type, boolean high) {
+        return switch (type) {
+            case "and" -> high ? Value.X : Value.ZERO;
+            case "or" -> high ? Value.ONE : Value.X;
+            case "nand" -> high ? Value.X : Value.ONE;
+            case "nor" -> high ? Value.ZERO : Value.X;
+            case "xor", "xnor" -> Value.X;
+            default -> throw new AssertionError(type);
+        };
     }
 
     private static void addPath(Schematic s, int... xy) {

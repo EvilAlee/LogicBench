@@ -10,11 +10,12 @@
 - M7a: versioned .lbc Save/Open, input state persistence, dirty-document prompts
 - M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
 - M8b-v2: validated move/rotation wire-follow links with no-short fallback and safe no-link behavior
+- M9a: per-component Facing/Size/Input-count attributes, variant resolution, save/load, undo and attribute table
 
 ## In progress
-- M9a: per-component Facing/Size/Input-count attributes, variant resolution, save/load, undo and attribute table
-  - Branch: m9a-attributes
-  - PR pending review
+- Logisim-compatible handling of unconnected multi-input gate pins with a strict mode
+  - Branch: fix-unconnected-inputs
+  - PR pending
 
 ## Next
 - M8 polish
@@ -34,6 +35,7 @@
 - M7b history snapshots contain only placed components and geometric wire segments; input poke values are not history state.
 - Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
 - New/Open clear history; Save leaves it intact.
+- Undefined-input mode is a persisted document option; changing it increments the modified revision and recomputes simulation, but is excluded from topology undo/redo snapshots.
 
 ## Workflow
 - One task, one branch from fresh main, one PR with base main.
