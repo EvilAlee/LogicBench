@@ -10,13 +10,21 @@ public record PlacedComponent(
         int x,
         int y,
         Facing facing,
-        Map<String, String> attributes) {
+        Map<String, String> attributes,
+        String label) {
 
     public static final int GRID_SPACING = 10;
 
-    /** Backwards-compatible constructor for components without non-default attributes. */
+    /** Backwards-compatible constructor for components without non-default attributes or labels. */
     public PlacedComponent(String id, String typeId, int x, int y, Facing facing) {
-        this(id, typeId, x, y, facing, Map.of());
+        this(id, typeId, x, y, facing, Map.of(), "");
+    }
+
+    /** Backwards-compatible constructor for components without labels. */
+    public PlacedComponent(
+            String id, String typeId, int x, int y, Facing facing,
+            Map<String, String> attributes) {
+        this(id, typeId, x, y, facing, attributes, "");
     }
 
     public PlacedComponent {
@@ -29,6 +37,13 @@ public record PlacedComponent(
         for (Map.Entry<String, String> entry : attributes.entrySet()) {
             requireText(entry.getKey(), "attribute key");
             requireText(entry.getValue(), "attribute value");
+        }
+        label = Objects.requireNonNull(label, "label");
+        if (label.isBlank()) {
+            label = "";
+        }
+        if (!label.isEmpty() && !typeId.equals("input") && !typeId.equals("output")) {
+            throw new IllegalArgumentException("only input and output components may have labels");
         }
     }
 

@@ -175,6 +175,12 @@ public final class Main {
         file.add(exit);
         menuBar.add(file);
 
+        JMenu circuit = new JMenu("Circuit");
+        JMenuItem fromExpression = new JMenuItem("From expression...");
+        fromExpression.addActionListener(event -> ExpressionDialog.showDialog(frame, canvas));
+        circuit.add(fromExpression);
+        menuBar.add(circuit);
+
         JMenu edit = new JMenu("Edit");
         JMenuItem undo = new JMenuItem("Undo");
         undo.setAccelerator(KeyStroke.getKeyStroke(

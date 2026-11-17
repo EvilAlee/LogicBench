@@ -66,6 +66,30 @@ public final class ViewTransform {
         translateY = screenY - anchor.y * scale;
     }
 
+    /**
+     * Fits a world-space rectangle into the viewport while preserving its center.
+     * The requested margin is in screen pixels, independent of the current zoom.
+     */
+    public void fitToBounds(
+            double minX, double minY, double maxX, double maxY,
+            int viewportWidth, int viewportHeight, double margin) {
+        if (!Double.isFinite(minX) || !Double.isFinite(minY)
+                || !Double.isFinite(maxX) || !Double.isFinite(maxY)
+                || maxX < minX || maxY < minY
+                || viewportWidth <= 0 || viewportHeight <= 0
+                || !Double.isFinite(margin) || margin < 0.0) {
+            throw new IllegalArgumentException("invalid fit bounds or viewport");
+        }
+        double contentWidth = Math.max(10.0, maxX - minX);
+        double contentHeight = Math.max(10.0, maxY - minY);
+        double availableWidth = Math.max(1.0, viewportWidth - 2.0 * margin);
+        double availableHeight = Math.max(1.0, viewportHeight - 2.0 * margin);
+        scale = clamp(Math.min(
+                availableWidth / contentWidth, availableHeight / contentHeight));
+        translateX = (viewportWidth - (minX + maxX) * scale) / 2.0;
+        translateY = (viewportHeight - (minY + maxY) * scale) / 2.0;
+    }
+
     /** Restores the canvas's initial one-to-one zoom and origin offset. */
     public void resetToDefault() {
         scale = 1.0;

@@ -47,6 +47,45 @@ class SchematicJsonTest {
     }
 
     @Test
+    void optionalIoLabelsRoundTripAndAreOmittedWhenEmpty() {
+        Schematic original = new Schematic(DEFINITIONS);
+        original.add(new PlacedComponent(
+                "input-A", "input", 0, 0, Facing.EAST, java.util.Map.of(), "A"));
+        original.add(new PlacedComponent(
+                "output-F", "output", 100, 0, Facing.EAST, java.util.Map.of(), "F"));
+        original.add(new PlacedComponent("input-empty", "input", 200, 0, Facing.EAST));
+
+        String json = SchematicJson.toJson(original);
+        assertTrue(json.contains("\"label\": \"A\""));
+        assertTrue(json.contains("\"label\": \"F\""));
+        assertEquals(2, occurrences(json, "\"label\""));
+
+        Schematic loaded = SchematicJson.fromJson(json, DEFINITIONS);
+        assertEquals(original.components(), loaded.components());
+        assertEquals("", loaded.components().getLast().label());
+    }
+
+    @Test
+    void legacyFilesWithoutLabelLoadWithEmptyLabels() {
+        Schematic loaded = SchematicJson.fromJson(
+                "{\"version\":1,\"components\":["
+                        + "{\"id\":\"in\",\"type\":\"input\",\"x\":0,\"y\":0,"
+                        + "\"facing\":\"EAST\"}],\"wires\":[]}", DEFINITIONS);
+        assertEquals("", loaded.components().getFirst().label());
+    }
+
+    @Test
+    void rejectsLabelsOnNonIoComponentsAndNonStringLabels() {
+        assertInvalid(document(component("g", "and", 0, 0, "EAST")
+                .replace("}", ",\"label\":\"not allowed\"}")),
+                "only valid for input and output");
+        assertInvalid("{\"version\":1,\"components\":["
+                + "{\"id\":\"in\",\"type\":\"input\",\"x\":0,\"y\":0,"
+                + "\"facing\":\"EAST\",\"label\":7}],\"wires\":[]}",
+                "label must be a string");
+    }
+
+    @Test
     void undefinedInputModeRoundTripsAndLegacyDocumentsDefaultToIgnore() {
         Schematic original = new Schematic(DEFINITIONS);
         original.setUndefinedInputMode(UndefinedInputMode.ERROR);
@@ -136,5 +175,15 @@ class SchematicJsonTest {
     private static String component(String id, String type, int x, int y, String facing) {
         return "{\"id\":\""+id+"\",\"type\":\""+type+"\",\"x\":"+x
                 +",\"y\":"+y+",\"facing\":\""+facing+"\"}";
+    }
+
+    private static int occurrences(String value, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = value.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
     }
 }
