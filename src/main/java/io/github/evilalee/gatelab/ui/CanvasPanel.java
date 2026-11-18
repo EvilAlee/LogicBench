@@ -119,6 +119,7 @@ public final class CanvasPanel extends JPanel {
     private Runnable historyStateListener = () -> { };
     private final Runnable schematicSimulationListener = this::schematicChanged;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
+    private final List<Consumer<Schematic>> schematicListeners = new ArrayList<>();
     private SimulationResult simulationResult;
     private long simulationRecomputeCount;
     private final Set<String> selectedIds = new LinkedHashSet<>();
@@ -222,6 +223,22 @@ public final class CanvasPanel extends JPanel {
         schematicReplacementListener.accept(schematic);
     }
 
+    /** Registers an additional observer for the current and subsequently installed documents. */
+    public void addSchematicListener(Consumer<Schematic> listener) {
+        Consumer<Schematic> registered = java.util.Objects.requireNonNull(listener, "listener");
+        if (!schematicListeners.contains(registered)) {
+            schematicListeners.add(registered);
+        }
+        registered.accept(schematic);
+    }
+
+    private void notifySchematicReplaced() {
+        schematicReplacementListener.accept(schematic);
+        for (Consumer<Schematic> listener : List.copyOf(schematicListeners)) {
+            listener.accept(schematic);
+        }
+    }
+
     /** Installs a fully validated document and resets all transient view/editor state. */
     public void replaceSchematic(Schematic replacement) {
         if (galleryMode) {
@@ -244,7 +261,7 @@ public final class CanvasPanel extends JPanel {
         simulationResult = null;
         notifySelectionChanged();
         toolModeListener.accept(activeTool);
-        schematicReplacementListener.accept(schematic);
+        notifySchematicReplaced();
         notifyHistoryStateChanged();
         recomputeSimulation();
     }
@@ -256,16 +273,27 @@ public final class CanvasPanel extends JPanel {
      * Schematic object so document listeners and the current save path stay valid.
      */
     public void replaceWithGeneratedCircuit(Schematic generated) {
+        replaceWithCircuit(generated, false);
+    }
+
+    /** Replaces topology as one undo step while retaining the tidy result's switch values. */
+    public void replaceWithTidiedCircuit(Schematic tidied) {
+        replaceWithCircuit(tidied, true);
+    }
+
+    private void replaceWithCircuit(Schematic replacement, boolean preserveInputValues) {
         if (galleryMode) {
             throw new IllegalStateException("the gallery does not own an editable schematic");
         }
-        Schematic replacement = java.util.Objects.requireNonNull(generated, "generated");
+        Schematic next = java.util.Objects.requireNonNull(replacement, "replacement");
         history.begin(schematic);
-        schematic.restoreSnapshot(SchematicSnapshot.capture(replacement));
-        for (PlacedComponent component : replacement.components()) {
+        schematic.restoreSnapshot(SchematicSnapshot.capture(next));
+        for (PlacedComponent component : next.components()) {
             if ("input".equals(component.typeId())) {
-                // All expression inputs start LOW; a folded constant-one source is HIGH.
-                schematic.setInputValue(component.id(), component.label().equals("1"));
+                boolean high = preserveInputValues
+                        ? next.inputValue(component.id())
+                        : component.label().equals("1");
+                schematic.setInputValue(component.id(), high);
             }
         }
         if (!history.commit(schematic)) {
