@@ -52,6 +52,26 @@ class AiConfigTest {
     }
 
     @Test
+    void fallbackModelsAreLoadedInOrderAndPrimaryIsNotDuplicated() throws Exception {
+        Files.writeString(directory.resolve("ai.json"), """
+                {"model":"primary","fallbackModels":["fallback-a","fallback-b","primary","fallback-a",""]}
+                """);
+        AiConfig config = AiConfig.load(Map.of(), directory, AiConfig.DEFAULT_BASE_URL);
+        assertEquals(List.of("fallback-a", "fallback-b"), config.fallbackModels());
+        assertEquals(List.of("primary", "fallback-a", "fallback-b"), config.models());
+    }
+
+    @Test
+    void oldAiJsonWithoutFallbackModelsStillLoads() throws Exception {
+        Files.writeString(directory.resolve("ai.json"),
+                "{\"apiKey\":\"old-secret\",\"model\":\"old-model\"}");
+        AiConfig config = AiConfig.load(Map.of(), directory, AiConfig.DEFAULT_BASE_URL);
+        assertEquals("old-model", config.model());
+        assertTrue(config.fallbackModels().isEmpty());
+        assertEquals(List.of("old-model"), config.models());
+    }
+
+    @Test
     void defaultsAndMissingKeyAreSafe() {
         AiConfig config = AiConfig.load(Map.of(), directory, AiConfig.DEFAULT_BASE_URL);
         assertFalse(config.hasApiKey());

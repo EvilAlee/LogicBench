@@ -1,5 +1,7 @@
 package io.github.evilalee.gatelab.ai;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -7,6 +9,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -21,14 +26,16 @@ public final class AiConfig {
 
     private final String apiKey;
     private final String model;
+    private final List<String> fallbackModels;
     private final KeySource keySource;
     private final Path configDirectory;
     private final String baseUrl;
 
-    private AiConfig(String apiKey, String model, KeySource keySource,
-                     Path configDirectory, String baseUrl) {
+    private AiConfig(String apiKey, String model, List<String> fallbackModels,
+                     KeySource keySource, Path configDirectory, String baseUrl) {
         this.apiKey = apiKey;
         this.model = model;
+        this.fallbackModels = List.copyOf(fallbackModels);
         this.keySource = keySource;
         this.configDirectory = configDirectory;
         this.baseUrl = baseUrl;
@@ -44,6 +51,7 @@ public final class AiConfig {
         Objects.requireNonNull(directory, "directory");
         String fileKey = null;
         String fileModel = null;
+        List<String> fileFallbackModels = new ArrayList<>();
         Path settings = directory.resolve("ai.json");
         if (Files.isRegularFile(settings)) {
             try {
@@ -54,6 +62,15 @@ public final class AiConfig {
                 if (json.has("model") && !json.get("model").isJsonNull()) {
                     fileModel = nonBlank(json.get("model").getAsString());
                 }
+                if (json.has("fallbackModels") && json.get("fallbackModels").isJsonArray()) {
+                    JsonArray models = json.getAsJsonArray("fallbackModels");
+                    for (JsonElement item : models) {
+                        if (item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) {
+                            String candidate = nonBlank(item.getAsString());
+                            if (candidate != null) fileFallbackModels.add(candidate);
+                        }
+                    }
+                }
             } catch (RuntimeException | IOException ignored) {
                 // Invalid local settings are treated as absent; never echo file contents.
             }
@@ -63,7 +80,10 @@ public final class AiConfig {
         KeySource source = envKey != null ? KeySource.ENV
                 : fileKey != null ? KeySource.FILE : KeySource.NONE;
         String model = firstNonBlank(environment.get("GEMINI_MODEL"), fileModel, DEFAULT_MODEL);
-        return new AiConfig(key, model, source, directory, stripTrailingSlash(baseUrl));
+        LinkedHashSet<String> uniqueFallbacks = new LinkedHashSet<>(fileFallbackModels);
+        uniqueFallbacks.remove(model);
+        return new AiConfig(key, model, List.copyOf(uniqueFallbacks),
+                source, directory, stripTrailingSlash(baseUrl));
     }
 
     public static Path defaultConfigDirectory() {
@@ -106,6 +126,13 @@ public final class AiConfig {
     public boolean hasApiKey() { return apiKey != null; }
     public String apiKey() { return apiKey; }
     public String model() { return model; }
+    public List<String> fallbackModels() { return fallbackModels; }
+    public List<String> models() {
+        List<String> result = new ArrayList<>();
+        result.add(model);
+        result.addAll(fallbackModels);
+        return List.copyOf(result);
+    }
     public KeySource keySource() { return keySource; }
     public Path configDirectory() { return configDirectory; }
     public Path configFile() { return configDirectory.resolve("ai.json"); }
@@ -114,7 +141,8 @@ public final class AiConfig {
     @Override
     public String toString() {
         return "AiConfig[apiKey=" + (apiKey == null ? "absent" : "****")
-                + ", model=" + model + ", keySource=" + keySource
+                + ", model=" + model + ", fallbackModels=" + fallbackModels
+                + ", keySource=" + keySource
                 + ", configDirectory=" + configDirectory + ", baseUrl=" + baseUrl + "]";
     }
 }

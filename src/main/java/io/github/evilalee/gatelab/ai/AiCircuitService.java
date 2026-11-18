@@ -40,11 +40,11 @@ public final class AiCircuitService {
     public enum Status { VERIFIED, UNVERIFIED, UNAVAILABLE }
 
     @FunctionalInterface
-    interface RetryDelay {
-        void pause(long milliseconds) throws InterruptedException;
+    interface Sleeper {
+        void sleep(long milliseconds) throws InterruptedException;
     }
 
-    private static final long[] TRANSPORT_RETRY_DELAYS_MILLIS = {2_000, 6_000};
+    private static final long[] ROUND_RETRY_DELAYS_MILLIS = {2_000, 6_000};
 
     public record Result(
             int attemptCount,
@@ -56,7 +56,9 @@ public final class AiCircuitService {
             TruthTable truthTable,
             List<String> mismatchingRows,
             List<String> attemptLog,
-            boolean fromCache) {
+            boolean fromCache,
+            String answeredBy,
+            List<String> modelAttempts) {
         public Result {
             if (attemptCount < 0) throw new IllegalArgumentException("attemptCount must not be negative");
             Objects.requireNonNull(status, "status");
@@ -64,6 +66,23 @@ public final class AiCircuitService {
             expressions = List.copyOf(expressions == null ? List.of() : expressions);
             mismatchingRows = List.copyOf(mismatchingRows == null ? List.of() : mismatchingRows);
             attemptLog = List.copyOf(attemptLog == null ? List.of() : attemptLog);
+            answeredBy = answeredBy == null ? "" : answeredBy;
+            modelAttempts = List.copyOf(modelAttempts == null ? List.of() : modelAttempts);
+        }
+
+        public Result(int attemptCount, Status status, String summary,
+                      List<NamedExpression> expressions, Netlist netlist,
+                      SchematicLayout.LayoutResult layout, TruthTable truthTable,
+                      List<String> mismatchingRows, List<String> attemptLog,
+                      boolean fromCache) {
+            this(attemptCount, status, summary, expressions, netlist, layout, truthTable,
+                    mismatchingRows, attemptLog, fromCache, "", List.of());
+        }
+    }
+
+    private record ModelAnswer(String raw, String model, List<String> modelAttempts) {
+        private ModelAnswer {
+            modelAttempts = List.copyOf(modelAttempts);
         }
     }
 
@@ -91,7 +110,7 @@ public final class AiCircuitService {
     private final AiProvider provider;
     private final SchematicLayout layoutBuilder;
     private final AiCache cache;
-    private final RetryDelay retryDelay;
+    private final Sleeper sleeper;
 
     public AiCircuitService(AiProvider provider, Collection<GateDef> definitions) {
         this(provider, definitions, null);
@@ -102,11 +121,11 @@ public final class AiCircuitService {
     }
 
     AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
-                     AiCache cache, RetryDelay retryDelay) {
+                     AiCache cache, Sleeper sleeper) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.layoutBuilder = new SchematicLayout(Objects.requireNonNull(definitions, "definitions"));
         this.cache = cache;
-        this.retryDelay = Objects.requireNonNull(retryDelay, "retryDelay");
+        this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
     }
 
     /** JSON schema sent to Gemini for structured output. */
@@ -283,56 +302,65 @@ public final class AiCircuitService {
         List<Turn> conversation = new ArrayList<>();
         conversation.add(new Turn(Turn.Role.USER, description));
         Attempt best = null;
+        String bestAnsweredBy = "";
+        List<String> allModelAttempts = new ArrayList<>();
         for (int attemptNumber = 1; attemptNumber <= MAX_ATTEMPTS; attemptNumber++) {
-            log.add("Attempt " + attemptNumber + ": asking model");
-            String raw;
+            log.add("Verification attempt " + attemptNumber + ": requesting a model answer.");
+            ModelAnswer response;
             try {
-                raw = completeWithTransportRetry(conversation, log);
-            } catch (IOException exception) {
-                String error = safeProviderError(exception);
-                Result fallback = cachedResult(description, log,
-                        "AI unavailable, using cached answer", attemptNumber - 1);
-                if (fallback != null) return fallback;
-
-                log.add("AI unavailable: " + error);
-                return new Result(attemptNumber - 1, Status.UNAVAILABLE,
-                        "AI unavailable: " + error, List.of(), null, null, null,
-                        List.of(), log, false);
+                response = completeWithModelFallback(conversation, log);
+                allModelAttempts.addAll(response.modelAttempts());
+            } catch (ProviderFailure failure) {
+                allModelAttempts.addAll(failure.modelAttempts());
+                String reason = unavailableReason(failure);
+                String notice = cachedNotice(failure);
+                Result fallback = cachedResult(description, log, notice, attemptNumber - 1);
+                if (fallback != null) {
+                    return withModelAttempts(fallback, allModelAttempts);
+                }
+                log.add(reason);
+                return new Result(attemptNumber - 1, Status.UNAVAILABLE, reason,
+                        List.of(), null, null, null, List.of(), log, false,
+                        "", allModelAttempts);
             }
-            conversation.add(new Turn(Turn.Role.MODEL, raw));
-            Attempt current = validate(raw);
+
+            conversation.add(new Turn(Turn.Role.MODEL, response.raw()));
+            Attempt current = validate(response.raw());
             if (best == null || current.score() < best.score()
                     || (current.score() == best.score()
                         && current.errors().size() < best.errors().size())) {
                 best = current;
+                bestAnsweredBy = response.model();
             }
             if (current.errors().isEmpty()) {
                 int rows = current.truthTable().rows().size();
-                log.add("Verified " + rows + "/" + rows + " rows");
+                log.add("Verified " + rows + "/" + rows + " rows via " + response.model());
                 if (cache != null) {
                     try {
-                        cache.storeVerified(description, raw);
+                        cache.storeVerified(description, response.raw());
                         log.add("Saved verified live answer to the user cache.");
                     } catch (IOException cacheError) {
                         log.add("Verified answer, but could not save the user cache.");
                     }
                 }
-                return result(attemptNumber, Status.VERIFIED, current, log, false);
+                return result(attemptNumber, Status.VERIFIED, current, log, false,
+                        response.model(), allModelAttempts);
             }
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
             feedbackLines.addAll(current.mismatchRows().stream().limit(8).toList());
             String feedback = String.join("\n", feedbackLines);
             if (!current.mismatchRows().isEmpty()) {
-                log.add("Mismatch at rows " + String.join("; ", current.mismatchRows().stream().limit(8).toList())
-                        + (attemptNumber < MAX_ATTEMPTS ? ", retrying" : ""));
+                log.add("Mismatch at rows " + String.join("; ",
+                        current.mismatchRows().stream().limit(8).toList())
+                        + (attemptNumber < MAX_ATTEMPTS ? ", retrying verification" : ""));
             } else {
                 log.add("Validation failed: " + feedback
-                        + (attemptNumber < MAX_ATTEMPTS ? "; retrying" : ""));
+                        + (attemptNumber < MAX_ATTEMPTS ? "; retrying verification" : ""));
             }
             if (attemptNumber < MAX_ATTEMPTS) {
                 conversation.add(new Turn(Turn.Role.USER,
-                        "Your previous JSON was:\n" + raw
+                        "Your previous JSON was:\n" + response.raw()
                                 + "\nCorrect it. The concrete validation errors are:\n"
                                 + feedback
                                 + "\nReturn the complete corrected JSON object only."));
@@ -341,38 +369,135 @@ public final class AiCircuitService {
 
         if (best == null) {
             return new Result(0, Status.UNAVAILABLE, "AI unavailable: no model answer was received.",
-                    List.of(), null, null, null, List.of(), log, false);
+                    List.of(), null, null, null, List.of(), log, false, "", allModelAttempts);
         }
-        return result(MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false);
+        return result(MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false,
+                bestAnsweredBy, allModelAttempts);
     }
 
-    private String completeWithTransportRetry(List<Turn> conversation, List<String> log)
-            throws IOException, InterruptedException {
-        for (int retry = 0; ; retry++) {
-            try {
-                // A transport retry repeats the exact same request and conversation.
-                return provider.complete(systemPrompt(), List.copyOf(conversation), responseSchema());
-            } catch (IOException exception) {
-                if (!isRetryableTransportFailure(exception)
-                        || retry >= TRANSPORT_RETRY_DELAYS_MILLIS.length) {
-                    throw exception;
+    /**
+     * A model round visits every model not previously marked unavailable. 404s are
+     * skipped for the rest of this generation request; transient failures advance
+     * to the next model and only trigger a new round after all remaining models fail.
+     */
+    private ModelAnswer completeWithModelFallback(List<Turn> conversation, List<String> log)
+            throws ProviderFailure, InterruptedException {
+        List<String> models = provider.models();
+        if (models == null || models.isEmpty()) models = List.of("default");
+        LinkedHashSet<String> uniqueModels = new LinkedHashSet<>(models);
+        LinkedHashSet<String> skippedModels = new LinkedHashSet<>();
+        List<String> modelAttempts = new ArrayList<>();
+        ProviderFailure lastFailure = null;
+
+        for (int round = 0; round <= ROUND_RETRY_DELAYS_MILLIS.length; round++) {
+            boolean retryableFailure = false;
+            for (String model : uniqueModels) {
+                if (skippedModels.contains(model)) continue;
+                try {
+                    String raw = provider.complete(model, systemPrompt(),
+                            List.copyOf(conversation), responseSchema());
+                    String outcome = model + ": 200 OK";
+                    modelAttempts.add(outcome);
+                    log.add(outcome);
+                    return new ModelAnswer(raw, model, modelAttempts);
+                } catch (IOException exception) {
+                    ProviderFailure failure = classifyFailure(exception, model);
+                    lastFailure = failure;
+                    String outcome = model + ": " + httpOutcome(failure);
+                    modelAttempts.add(outcome);
+                    log.add(outcome);
+
+                    switch (failure.kind()) {
+                        case KEY_REJECTED -> throw failure.withModelAttempts(modelAttempts);
+                        case MODEL_UNAVAILABLE -> skippedModels.add(model);
+                        case RETRYABLE -> retryableFailure = true;
+                        case FATAL -> throw failure.withModelAttempts(modelAttempts);
+                    }
                 }
-                long delay = TRANSPORT_RETRY_DELAYS_MILLIS[retry];
-                log.add("AI transport unavailable; retrying the same request in "
-                        + (delay / 1_000) + " seconds.");
-                retryDelay.pause(delay);
+            }
+
+            if (!retryableFailure) break;
+            if (round < ROUND_RETRY_DELAYS_MILLIS.length) {
+                long wait = ROUND_RETRY_DELAYS_MILLIS[round];
+                log.add("All remaining models are temporarily unavailable; retrying in "
+                        + (wait / 1_000) + " seconds.");
+                sleeper.sleep(wait);
             }
         }
+
+        if (lastFailure == null) {
+            lastFailure = new ProviderFailure(ProviderFailure.Kind.MODEL_UNAVAILABLE,
+                    "No configured Gemini model is available (HTTP 404).", "", 404);
+        }
+        throw lastFailure.withModelAttempts(modelAttempts);
     }
 
-    private static boolean isRetryableTransportFailure(IOException exception) {
-        String message = safeProviderError(exception).toLowerCase(java.util.Locale.ROOT);
-        return message.contains("no network connection")
-                || message.contains("timed out")
-                || message.contains("timeout")
-                || message.contains("http 429")
-                || message.contains("server error")
-                || message.matches("(?s).*http 5[0-9]{2}.*");
+    private ProviderFailure classifyFailure(IOException exception, String model) {
+        if (exception instanceof ProviderFailure failure) return failure;
+        String message = safeProviderError(exception);
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        java.util.regex.Matcher statusMatcher =
+                Pattern.compile("http\\s+(\\d{3})", Pattern.CASE_INSENSITIVE).matcher(message);
+        int status = statusMatcher.find() ? Integer.parseInt(statusMatcher.group(1)) : -1;
+        ProviderFailure.Kind kind;
+        if (status == 401 || status == 403 || lower.contains("key rejected")) {
+            kind = ProviderFailure.Kind.KEY_REJECTED;
+        } else if (status == 404 || lower.contains("model not found")) {
+            kind = ProviderFailure.Kind.MODEL_UNAVAILABLE;
+        } else if (status == 429 || status >= 500 || lower.contains("timed out")
+                || lower.contains("timeout") || lower.contains("network")
+                || lower.contains("connect")) {
+            kind = ProviderFailure.Kind.RETRYABLE;
+        } else {
+            // Untyped IOException from an injected/legacy provider is treated as transport.
+            kind = ProviderFailure.Kind.RETRYABLE;
+        }
+        return new ProviderFailure(kind, provider.redact(message), model, status);
+    }
+
+    private static String httpOutcome(ProviderFailure failure) {
+        return failure.httpStatus() >= 100
+                ? "HTTP " + failure.httpStatus()
+                : failure.kind() + " (" + failure.getMessage() + ")";
+    }
+
+    private static String cachedNotice(ProviderFailure failure) {
+        String status = failure.httpStatus() >= 100
+                ? "HTTP " + failure.httpStatus()
+                : failure.getMessage();
+        return "AI unavailable (" + status + ", model "
+                + (failure.model().isBlank() ? "unknown" : failure.model())
+                + ") - showing cached result";
+    }
+
+    private static String unavailableReason(ProviderFailure failure) {
+        if (failure.kind() == ProviderFailure.Kind.KEY_REJECTED) {
+            return "API key rejected (HTTP " + (failure.httpStatus() < 0
+                    ? "unknown" : failure.httpStatus()) + ").";
+        }
+        if (failure.kind() == ProviderFailure.Kind.MODEL_UNAVAILABLE) {
+            return "No configured Gemini model is available (HTTP 404). Check model and fallbackModels in ai.json.";
+        }
+        if (failure.httpStatus() == 503 || failure.httpStatus() >= 500) {
+            return "Gemini is overloaded (HTTP " + failure.httpStatus()
+                    + "). Try again, or enable cache-only.";
+        }
+        if (failure.httpStatus() == 429) {
+            return "Gemini is rate limited (HTTP 429). Rate limit reached, try again in a minute or switch model in ai.json.";
+        }
+        if (failure.getMessage().toLowerCase(java.util.Locale.ROOT).contains("timed out")) {
+            return "Gemini request timed out. Try again, or enable cache-only.";
+        }
+        if (failure.httpStatus() == 400) return failure.getMessage();
+        return "Gemini connection unavailable. " + failure.getMessage()
+                + " Try again, or enable cache-only.";
+    }
+
+    private Result withModelAttempts(Result result, List<String> modelAttempts) {
+        return new Result(result.attemptCount(), result.status(), result.summary(),
+                result.expressions(), result.netlist(), result.layout(), result.truthTable(),
+                result.mismatchingRows(), result.attemptLog(), result.fromCache(),
+                result.answeredBy(), modelAttempts);
     }
 
     private static boolean isExpressionSource(String source) {
@@ -445,11 +570,18 @@ public final class AiCircuitService {
 
     private Result result(int attempts, Status status, Attempt attempt,
                           List<String> log, boolean fromCache) {
+        return result(attempts, status, attempt, log, fromCache, "", List.of());
+    }
+
+    private Result result(int attempts, Status status, Attempt attempt,
+                          List<String> log, boolean fromCache,
+                          String answeredBy, List<String> modelAttempts) {
         return new Result(attempts, status,
-                attempt.answer() == null ? "" : attempt.answer().summary(),
+                attempt.answer() == null ? "" : provider.redact(attempt.answer().summary()),
                 attempt.compilation() == null ? List.of() : attempt.compilation().expressions(),
                 attempt.compilation() == null ? null : attempt.compilation().netlist(),
-                attempt.layout(), attempt.truthTable(), attempt.mismatchRows(), log, fromCache);
+                attempt.layout(), attempt.truthTable(), attempt.mismatchRows(), log, fromCache,
+                answeredBy, modelAttempts);
     }
 
     private Attempt validate(String raw) {
@@ -714,9 +846,13 @@ public final class AiCircuitService {
         return message.replaceAll("[\\r\\n]+", " ");
     }
 
+    private String providerSafe(String text) {
+        return provider.redact(text);
+    }
+
     private static String safeProviderError(IOException exception) {
         String message = exception.getMessage();
-        return message == null || message.isBlank()
-                ? "Gemini request failed." : message.replaceAll("[\\r\\n]+", " ");
+        return providerSafe(message == null || message.isBlank()
+                ? "Gemini request failed." : message.replaceAll("[\\r\\n]+", " "));
     }
 }

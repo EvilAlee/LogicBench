@@ -43,7 +43,7 @@ public final class GeminiProvider implements AiProvider {
 
     @Override
     public List<String> models() {
-        return List.of(config.model());
+        return config.models();
     }
 
     @Override

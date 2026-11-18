@@ -193,6 +193,108 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void primary404IsSkippedAndFallbackModelCanAnswer() throws Exception {
+        List<String> calls = new ArrayList<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                fail("model-aware overload should be used");
+                return "";
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("missing-model", "working-model");
+            }
+
+            @Override
+            public String complete(String model, String prompt,
+                                   List<Turn> conversation, JsonObject schema) throws IOException {
+                calls.add(model);
+                if (model.equals("missing-model")) {
+                    throw new ProviderFailure(ProviderFailure.Kind.MODEL_UNAVAILABLE,
+                            "Gemini model not found (HTTP 404).", model, 404);
+                }
+                return andAnswer("0001");
+            }
+        };
+
+        AiCircuitService.Result result = service(provider, null, new ArrayList<>()).generate(
+                "Build a two-input AND gate with inputs A and B.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, result.attemptCount());
+        assertEquals("working-model", result.answeredBy());
+        assertEquals(List.of("missing-model", "working-model"), calls);
+        assertEquals(List.of("missing-model: HTTP 404", "working-model: 200 OK"),
+                result.modelAttempts());
+    }
+
+    @Test
+    void keyRejectionStopsWithoutRetryingOrTryingFallbackModels() throws Exception {
+        List<String> calls = new ArrayList<>();
+        List<Long> delays = new ArrayList<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                fail("model-aware overload should be used");
+                return "";
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("primary-model", "fallback-model");
+            }
+
+            @Override
+            public String complete(String model, String prompt,
+                                   List<Turn> conversation, JsonObject schema) throws IOException {
+                calls.add(model);
+                throw new ProviderFailure(ProviderFailure.Kind.KEY_REJECTED,
+                        "API key rejected (HTTP 401).", model, 401);
+            }
+        };
+
+        AiCircuitService.Result result = service(provider, null, delays).generate("Make a circuit.");
+
+        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
+        assertTrue(result.summary().contains("API key rejected (HTTP 401)"));
+        assertEquals(List.of("primary-model"), calls);
+        assertTrue(delays.isEmpty());
+        assertEquals(0, result.attemptCount());
+    }
+
+    @Test
+    void cancelDuringRetryWaitPropagatesImmediately() {
+        int[] calls = {0};
+        List<Long> waits = new ArrayList<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema)
+                    throws IOException {
+                calls[0]++;
+                throw new ProviderFailure(ProviderFailure.Kind.RETRYABLE,
+                        "Gemini server error (HTTP 503).", "primary-model", 503);
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("primary-model");
+            }
+        };
+        AiCircuitService.Sleeper cancellingSleeper = milliseconds -> {
+            waits.add(milliseconds);
+            throw new InterruptedException("cancelled");
+        };
+        AiCircuitService service = new AiCircuitService(
+                provider, GateLibrary.load().all(), null, cancellingSleeper);
+
+        assertThrows(InterruptedException.class, () -> service.generate("Make a circuit."));
+        assertEquals(1, calls[0]);
+        assertEquals(List.of(2_000L), waits);
+    }
+
+    @Test
     void parseErrorFeedbackIncludesTheParserPosition() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(
                 answer(List.of("A", "B"), List.of(new Output("F", "A &")), "0001"),
