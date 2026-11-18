@@ -96,8 +96,9 @@ class TidyCircuitServiceTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         List<PlacedComponent> inputs = new ArrayList<>();
         for (int index = 0; index < 13; index++) {
+            int y = index == 0 ? 0 : index == 1 ? 200 : 400 + (index - 2) * 40;
             PlacedComponent input = new PlacedComponent(
-                    "input-" + index, "input", 0, index * 40,
+                    "input-" + index, "input", 0, y,
                     Facing.EAST, Map.of(), "A" + index);
             schematic.add(input);
             inputs.add(input);
