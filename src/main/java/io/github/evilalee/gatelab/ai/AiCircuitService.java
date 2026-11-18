@@ -257,7 +257,7 @@ public final class AiCircuitService {
             }
         }
 
-        Result cached = cachedResult(description, log, "Using");
+        Result cached = cachedResult(description, log, "Using", 0);
         if (cached != null) return cached;
         if (cacheOnly) {
             log.add("AI cache only is enabled; no valid cached answer exists.");
@@ -278,7 +278,7 @@ public final class AiCircuitService {
                 log.add("Attempt " + attemptNumber + ": " + error);
                 if (error.toLowerCase(java.util.Locale.ROOT).contains("no network")) {
                     Result fallback = cachedResult(description, log,
-                            "No network connection; falling back to");
+                            "No network connection; falling back to", attemptNumber);
                     if (fallback != null) return fallback;
                 }
                 conversation.add(new Turn(Turn.Role.USER,
@@ -381,7 +381,8 @@ public final class AiCircuitService {
         if (!statement.isBlank()) statements.add(statement);
     }
 
-    private Result cachedResult(String description, List<String> log, String prefix) {
+    private Result cachedResult(
+            String description, List<String> log, String prefix, int attemptCount) {
         if (cache == null) return null;
         for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
             Attempt cachedAttempt = validate(hit.answerJson());
@@ -390,7 +391,7 @@ public final class AiCircuitService {
                 int rows = cachedAttempt.truthTable().rows().size();
                 log.add(prefix + " " + source + " cache.");
                 log.add("FROM CACHE: Verified " + rows + "/" + rows + " rows");
-                return result(0, Status.VERIFIED, cachedAttempt, log, true);
+                return result(attemptCount, Status.VERIFIED, cachedAttempt, log, true);
             }
             log.add("Ignored invalid " + source + " cache entry: "
                     + String.join("; ", cachedAttempt.errors()));

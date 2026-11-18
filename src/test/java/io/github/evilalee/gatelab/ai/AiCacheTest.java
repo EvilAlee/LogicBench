@@ -132,6 +132,7 @@ class AiCacheTest {
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertTrue(result.fromCache());
+        assertEquals(1, result.attemptCount());
         assertTrue(result.attemptLog().stream()
                 .anyMatch(line -> line.contains("No network connection; falling back to user cache")));
     }
