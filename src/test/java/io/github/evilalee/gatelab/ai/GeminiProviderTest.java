@@ -223,6 +223,14 @@ class GeminiProviderTest {
     }
 
     @Test
+    void noNetworkProducesPlainMessageWithoutLeakingTheKey() throws Exception {
+        GeminiProvider unavailable = provider("http://127.0.0.1:1");
+        IOException error = assertThrows(IOException.class, () -> complete(unavailable));
+        assertTrue(error.getMessage().contains("No network connection"));
+        assertFalse(error.getMessage().contains("test-secret"));
+    }
+
+    @Test
     void turnToStringRedactsConversationText() {
         Turn turn = new Turn(Turn.Role.USER, "possibly sensitive content");
         assertFalse(turn.toString().contains("possibly sensitive"));
