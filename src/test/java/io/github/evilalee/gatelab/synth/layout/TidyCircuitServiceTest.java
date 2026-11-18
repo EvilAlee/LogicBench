@@ -187,8 +187,9 @@ class TidyCircuitServiceTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent inputA = add(schematic, "input-a", "input", 0, 0, "A");
         PlacedComponent inputB = add(schematic, "input-b", "input", 0, 200, "B");
-        PlacedComponent gate = schematic.add(new PlacedComponent(
-                "gate-and", "and", 300, 100, facing));
+        PlacedComponent gate = new PlacedComponent(
+                "gate-and", "and", 300, 100, facing);
+        schematic.add(gate);
         PlacedComponent output = add(schematic, "output-f", "output", 500, 100, "F");
         connect(schematic, inputA.id(), "out", gate.id(), "in0");
         connect(schematic, inputB.id(), "out", gate.id(), "in1");
