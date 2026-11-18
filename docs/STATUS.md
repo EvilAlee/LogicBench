@@ -15,10 +15,10 @@
 - Headless Boolean expression parser, validated netlists, shared AST synthesis and engine-verified truth tables (PR #20)
 
 ## In progress
-- Expression-to-editable-schematic layout and Circuit > From expression... workflow
-  - Branch: feature-expression-layout
-  - Headless layered layout, deterministic orthogonal routing and geometric connectivity self-check
-  - Optional input/output pin labels and placed-schematic AST verification
+- Expression layout compaction
+  - Branch: fix-layout-compaction
+  - Per-column pin-driven vertical placement with deterministic three-sweep compaction
+  - Existing orthogonal routing and production geometric connectivity self-check retained
   - Live truth table preview, one-step replacement undo and fit-to-view
 
 ## Next
@@ -41,7 +41,7 @@
 - Undefined-input mode is a persisted document option; changing it increments the modified revision and recomputes simulation, but is excluded from topology undo/redo snapshots.
 - The synthesis package is independent of UI and Schematic. It compiles validated netlists directly into the public engine Circuit API and performs reference comparison against immutable ASTs.
 - Constant-folded expression outputs use literal 0 or 1 in outputs[].source; the layout realizes these with ordinary labeled input switches (0 starts LOW, 1 starts HIGH) because no fixed-rail source component exists in the current catalogue.
-- Expression layout uses deterministic depth columns, dummy nodes for skipped columns, four barycenter sweep pairs, 40-unit row gaps, 60-unit layer-band gaps, and per-net channel trunks with 20-unit start/end margins and lane pitch.
+- Expression layout retains deterministic depth columns, dummy nodes for skipped columns, and four barycenter ordering sweep pairs; compact coordinates use a fixed 60-unit input pitch and three alternating pin-driven vertical sweeps within each later column, with a 40-unit minimum body clearance and closest-safe pin-row shifts to prevent cross-signal T-junctions. Per-net channel trunks use 20-unit margins and 20-unit pitch, sized to the actual trunk count.
 - Layout verification extracts actual geometric nets and requires a one-to-one partition match with the netlist before returning a Schematic; a single retry doubles layout spacing.
 - The Generate action verifies the placed Schematic through the standard geometry-to-engine compile path over every declared-input row before replacing the current topology in one history step.
 

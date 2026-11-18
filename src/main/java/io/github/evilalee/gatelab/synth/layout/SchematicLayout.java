@@ -28,18 +28,16 @@ import java.util.TreeSet;
  * editable Schematic components and orthogonal geometric wires.
  *
  * <p>Every layer is aligned to its left body edge. Channel width grows with
- * the number of distinct nets crossing it; each gets a private vertical trunk.
- * Vertically, each layer occupies its own band. This deliberate separation
- * keeps a horizontal branch in one layer from terminating on another net's
- * trunk endpoint in the adjacent layer. Real component height comes from
- * GateDef/GateGeometry; dummy nodes reserve a 20-unit slot. The standard
- * gaps are 40 units between rows, 60 units between layer bands, and 20 units
- * at each side of every trunk lane. All spacing dimensions are doubled on the single
- * retry after a failed connectivity self-check.
+ * its private vertical trunk count. Each column receives its own compact
+ * vertical coordinate range: primary inputs use a fixed pitch, while later
+ * columns are aligned to the actual source and sink pin rows over three
+ * alternating sweeps. Real component bounds come from GateDef/GateGeometry;
+ * dummy nodes reserve a 20-unit slot. The fixed vertical clearance is 40
+ * units. All spacing dimensions are doubled on the single retry after a
+ * failed connectivity self-check.
  */
 public final class SchematicLayout {
     private static final int ROW_GAP = 40;
-    private static final int LAYER_BAND_GAP = 60;
     private static final int DUMMY_SLOT_HEIGHT = 20;
     private static final int TRUNK_START_MARGIN = 20;
     private static final int TRUNK_PITCH = 20;
@@ -218,12 +216,14 @@ public final class SchematicLayout {
         Map<String, Node> signalNodes = new LinkedHashMap<>();
         Map<String, Node> gateNodes = new LinkedHashMap<>();
         Map<String, Node> outputNodes = new LinkedHashMap<>();
+        List<Node> inputColumnNodes = new ArrayList<>();
 
         for (String input : netlist.inputs()) {
             String id = "expr-input-" + input;
             Node node = componentNode(
                     "input:" + input, NodeKind.INPUT, 0, input, id, "input");
             columns.get(0).add(node);
+            inputColumnNodes.add(node);
             signalNodes.put(input, node);
             inputIds.put(input, id);
         }
@@ -234,6 +234,7 @@ public final class SchematicLayout {
                     "constant:" + constant, NodeKind.CONSTANT, 0,
                     constant, id, "input");
             columns.get(0).add(node);
+            inputColumnNodes.add(node);
             signalNodes.put(constant, node);
             constantIds.put(constant, id);
         }
@@ -281,8 +282,9 @@ public final class SchematicLayout {
 
         orderColumns(columns);
         int rowGap = ROW_GAP * spacingFactor;
-        int bandGap = LAYER_BAND_GAP * spacingFactor;
-        assignVerticalBands(columns, rowGap, bandGap);
+        assignInputColumn(inputColumnNodes, rowGap);
+        optimizeVerticalPositions(
+                columns, outputNodes, routeSteps, rowGap);
 
         int laneStart = TRUNK_START_MARGIN * spacingFactor;
         int lanePitch = TRUNK_PITCH * spacingFactor;
@@ -305,7 +307,8 @@ public final class SchematicLayout {
         }
         for (int channel = 0; channel < columns.size() - 1; channel++) {
             int count = signalsByChannel.getOrDefault(channel, Set.of()).size();
-            int channelGap = laneStart + count * lanePitch + laneEnd;
+            int channelGap = laneStart + laneEnd
+                    + (count > 0 ? (count - 1) * lanePitch : 0);
             columnLeft[channel + 1] = columnLeft[channel]
                     + columnWidths[channel] + channelGap;
         }
@@ -315,20 +318,22 @@ public final class SchematicLayout {
                 node.x = columnLeft[node.column];
             } else {
                 node.x = columnLeft[node.column] + node.definition.origin().x();
-                PlacedComponent placed = new PlacedComponent(
-                        node.componentId,
-                        node.definition.family(),
-                        node.x,
-                        node.y,
-                        Facing.EAST,
-                        Map.of(),
-                        node.kind == NodeKind.INPUT || node.kind == NodeKind.CONSTANT
-                                || node.kind == NodeKind.OUTPUT
-                                ? node.kind == NodeKind.CONSTANT ? node.signal
-                                        : node.kind == NodeKind.INPUT ? node.signal
-                                        : outputLabelFor(node, netlist)
-                                : "");
-                schematic.add(placed);
+            }
+        }
+
+        LinkedHashSet<WireSegment> wires = route(
+                routeSteps, columnLeft, columnWidths, signalsByChannel,
+                laneStart, lanePitch);
+        wires = normalizeDrawing(allNodes(columns), wires);
+
+        for (Node node : allNodes(columns)) {
+            if (!node.isDummy()) {
+                String label = node.kind == NodeKind.INPUT || node.kind == NodeKind.CONSTANT
+                        ? node.signal
+                        : node.kind == NodeKind.OUTPUT ? outputLabelFor(node, netlist) : "";
+                schematic.add(new PlacedComponent(
+                        node.componentId, node.definition.family(), node.x, node.y,
+                        Facing.EAST, Map.of(), label));
             }
         }
 
@@ -338,9 +343,6 @@ public final class SchematicLayout {
             }
         }
 
-        LinkedHashSet<WireSegment> wires = route(
-                routeSteps, columnLeft, columnWidths, signalsByChannel,
-                laneStart, lanePitch);
         for (WireSegment wire : wires) {
             schematic.addWire(wire);
         }
@@ -475,26 +477,342 @@ public final class SchematicLayout {
         return count == 0 ? fallback : sum / count;
     }
 
-    private static void assignVerticalBands(
-            List<List<Node>> columns, int rowGap, int bandGap) {
-        int nextBandTop = 0;
-        for (List<Node> column : columns) {
-            int columnHeight = 0;
-            for (Node node : column) {
-                columnHeight += Math.max(node.slotHeight, DUMMY_SLOT_HEIGHT);
-            }
-            if (!column.isEmpty()) {
-                columnHeight += rowGap * (column.size() - 1);
+    private static void assignInputColumn(List<Node> inputNodes, int rowGap) {
+        if (inputNodes.isEmpty()) {
+            return;
+        }
+        int tallest = inputNodes.stream()
+                .mapToInt(node -> nodeBottomOffset(node) - nodeTopOffset(node))
+                .max().orElse(DUMMY_SLOT_HEIGHT);
+        int pitch = roundUpToGrid(tallest + rowGap);
+        for (int index = 0; index < inputNodes.size(); index++) {
+            inputNodes.get(index).y = index * pitch;
+        }
+    }
+
+    /**
+     * Runs the requested forward/backward/forward compaction passes. The
+     * candidate with the shortest actual vertical trunk geometry wins; ties
+     * retain the earlier pass, making the choice stable.
+     */
+    private static void optimizeVerticalPositions(
+            List<List<Node>> columns,
+            Map<String, Node> outputNodes,
+            List<RouteStep> routeSteps,
+            int rowGap) {
+        int outputColumn = columns.size() - 1;
+        int[] bestPositions = null;
+        long bestLength = Long.MAX_VALUE;
+
+        for (int sweep = 0; sweep < 3; sweep++) {
+            if (sweep == 1) {
+                for (int column = outputColumn - 1; column >= 1; column--) {
+                    assignColumn(
+                            columns.get(column), routeSteps, rowGap,
+                            false, column, true);
+                }
+            } else {
+                for (int column = 1; column <= outputColumn; column++) {
+                    List<Node> ordered = column == outputColumn
+                            ? new ArrayList<>(outputNodes.values())
+                            : columns.get(column);
+                    assignColumn(
+                            ordered, routeSteps, rowGap,
+                            true, column - 1, false);
+                }
             }
 
-            int cursor = nextBandTop;
-            for (Node node : column) {
-                int slotHeight = Math.max(node.slotHeight, DUMMY_SLOT_HEIGHT);
-                node.y = cursor + slotHeight / 2;
-                cursor += slotHeight + rowGap;
+            if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+                continue;
             }
-            nextBandTop += columnHeight + bandGap;
+            long length = totalVerticalWireLength(routeSteps);
+            if (length < bestLength) {
+                bestLength = length;
+                bestPositions = captureVerticalPositions(columns);
+            }
         }
+
+        if (bestPositions == null) {
+            throw new IllegalStateException("no vertical layout candidate was produced");
+        }
+        restoreVerticalPositions(columns, bestPositions);
+    }
+
+    /**
+     * Places one already-ordered column. In a forward pass each node follows
+     * the average of its incoming source pins; in a backward pass it follows
+     * the average of its outgoing destination pins.
+     */
+    private static void assignColumn(
+            List<Node> ordered,
+            List<RouteStep> routeSteps,
+            int rowGap,
+            boolean fromPredecessors,
+            int conflictChannel,
+            boolean movingSources) {
+        if (ordered.isEmpty()) {
+            return;
+        }
+
+        double[] desired = new double[ordered.size()];
+        double desiredTotal = 0.0;
+        for (int index = 0; index < ordered.size(); index++) {
+            Node node = ordered.get(index);
+            double pinTotal = 0.0;
+            int pinCount = 0;
+            for (RouteStep step : routeSteps) {
+                if (fromPredecessors && step.target() == node) {
+                    pinTotal += sourcePinY(step.source());
+                    pinCount++;
+                } else if (!fromPredecessors && step.source() == node) {
+                    pinTotal += targetPinY(step);
+                    pinCount++;
+                }
+            }
+            desired[index] = pinCount == 0 ? node.y : pinTotal / pinCount;
+            desiredTotal += desired[index];
+        }
+
+        for (int index = 0; index < ordered.size(); index++) {
+            Node node = ordered.get(index);
+            int y = roundToGrid(desired[index]);
+            if (index > 0) {
+                Node previous = ordered.get(index - 1);
+                y = Math.max(y, previous.y + minimumVerticalSeparation(
+                        previous, node, rowGap));
+            }
+            node.y = y;
+        }
+
+        double currentMean = 0.0;
+        for (Node node : ordered) {
+            currentMean += node.y;
+        }
+        currentMean /= ordered.size();
+        double desiredMean = desiredTotal / ordered.size();
+        int preferredShift = roundToGrid(desiredMean - currentMean);
+        int shift = closestConflictFreeShift(
+                routeSteps, conflictChannel, movingSources, preferredShift);
+        if (shift != 0) {
+            for (Node node : ordered) {
+                node.y += shift;
+            }
+        }
+    }
+
+    private record PinRow(String signal, int y) {
+    }
+
+    /**
+     * A horizontal branch crosses other lanes in its channel. A pin-row
+     * equality between different signals would turn that crossing into a
+     * T-junction at the other trunk endpoint (or a pin-on-wire connection).
+     * Select the closest grid shift that keeps those rows distinct.
+     */
+    /**
+     * A candidate from a reverse sweep may have changed the source side of
+     * a channel that was made safe earlier in that sweep. Only score snapshots
+     * whose every adjacent-column interface remains cross-signal conflict-free.
+     */
+    private static boolean allChannelsHaveConflictFreePinRows(
+            List<RouteStep> routeSteps, int columnCount) {
+        for (int channel = 0; channel < columnCount - 1; channel++) {
+            List<PinRow> sourceRows = new ArrayList<>();
+            List<PinRow> targetRows = new ArrayList<>();
+            for (RouteStep step : routeSteps) {
+                if (step.channel() == channel) {
+                    sourceRows.add(new PinRow(
+                            step.signal(), sourcePinY(step.source())));
+                    targetRows.add(new PinRow(
+                            step.signal(), targetPinY(step)));
+                }
+            }
+            if (hasForeignRowCollision(targetRows, sourceRows, 0)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int closestConflictFreeShift(
+            List<RouteStep> routeSteps,
+            int channel,
+            boolean movingSources,
+            int preferredShift) {
+        List<PinRow> fixedRows = new ArrayList<>();
+        List<PinRow> movingRows = new ArrayList<>();
+        for (RouteStep step : routeSteps) {
+            if (step.channel() != channel) {
+                continue;
+            }
+            if (movingSources) {
+                fixedRows.add(new PinRow(step.signal(), targetPinY(step)));
+                movingRows.add(new PinRow(step.signal(), sourcePinY(step.source())));
+            } else {
+                fixedRows.add(new PinRow(step.signal(), sourcePinY(step.source())));
+                movingRows.add(new PinRow(step.signal(), targetPinY(step)));
+            }
+        }
+
+        if (movingRows.isEmpty() || fixedRows.isEmpty()) {
+            return preferredShift;
+        }
+
+        for (int distance = 0; ; distance++) {
+            int lower = preferredShift - distance * PlacedComponent.GRID_SPACING;
+            if (!hasForeignRowCollision(movingRows, fixedRows, lower)) {
+                return lower;
+            }
+            if (distance > 0) {
+                int upper = preferredShift + distance * PlacedComponent.GRID_SPACING;
+                if (!hasForeignRowCollision(movingRows, fixedRows, upper)) {
+                    return upper;
+                }
+            }
+        }
+    }
+
+    private static boolean hasForeignRowCollision(
+            List<PinRow> movingRows, List<PinRow> fixedRows, int shift) {
+        for (PinRow moving : movingRows) {
+            int translatedY = moving.y() + shift;
+            for (PinRow fixed : fixedRows) {
+                if (!moving.signal().equals(fixed.signal())
+                        && translatedY == fixed.y()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int minimumVerticalSeparation(Node previous, Node current, int rowGap) {
+        int required = nodeBottomOffset(previous) - nodeTopOffset(current) + rowGap;
+        return roundUpToGrid(required);
+    }
+
+    private static int nodeTopOffset(Node node) {
+        return node.isDummy()
+                ? -DUMMY_SLOT_HEIGHT / 2
+                : GateGeometry.bounds(node.definition, Facing.EAST).y();
+    }
+
+    private static int nodeBottomOffset(Node node) {
+        if (node.isDummy()) {
+            return DUMMY_SLOT_HEIGHT / 2;
+        }
+        GateGeometry.Bounds bounds = GateGeometry.bounds(node.definition, Facing.EAST);
+        return bounds.y() + bounds.height();
+    }
+
+    private static int sourcePinY(Node source) {
+        if (source.isDummy()) {
+            return source.y;
+        }
+        GateGeometry.Offset offset = GateGeometry.outputOffset(source.definition, Facing.EAST);
+        return source.y + (offset == null ? 0 : offset.y());
+    }
+
+    private static int targetPinY(RouteStep step) {
+        Node target = step.target();
+        if (target.isDummy()) {
+            return target.y;
+        }
+        int inputIndex = step.targetInputIndex();
+        GateGeometry.Offset offset = GateGeometry.pinOffset(
+                target.definition, target.definition.inputs().get(inputIndex), Facing.EAST);
+        return target.y + offset.y();
+    }
+
+    private static int roundToGrid(double coordinate) {
+        return (int) (Math.round(coordinate / PlacedComponent.GRID_SPACING)
+                * PlacedComponent.GRID_SPACING);
+    }
+
+    private static int roundUpToGrid(int distance) {
+        return (int) (Math.ceil(distance / (double) PlacedComponent.GRID_SPACING)
+                * PlacedComponent.GRID_SPACING);
+    }
+
+    private static long totalVerticalWireLength(List<RouteStep> routeSteps) {
+        Map<ChannelSignal, int[]> ranges = new LinkedHashMap<>();
+        for (RouteStep step : routeSteps) {
+            int sourceY = sourcePinY(step.source());
+            int targetY = targetPinY(step);
+            int[] range = ranges.computeIfAbsent(
+                    new ChannelSignal(step.channel(), step.signal()),
+                    ignored -> new int[]{Math.min(sourceY, targetY), Math.max(sourceY, targetY)});
+            range[0] = Math.min(range[0], Math.min(sourceY, targetY));
+            range[1] = Math.max(range[1], Math.max(sourceY, targetY));
+        }
+        long total = 0L;
+        for (int[] range : ranges.values()) {
+            total += (long) range[1] - range[0];
+        }
+        return total;
+    }
+
+    private static int[] captureVerticalPositions(List<List<Node>> columns) {
+        List<Node> nodes = allNodes(columns);
+        int[] positions = new int[nodes.size()];
+        for (int index = 0; index < nodes.size(); index++) {
+            positions[index] = nodes.get(index).y;
+        }
+        return positions;
+    }
+
+    private static void restoreVerticalPositions(List<List<Node>> columns, int[] positions) {
+        List<Node> nodes = allNodes(columns);
+        if (nodes.size() != positions.length) {
+            throw new IllegalStateException("vertical layout snapshot does not match its nodes");
+        }
+        for (int index = 0; index < nodes.size(); index++) {
+            nodes.get(index).y = positions[index];
+        }
+    }
+
+    /**
+     * Translates components and wires together so their geometric bounding
+     * box starts at the same (0, 0) world origin used by the original layout.
+     */
+    private static LinkedHashSet<WireSegment> normalizeDrawing(
+            List<Node> nodes, Collection<WireSegment> wires) {
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        for (Node node : nodes) {
+            if (!node.isDummy()) {
+                GateGeometry.Bounds bounds = GateGeometry.bounds(
+                        node.definition, Facing.EAST);
+                minX = Math.min(minX, node.x + bounds.x());
+                minY = Math.min(minY, node.y + bounds.y());
+            }
+        }
+        for (WireSegment wire : wires) {
+            minX = Math.min(minX, Math.min(wire.x1(), wire.x2()));
+            minY = Math.min(minY, Math.min(wire.y1(), wire.y2()));
+        }
+        if (minX == Integer.MAX_VALUE || (minX == 0 && minY == 0)) {
+            return new LinkedHashSet<>(wires);
+        }
+
+        int deltaX = -minX;
+        int deltaY = -minY;
+        for (Node node : nodes) {
+            node.x += deltaX;
+            node.y += deltaY;
+        }
+        LinkedHashSet<WireSegment> translated = new LinkedHashSet<>();
+        for (WireSegment wire : wires) {
+            translated.add(translateWire(wire, deltaX, deltaY));
+        }
+        return translated;
+    }
+
+    private static WireSegment translateWire(
+            WireSegment wire, int deltaX, int deltaY) {
+        return new WireSegment(
+                wire.x1() + deltaX, wire.y1() + deltaY,
+                wire.x2() + deltaX, wire.y2() + deltaY);
     }
 
     private static List<Node> allNodes(List<List<Node>> columns) {

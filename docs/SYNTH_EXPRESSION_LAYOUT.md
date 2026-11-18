@@ -19,23 +19,41 @@ pairs then reorder each layer using its predecessor or successor positions.
 Equal barycenters are broken by a stable node key, so the same netlist and
 catalogue always produce the same ordering.
 
-Each layer is assigned a separate vertical band. Within a band, component
-slots use their actual rotated height from GateGeometry.bounds; dummy slots
-use 20 world units. The default empty vertical gap between slots is 40 units
-and the gap between layer bands is 60 units. This band separation prevents
-horizontal branch rows belonging to neighboring columns from sharing a pin
-row. Components use EAST facing and actual GateDef dimensions and pin
-offsets from gates.json.
+Vertical coordinates are compacted independently for each column. Column 0
+keeps primary inputs in expression first-appearance order at a fixed 60-unit
+pitch (constant-source switches follow the declared inputs). For every later
+column, a forward placement pass targets the average of the actual upstream
+source-pin rows. Nodes are processed in the existing column order; when two
+component bounds would collide, the later node is pushed down until the
+40-unit minimum body clearance is restored, snapped to the 10-unit grid. The
+column is then shifted uniformly so its mean is as close as possible to the
+mean desired row without changing any clearance. Dummies use the same rule
+with a 20-unit virtual slot. The selected shift also avoids aligning
+pins from different signals across an adjacent channel, preventing a horizontal
+branch from joining another signal at a trunk endpoint. Gate/output rows are
+based on GateGeometry pin offsets rather than assuming every pin is at the
+component origin.
+
+Coordinate placement runs three alternating sweeps: left-to-right from
+predecessor source pins, right-to-left from successor destination pins, then
+left-to-right again. The candidate with the shortest total vertical trunk
+length is retained; equal lengths keep the earlier candidate deterministically.
+Output probes are resolved in their declaration order and stay at their source
+pin row when no overlap prevents it. After routing, all components and wires
+are translated together so the drawing's bounding-box top-left is at (0, 0).
+Components use EAST facing and actual GateDef dimensions and pin offsets from
+gates.json.
 
 ## Orthogonal routing
 
 For each adjacent-column channel, each distinct signal receives one vertical
-trunk. Trunk lanes are placed 20 units after the source column's right edge,
-20 units apart, with 20 units left before the next column. The channel grows
-with the number of distinct routed signals. Sources connect horizontally to
+trunk. Trunk lanes are placed 20 units after the source column's right edge
+and 20 units apart, with a 20-unit margin after the final trunk. Thus a channel
+with one trunk uses 40 units and a channel with two trunks uses 60 units,
+rather than reserving an unused extra pitch. Sources connect horizontally to
 their trunk; the trunk spans every sink row; horizontal branches connect to
-each sink pin. Dummy nodes reserve their layer's own empty row so long-edge
-segments do not pass through gate bodies.
+each sink pin. Dummy nodes reserve their layer's own row so long-edge segments
+do not pass through gate bodies.
 
 All generated coordinates are multiples of the 10-unit schematic grid.
 Connectivity.analyze is run after placement. The self-check requires each
