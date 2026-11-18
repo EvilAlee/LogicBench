@@ -462,4 +462,87 @@ class AiCircuitServiceTest {
         assertEquals(0, provider.calls);
         assertTrue(result.attemptLog().getFirst().contains("skipped AI"));
     }
+
+    private static String twoBitAdderAnswer(List<String> inputOrder, boolean corruptS0) {
+        StringBuilder s0 = new StringBuilder();
+        StringBuilder s1 = new StringBuilder();
+        StringBuilder carry = new StringBuilder();
+        for (int row = 0; row < (1 << inputOrder.size()); row++) {
+            Map<String, Integer> assignment = new LinkedHashMap<>();
+            for (int index = 0; index < inputOrder.size(); index++) {
+                assignment.put(inputOrder.get(index),
+                        (row >>> (inputOrder.size() - 1 - index)) & 1);
+            }
+            int a0 = assignment.get("A0");
+            int a1 = assignment.get("A1");
+            int b0 = assignment.get("B0");
+            int b1 = assignment.get("B1");
+            int sum = (a1 * 2 + a0) + (b1 * 2 + b0);
+            int sum0 = sum & 1;
+            if (corruptS0 && a0 == 0 && b0 == 0 && a1 == 0 && b1 == 1) {
+                sum0 = 1 - sum0;
+            }
+            s0.append(sum0);
+            s1.append((sum >>> 1) & 1);
+            carry.append((sum >>> 2) & 1);
+        }
+        return answer(inputOrder, List.of(
+                new Output("S0", "A0 ^ B0"),
+                new Output("S1", "A1 ^ B1 ^ (A0 & B0)"),
+                new Output("C2", "A1 & B1 | A1 & A0 & B0 | B1 & A0 & B0")),
+                s0.toString(), s1.toString(), carry.toString());
+    }
+
+    @Test
+    void twoBitAdderAcceptsDeclaredInputPermutationAndKeepsEngineOrder() throws Exception {
+        List<String> declaredOrder = List.of("A1", "A0", "B1", "B0");
+        ScriptedProvider provider = new ScriptedProvider(twoBitAdderAnswer(declaredOrder, false));
+
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(List.of("A0", "B0", "A1", "B1"), result.truthTable().inputNames());
+        assertEquals(16, result.truthTable().rows().size());
+    }
+
+    @Test
+    void firstAppearanceInputOrderStillVerifiesForTwoBitAdder() throws Exception {
+        List<String> declaredOrder = List.of("A0", "B0", "A1", "B1");
+        ScriptedProvider provider = new ScriptedProvider(twoBitAdderAnswer(declaredOrder, false));
+
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(List.of("A0", "B0", "A1", "B1"), result.truthTable().inputNames());
+    }
+
+    @Test
+    void missingExtraAndDuplicateDeclaredInputsAreRejected() throws Exception {
+        List<List<String>> invalidOrders = List.of(
+                List.of("A0", "B0", "A1"),
+                List.of("A0", "B0", "A1", "B1", "EXTRA"),
+                List.of("A0", "B0", "A1", "B1", "B1"));
+        for (List<String> inputs : invalidOrders) {
+            String zeros = "0".repeat(1 << inputs.size());
+            String raw = answer(inputs, List.of(
+                    new Output("S0", "A0 ^ B0"),
+                    new Output("S1", "A1 ^ B1 ^ (A0 & B0)"),
+                    new Output("C2", "A1 & B1 | A1 & A0 & B0 | B1 & A0 & B0")),
+                    zeros, zeros, zeros);
+            AiCircuitService.Result result = service(new ScriptedProvider(raw))
+                    .generate("Build a two-bit adder.");
+
+            assertEquals(AiCircuitService.Status.UNVERIFIED, result.status(), inputs.toString());
+            String log = String.join("\\n", result.attemptLog());
+            if (inputs.size() == 3) {
+                assertTrue(log.contains("missing="), log);
+            } else if (inputs.size() == 5 && inputs.getLast().equals("EXTRA")) {
+                assertTrue(log.contains("extra="), log);
+            } else {
+                assertTrue(log.contains("duplicate input name"), log);
+            }
+        }
+    }
+
 }
