@@ -148,7 +148,8 @@ class AiCircuitServiceTest {
         assertEquals(0, result.attemptCount());
         assertEquals(3, calls[0]);
         assertEquals(List.of(2_000L, 6_000L), delays);
-        assertTrue(result.attemptLog().contains("AI unavailable, using cached answer"));
+        assertTrue(result.attemptLog().stream().anyMatch(line ->
+                line.startsWith("AI unavailable (HTTP 503, model default) - showing cached result")));
     }
 
     @Test

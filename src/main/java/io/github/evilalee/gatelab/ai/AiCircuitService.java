@@ -318,8 +318,9 @@ public final class AiCircuitService {
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
-                log.add(reason);
-                return new Result(attemptNumber - 1, Status.UNAVAILABLE, reason,
+                log.add("AI unavailable: " + reason);
+                return new Result(attemptNumber - 1, Status.UNAVAILABLE,
+                        "AI unavailable: " + reason,
                         List.of(), null, null, null, List.of(), log, false,
                         "", allModelAttempts);
             }
