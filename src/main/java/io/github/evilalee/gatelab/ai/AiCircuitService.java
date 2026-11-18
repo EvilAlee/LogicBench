@@ -244,6 +244,7 @@ public final class AiCircuitService {
     public Result generate(String description, boolean cacheOnly)
             throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
+        String safeDescription = provider.redact(description);
         List<String> log = new ArrayList<>();
 
         ExpressionCompiler.Compilation local = null;
@@ -290,7 +291,7 @@ public final class AiCircuitService {
             }
         }
 
-        Result cached = cachedResult(description, log, "Using", 0);
+        Result cached = cachedResult(safeDescription, log, "Using", 0);
         if (cached != null) return cached;
         if (cacheOnly) {
             log.add("AI unavailable: cache-only mode is enabled and no valid cached answer exists.");
@@ -300,7 +301,8 @@ public final class AiCircuitService {
         }
 
         List<Turn> conversation = new ArrayList<>();
-        conversation.add(new Turn(Turn.Role.USER, description));
+        conversation.add(new Turn(Turn.Role.USER, safeDescription));
+        Set<String> skippedModels = new LinkedHashSet<>();
         Attempt best = null;
         String bestAnsweredBy = "";
         List<String> allModelAttempts = new ArrayList<>();
@@ -308,13 +310,13 @@ public final class AiCircuitService {
             log.add("Verification attempt " + attemptNumber + ": requesting a model answer.");
             ModelAnswer response;
             try {
-                response = completeWithModelFallback(conversation, log);
+                response = completeWithModelFallback(conversation, log, skippedModels);
                 allModelAttempts.addAll(response.modelAttempts());
             } catch (ProviderFailure failure) {
                 allModelAttempts.addAll(failure.modelAttempts());
-                String reason = unavailableReason(failure);
-                String notice = cachedNotice(failure);
-                Result fallback = cachedResult(description, log, notice, attemptNumber - 1);
+                String reason = provider.redact(unavailableReason(failure));
+                String notice = provider.redact(cachedNotice(failure));
+                Result fallback = cachedResult(safeDescription, log, notice, attemptNumber - 1);
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
@@ -325,8 +327,9 @@ public final class AiCircuitService {
                         "", allModelAttempts);
             }
 
-            conversation.add(new Turn(Turn.Role.MODEL, response.raw()));
-            Attempt current = validate(response.raw());
+            String safeRaw = provider.redact(response.raw());
+            conversation.add(new Turn(Turn.Role.MODEL, safeRaw));
+            Attempt current = validate(safeRaw);
             if (best == null || current.score() < best.score()
                     || (current.score() == best.score()
                         && current.errors().size() < best.errors().size())) {
@@ -338,7 +341,7 @@ public final class AiCircuitService {
                 log.add("Verified " + rows + "/" + rows + " rows via " + response.model());
                 if (cache != null) {
                     try {
-                        cache.storeVerified(description, response.raw());
+                        cache.storeVerified(safeDescription, safeRaw);
                         log.add("Saved verified live answer to the user cache.");
                     } catch (IOException cacheError) {
                         log.add("Verified answer, but could not save the user cache.");
@@ -361,7 +364,7 @@ public final class AiCircuitService {
             }
             if (attemptNumber < MAX_ATTEMPTS) {
                 conversation.add(new Turn(Turn.Role.USER,
-                        "Your previous JSON was:\n" + response.raw()
+                        "Your previous JSON was:\n" + safeRaw
                                 + "\nCorrect it. The concrete validation errors are:\n"
                                 + feedback
                                 + "\nReturn the complete corrected JSON object only."));
@@ -381,12 +384,12 @@ public final class AiCircuitService {
      * skipped for the rest of this generation request; transient failures advance
      * to the next model and only trigger a new round after all remaining models fail.
      */
-    private ModelAnswer completeWithModelFallback(List<Turn> conversation, List<String> log)
+    private ModelAnswer completeWithModelFallback(
+            List<Turn> conversation, List<String> log, Set<String> skippedModels)
             throws ProviderFailure, InterruptedException {
         List<String> models = provider.models();
         if (models == null || models.isEmpty()) models = List.of("default");
         LinkedHashSet<String> uniqueModels = new LinkedHashSet<>(models);
-        LinkedHashSet<String> skippedModels = new LinkedHashSet<>();
         List<String> modelAttempts = new ArrayList<>();
         ProviderFailure lastFailure = null;
 
@@ -397,14 +400,16 @@ public final class AiCircuitService {
                 try {
                     String raw = provider.complete(model, systemPrompt(),
                             List.copyOf(conversation), responseSchema());
-                    String outcome = model + ": 200 OK";
+                    String safeModel = provider.redact(model);
+                    String outcome = safeModel + ": 200 OK";
                     modelAttempts.add(outcome);
                     log.add(outcome);
-                    return new ModelAnswer(raw, model, modelAttempts);
+                    return new ModelAnswer(provider.redact(raw), safeModel, modelAttempts);
                 } catch (IOException exception) {
                     ProviderFailure failure = classifyFailure(exception, model);
                     lastFailure = failure;
-                    String outcome = model + ": " + httpOutcome(failure);
+                    String outcome = provider.redact(model) + ": "
+                            + provider.redact(httpOutcome(failure));
                     modelAttempts.add(outcome);
                     log.add(outcome);
 
@@ -434,7 +439,11 @@ public final class AiCircuitService {
     }
 
     private ProviderFailure classifyFailure(IOException exception, String model) {
-        if (exception instanceof ProviderFailure failure) return failure;
+        if (exception instanceof ProviderFailure failure) {
+            return new ProviderFailure(failure.kind(), provider.redact(failure.getMessage()),
+                    provider.redact(failure.model()), failure.httpStatus(),
+                    failure.modelAttempts().stream().map(provider::redact).toList());
+        }
         String message = safeProviderError(exception);
         String lower = message.toLowerCase(java.util.Locale.ROOT);
         java.util.regex.Matcher statusMatcher =
@@ -498,7 +507,7 @@ public final class AiCircuitService {
         return new Result(result.attemptCount(), result.status(), result.summary(),
                 result.expressions(), result.netlist(), result.layout(), result.truthTable(),
                 result.mismatchingRows(), result.attemptLog(), result.fromCache(),
-                result.answeredBy(), modelAttempts);
+                result.answeredBy(), modelAttempts.stream().map(provider::redact).toList());
     }
 
     private static boolean isExpressionSource(String source) {
@@ -841,10 +850,10 @@ public final class AiCircuitService {
         return trimmed.substring(firstLine + 1, closing).trim();
     }
 
-    private static String safeParseMessage(RuntimeException exception) {
+    private String safeParseMessage(RuntimeException exception) {
         String message = exception.getMessage();
         if (message == null || message.isBlank()) return exception.getClass().getSimpleName();
-        return message.replaceAll("[\\r\\n]+", " ");
+        return provider.redact(message.replaceAll("[\\r\\n]+", " "));
     }
 
     private String providerSafe(String text) {

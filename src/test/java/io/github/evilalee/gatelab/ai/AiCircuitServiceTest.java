@@ -232,6 +232,47 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void a404ModelStaysSkippedAcrossAllVerificationAttempts() throws Exception {
+        int[] missingCalls = {0};
+        int[] workingCalls = {0};
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                fail("model-aware overload should be used");
+                return "";
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("retired-model", "working-model");
+            }
+
+            @Override
+            public String complete(String model, String prompt,
+                                   List<Turn> conversation, JsonObject schema) throws IOException {
+                if (model.equals("retired-model")) {
+                    missingCalls[0]++;
+                    throw new ProviderFailure(ProviderFailure.Kind.MODEL_UNAVAILABLE,
+                            "Gemini model not found (HTTP 404).", model, 404);
+                }
+                workingCalls[0]++;
+                return andAnswer(workingCalls[0] == 1 ? "0000" : "0001");
+            }
+        };
+
+        AiCircuitService.Result result = service(provider, null, new ArrayList<>()).generate(
+                "Build a two-input AND gate with inputs A and B.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, result.attemptCount());
+        assertEquals(1, missingCalls[0]);
+        assertEquals(2, workingCalls[0]);
+        assertEquals("working-model", result.answeredBy());
+        assertEquals(1, result.modelAttempts().stream()
+                .filter(line -> line.startsWith("retired-model:")).count());
+    }
+
+    @Test
     void keyRejectionStopsWithoutRetryingOrTryingFallbackModels() throws Exception {
         List<String> calls = new ArrayList<>();
         List<Long> delays = new ArrayList<>();

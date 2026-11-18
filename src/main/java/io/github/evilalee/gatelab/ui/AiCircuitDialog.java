@@ -56,8 +56,8 @@ public final class AiCircuitDialog extends JDialog {
     private final JLabel setupHelp = new JLabel(" ");
     private final JLabel summary = new JLabel(" ");
     private final JLabel statusBadge = new JLabel("READY", SwingConstants.CENTER);
-    private final TruthTableModel tableModel = new TruthTableModel();
-    private final JTable truthTable = new JTable(tableModel);
+    private final TruthTableModel tableModel;
+    private final JTable truthTable;
     private final JButton generateButton = new JButton("Generate");
     private final JButton cancelButton = new JButton("Cancel");
     private final JButton placeButton = new JButton("Place circuit");
@@ -71,6 +71,8 @@ public final class AiCircuitDialog extends JDialog {
         this.canvas = Objects.requireNonNull(canvas, "canvas");
         this.cacheOnly = cacheOnly;
         this.config = AiConfig.load();
+        this.tableModel = new TruthTableModel(config);
+        this.truthTable = new JTable(tableModel);
         this.cache = new AiCache(config.configDirectory());
         this.service = new AiCircuitService(
                 new GeminiProvider(config), io.github.evilalee.gatelab.io.GateLibrary.load().all(), cache);
@@ -245,7 +247,20 @@ public final class AiCircuitDialog extends JDialog {
     }
 
     private void showResult(AiCircuitService.Result result) {
-        summary.setText(result.summary());
+        String displaySummary = config.redact(result.summary());
+        if (result.fromCache()) {
+            String unavailableNotice = result.attemptLog().stream()
+                    .filter(line -> line.startsWith("AI unavailable ("))
+                    .findFirst().orElse("");
+            if (!unavailableNotice.isBlank()) {
+                displaySummary = config.redact(unavailableNotice) + " — " + displaySummary;
+            }
+        } else if (!result.answeredBy().isBlank()) {
+            String status = result.status() == AiCircuitService.Status.VERIFIED
+                    ? "VERIFIED" : "UNVERIFIED";
+            displaySummary += " — " + status + " via " + config.redact(result.answeredBy());
+        }
+        summary.setText(config.redact(displaySummary));
         expressionsArea.setText(formatExpressions(result.expressions()));
         tableModel.setTable(result.truthTable());
         if (result.fromCache()) {
@@ -261,7 +276,8 @@ public final class AiCircuitDialog extends JDialog {
             statusBadge.setText("UNVERIFIED");
             statusBadge.setBackground(new Color(250, 225, 205));
         }
-        boolean placeable = result.layout() != null
+        boolean placeable = result.status() != AiCircuitService.Status.UNAVAILABLE
+                && result.layout() != null
                 && (result.status() == AiCircuitService.Status.VERIFIED
                     || !result.mismatchingRows().isEmpty());
         placeButton.setEnabled(placeable);
@@ -270,14 +286,14 @@ public final class AiCircuitDialog extends JDialog {
         }
     }
 
-    private static String formatExpressions(List<NamedExpression> expressions) {
+    private String formatExpressions(List<NamedExpression> expressions) {
         StringBuilder text = new StringBuilder();
         for (NamedExpression expression : expressions) {
             if (!text.isEmpty()) text.append('\n');
             text.append(expression.name()).append(" = ")
                     .append(formatExpression(expression.expression()));
         }
-        return text.toString();
+        return config.redact(text.toString());
     }
 
     private static String formatExpression(Expression expression) {
@@ -304,7 +320,7 @@ public final class AiCircuitDialog extends JDialog {
     private void place() {
         if (currentResult == null || currentResult.layout() == null) return;
         if (currentResult.status() == AiCircuitService.Status.UNVERIFIED) {
-            String rows = String.join("\n", currentResult.mismatchingRows());
+            String rows = config.redact(String.join("\n", currentResult.mismatchingRows()));
             int answer = JOptionPane.showConfirmDialog(
                     this,
                     "This circuit is UNVERIFIED. The engine disagreed on these rows:\n\n"
@@ -414,6 +430,7 @@ public final class AiCircuitDialog extends JDialog {
     }
 
     private void showFailure(String message) {
+        message = config.redact(message);
         appendLog(message);
         summary.setText(message);
         statusBadge.setText("ERROR");
@@ -425,18 +442,23 @@ public final class AiCircuitDialog extends JDialog {
 
     private void appendLog(String line) {
         if (!logArea.getText().isEmpty()) logArea.append("\n");
-        logArea.append(line);
+        logArea.append(config.redact(line));
         logArea.setCaretPosition(logArea.getDocument().getLength());
     }
 
-    private static String safeMessage(Throwable throwable) {
+    private String safeMessage(Throwable throwable) {
         String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName() : message;
+        return config.redact(message == null || message.isBlank()
+                ? throwable.getClass().getSimpleName() : message);
     }
 
     private static final class TruthTableModel extends AbstractTableModel {
+        private final AiConfig config;
         private TruthTable table;
+
+        private TruthTableModel(AiConfig config) {
+            this.config = config;
+        }
 
         private void setTable(TruthTable next) {
             table = next;
@@ -453,8 +475,10 @@ public final class AiCircuitDialog extends JDialog {
         @Override
         public String getColumnName(int column) {
             if (table == null) return "";
-            if (column < table.inputNames().size()) return table.inputNames().get(column);
-            return table.outputNames().get(column - table.inputNames().size());
+            if (column < table.inputNames().size()) {
+                return config.redact(table.inputNames().get(column));
+            }
+            return config.redact(table.outputNames().get(column - table.inputNames().size()));
         }
 
         @Override

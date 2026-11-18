@@ -89,6 +89,32 @@ class AiCacheTest {
     }
 
     @Test
+    void apiKeyTextIsRedactedBeforeAnswerDisplayAndCachePersistence() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String secret = "sensitive-key";
+        String description = "Build an AND gate; token=" + secret;
+        String answerWithSecret = AND_ANSWER.replace("AND gate", secret + " AND gate");
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                return answerWithSecret;
+            }
+
+            @Override
+            public String redact(String text) {
+                return text == null ? "" : text.replace(secret, "***");
+            }
+        };
+
+        AiCircuitService.Result result = service(provider, cache).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertFalse(result.summary().contains(secret));
+        assertTrue(result.summary().contains("***"));
+        assertFalse(Files.readString(cache.file()).contains(secret));
+    }
+
+    @Test
     void cacheOnlyUsesBundledAnswerWithoutCallingProvider() throws Exception {
         AiCache cache = new AiCache(directory);
         int[] calls = {0};
