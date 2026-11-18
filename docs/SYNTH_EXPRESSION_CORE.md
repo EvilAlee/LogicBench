@@ -39,7 +39,7 @@ An unassigned expression receives output name `F`. Consequently, multiple unname
 }
 ```
 
-- `inputs` is an ordered array of at most 12 unique signal names.
+- `inputs` is an ordered array of unique signal names. The general Netlist model permits more than 12 inputs for layout-only uses; expression compilation and exhaustive truth-table generation remain limited to 12.
 - `gates` contains unique signal ids and one of `AND`, `OR`, `NAND`, `NOR`, `XOR`, `XNOR` (exactly two inputs), `NOT`, or `BUFFER` (one input).
 - A gate input references a primary input name or another gate id. Forward references are allowed; the validated model detects cycles and exposes a topological gate order.
 - `outputs` contains unique output labels and a source that references an input or gate id.
@@ -47,7 +47,7 @@ An unassigned expression receives output name `F`. Consequently, multiple unname
 
 **Constant outputs:** the `outputs[].source` field also accepts the literal string `"0"` or `"1"`. The expression compiler folds Boolean constants and identities; when an entire output reduces to a constant it emits that literal directly. This avoids fabricating an input that would appear as a free truth-table variable. Gate input references do not accept literal constants; the compiler simplifies them before netlist creation.
 
-`NetlistJson` reads and writes this schema with the existing Gson dependency. `Netlist` validates the graph when constructed and reports duplicate names/ids, unknown references, gate arity errors, more than 12 inputs, missing output sources, and combinational cycles.
+`NetlistJson` reads and writes this schema with the existing Gson dependency. `Netlist` validates the graph when constructed and reports duplicate names/ids, unknown references, gate arity errors, missing output sources, and combinational cycles. `ExpressionCompiler` and `TruthTableGenerator` enforce the 12-input exhaustive-verification limit; the Netlist itself can represent larger graphs for layout workflows that skip exhaustive verification.
 
 ## Compilation and engine verification
 

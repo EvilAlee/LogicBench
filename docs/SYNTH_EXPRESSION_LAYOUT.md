@@ -90,3 +90,24 @@ Input and output components may carry an optional free-text label. Empty
 labels are omitted from version-1 JSON. Older version-1 files without label
 load with an empty label. Labels do not affect pin IDs or electrical
 connectivity.
+
+
+## Tidying an existing schematic
+
+Circuit > Tidy circuit extracts the current Schematic's geometric nets through
+`Connectivity.analyze` and converts supported input switches, output probes,
+and gates into the same validated Netlist used by expression synthesis.
+Primary inputs and outputs are ordered by their current world y coordinate,
+then x, so their visual order is retained. Non-empty valid I/O labels are used
+as signal names; blank labels receive unique generated names. The production
+`SchematicLayout` engine then places and routes the extracted graph, including
+its normal connectivity and overlap self-check.
+
+Before installation, the original and candidate schematics are both simulated
+through `SchematicCompiler.compileAndSettle` for every input assignment when
+there are at most 12 inputs. Above 12 inputs, exhaustive equivalence checking
+is explicitly skipped and reported to the user. Feedback loops, unsupported
+components or gate arities, bare or driverless gate inputs, multiple drivers,
+and driverless output nets are refused without changing the current schematic.
+I/O display labels and input-switch values are preserved; gate facings are set
+to EAST, and the accepted replacement is one undo step.
