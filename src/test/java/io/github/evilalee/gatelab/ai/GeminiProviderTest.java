@@ -119,7 +119,7 @@ class GeminiProviderTest {
             body.set(JsonParser.parseString(new String(
                     exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
             String fence = String.valueOf((char) 96).repeat(3);
-            respond(exchange, 200, success(fence + "json\\n{\"ok\":true}\\n" + fence));
+            respond(exchange, 200, success(fence + "json\n{\"ok\":true}\n" + fence));
         })) {
             assertEquals("{\"ok\":true}", complete(provider(fixture.baseUrl())));
             assertEquals("/v1beta/models/gemini-3.8-flash:generateContent", path.get());
