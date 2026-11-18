@@ -850,7 +850,7 @@ public final class AiCircuitService {
         return provider.redact(text);
     }
 
-    private static String safeProviderError(IOException exception) {
+    private String safeProviderError(IOException exception) {
         String message = exception.getMessage();
         return providerSafe(message == null || message.isBlank()
                 ? "Gemini request failed." : message.replaceAll("[\\r\\n]+", " "));
