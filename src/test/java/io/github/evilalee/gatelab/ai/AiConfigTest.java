@@ -39,6 +39,19 @@ class AiConfigTest {
     }
 
     @Test
+    void redactRemovesConfiguredApiKeyFromMessages() {
+        AiConfig config = AiConfig.load(Map.of("GEMINI_API_KEY", "sensitive-key"),
+                directory, AiConfig.DEFAULT_BASE_URL);
+        assertEquals("provider returned ***; *** was rejected",
+                config.redact("provider returned sensitive-key; sensitive-key was rejected"));
+    }
+
+    @Test
+    void requestTimeoutIsTwentySeconds() {
+        assertEquals(java.time.Duration.ofSeconds(20), AiConfig.REQUEST_TIMEOUT);
+    }
+
+    @Test
     void defaultsAndMissingKeyAreSafe() {
         AiConfig config = AiConfig.load(Map.of(), directory, AiConfig.DEFAULT_BASE_URL);
         assertFalse(config.hasApiKey());

@@ -185,6 +185,38 @@ class GeminiProviderTest {
     }
 
     @Test
+    void mapsStatusCodesToDistinctProviderFailureKinds() throws Exception {
+        Map<Integer, ProviderFailure.Kind> expected = Map.of(
+                401, ProviderFailure.Kind.KEY_REJECTED,
+                403, ProviderFailure.Kind.KEY_REJECTED,
+                404, ProviderFailure.Kind.MODEL_UNAVAILABLE,
+                429, ProviderFailure.Kind.RETRYABLE,
+                500, ProviderFailure.Kind.RETRYABLE,
+                502, ProviderFailure.Kind.RETRYABLE);
+        for (Map.Entry<Integer, ProviderFailure.Kind> item : expected.entrySet()) {
+            try (ServerFixture fixture = server(exchange -> respond(exchange, item.getKey(), "{}"))) {
+                ProviderFailure error = assertThrows(ProviderFailure.class,
+                        () -> complete(provider(fixture.baseUrl())));
+                assertEquals(item.getValue(), error.kind());
+                assertEquals(item.getKey(), error.httpStatus());
+                assertEquals("gemini-3.8-flash", error.model());
+            }
+        }
+    }
+
+    @Test
+    void invalidApiKeyMessageInHttp400IsClassifiedAsKeyRejected() throws Exception {
+        try (ServerFixture fixture = server(exchange ->
+                respond(exchange, 400, errorResponse("API key not valid. Please pass a valid API key.")))) {
+            ProviderFailure error = assertThrows(ProviderFailure.class,
+                    () -> complete(provider(fixture.baseUrl())));
+            assertEquals(ProviderFailure.Kind.KEY_REJECTED, error.kind());
+            assertEquals(400, error.httpStatus());
+            assertFalse(error.getMessage().contains("test-secret"));
+        }
+    }
+
+    @Test
     void mapsAuthenticationModelQuotaAndServerErrorsToPlainMessages() throws Exception {
         for (int status : List.of(401, 403, 404, 429, 500, 502)) {
             try (ServerFixture fixture = server(exchange -> respond(exchange, status, "{}"))) {

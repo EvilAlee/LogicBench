@@ -14,7 +14,7 @@ import java.util.Objects;
 public final class AiConfig {
     public static final String DEFAULT_MODEL = "gemini-3.8-flash";
     public static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    public static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(40);
+    public static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
     public static final String DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
     public enum KeySource { ENV, FILE, NONE }
@@ -95,6 +95,12 @@ public final class AiConfig {
         if (result == null) return DEFAULT_BASE_URL;
         while (result.endsWith("/")) result = result.substring(0, result.length() - 1);
         return result;
+    }
+
+    /** Removes the configured API key from any text before it reaches logs or UI. */
+    public String redact(String text) {
+        if (text == null) return "";
+        return apiKey == null || apiKey.isEmpty() ? text : text.replace(apiKey, "***");
     }
 
     public boolean hasApiKey() { return apiKey != null; }

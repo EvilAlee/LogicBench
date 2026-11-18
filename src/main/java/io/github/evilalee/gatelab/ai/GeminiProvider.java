@@ -38,44 +38,74 @@ public final class GeminiProvider implements AiProvider {
     @Override
     public String complete(String systemPrompt, List<Turn> conversation, JsonObject schema)
             throws IOException, InterruptedException {
+        return complete(config.model(), systemPrompt, conversation, schema);
+    }
+
+    @Override
+    public List<String> models() {
+        return List.of(config.model());
+    }
+
+    @Override
+    public String redact(String text) {
+        return config.redact(text);
+    }
+
+    @Override
+    public String complete(String model, String systemPrompt,
+                           List<Turn> conversation, JsonObject schema)
+            throws IOException, InterruptedException {
         if (!config.hasApiKey()) {
-            throw new IOException("No Gemini API key configured.");
+            throw failure(ProviderFailure.Kind.FATAL, "No Gemini API key configured.", model, -1);
         }
+        Objects.requireNonNull(model, "model");
         Objects.requireNonNull(systemPrompt, "systemPrompt");
         Objects.requireNonNull(conversation, "conversation");
         Objects.requireNonNull(schema, "schema");
 
-        JsonObject response = sendWithSchemaFallback(systemPrompt, conversation, schema);
-        return extractText(response);
+        JsonObject response = sendWithSchemaFallback(model, systemPrompt, conversation, schema);
+        try {
+            return extractText(response);
+        } catch (IOException exception) {
+            if (exception instanceof ProviderFailure providerFailure) throw providerFailure;
+            throw failure(ProviderFailure.Kind.FATAL, exception.getMessage(), model, -1);
+        }
     }
 
     private JsonObject sendWithSchemaFallback(
-            String systemPrompt, List<Turn> conversation, JsonObject schema)
+            String model, String systemPrompt, List<Turn> conversation, JsonObject schema)
             throws IOException, InterruptedException {
         JsonObject first = requestBody(systemPrompt, conversation, schema, 0);
-        HttpResponse<String> response = send(first);
+        HttpResponse<String> response = send(first, model);
+        if (response.statusCode() == 400 && isInvalidApiKey(response.body())) {
+            throw mappedError(response.statusCode(), response.body(), model);
+        }
         if (response.statusCode() == 400 && mentionsResponseFormat(response.body())) {
             JsonObject older = requestBody(systemPrompt, conversation, schema, 1);
-            response = send(older);
+            response = send(older, model);
+            if (response.statusCode() == 400 && isInvalidApiKey(response.body())) {
+                throw mappedError(response.statusCode(), response.body(), model);
+            }
             if (response.statusCode() == 400) {
                 JsonObject withoutSchema = requestBody(systemPrompt, conversation, null, 2);
-                response = send(withoutSchema);
+                response = send(withoutSchema, model);
             }
         }
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw mappedError(response.statusCode());
+            throw mappedError(response.statusCode(), response.body(), model);
         }
         try {
             return JsonParser.parseString(response.body()).getAsJsonObject();
         } catch (RuntimeException exception) {
-            throw new IOException("Gemini returned an invalid response.");
+            throw failure(ProviderFailure.Kind.FATAL,
+                    "Gemini returned an invalid response.", model, response.statusCode());
         }
     }
 
-    private HttpResponse<String> send(JsonObject body)
+    private HttpResponse<String> send(JsonObject body, String model)
             throws IOException, InterruptedException {
         URI uri = URI.create(config.baseUrl() + "/v1beta/models/"
-                + config.model() + ":generateContent");
+                + model + ":generateContent");
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .timeout(requestTimeout)
                 .header("x-goog-api-key", config.apiKey())
@@ -84,12 +114,15 @@ public final class GeminiProvider implements AiProvider {
                 .build();
         try {
             return client.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (ConnectException exception) {
-            throw new IOException("No network connection to Gemini.");
         } catch (java.net.http.HttpTimeoutException exception) {
-            throw new IOException("Gemini request timed out.");
+            throw failure(ProviderFailure.Kind.RETRYABLE,
+                    "Gemini request timed out.", model, -1);
+        } catch (java.net.UnknownHostException | ConnectException exception) {
+            throw failure(ProviderFailure.Kind.RETRYABLE,
+                    "No network connection to Gemini.", model, -1);
         } catch (IOException exception) {
-            throw new IOException("No network connection to Gemini.");
+            throw failure(ProviderFailure.Kind.RETRYABLE,
+                    "Gemini network request failed.", model, -1);
         }
     }
 
@@ -140,17 +173,43 @@ public final class GeminiProvider implements AiProvider {
         return body != null && body.toLowerCase(Locale.ROOT).contains("responseformat");
     }
 
-    private static IOException mappedError(int status) {
+    private ProviderFailure mappedError(int status, String body, String model) {
+        if (status == 400 && isInvalidApiKey(body)) {
+            return failure(ProviderFailure.Kind.KEY_REJECTED,
+                    "API key rejected (HTTP 400).", model, status);
+        }
         return switch (status) {
-            case 400 -> new IOException("Gemini rejected the request (HTTP 400).");
-            case 401, 403 -> new IOException("Gemini API key rejected (HTTP " + status + ").");
-            case 404 -> new IOException("Gemini model not found; check the model name (HTTP 404).");
-            case 429 -> new IOException("Gemini rate limit or quota reached (HTTP 429). "
-                    + "Rate limit reached, try again in a minute or switch model in ai.json.");
+            case 400 -> failure(ProviderFailure.Kind.FATAL,
+                    "Gemini rejected the request (HTTP 400).", model, status);
+            case 401, 403 -> failure(ProviderFailure.Kind.KEY_REJECTED,
+                    "API key rejected (HTTP " + status + ").", model, status);
+            case 404 -> failure(ProviderFailure.Kind.MODEL_UNAVAILABLE,
+                    "Gemini model not found (HTTP 404).", model, status);
+            case 429 -> failure(ProviderFailure.Kind.RETRYABLE,
+                    "Gemini is rate limited (HTTP 429). Rate limit reached, try again in a minute or switch model in ai.json.",
+                    model, status);
             default -> status >= 500
-                    ? new IOException("Gemini server error (HTTP " + status + ").")
-                    : new IOException("Gemini request failed (HTTP " + status + ").");
+                    ? failure(ProviderFailure.Kind.RETRYABLE,
+                        "Gemini server error (HTTP " + status + ").", model, status)
+                    : failure(ProviderFailure.Kind.FATAL,
+                        "Gemini request failed (HTTP " + status + ").", model, status);
         };
+    }
+
+    private static boolean isInvalidApiKey(String body) {
+        if (body == null) return false;
+        String message = body.toLowerCase(Locale.ROOT);
+        return message.contains("api_key_invalid")
+                || message.contains("api key not valid")
+                || message.contains("invalid api key")
+                || message.contains("api key is invalid");
+    }
+
+    private ProviderFailure failure(
+            ProviderFailure.Kind kind, String message, String model, int status) {
+        return new ProviderFailure(kind, config.redact(
+                message == null || message.isBlank() ? "Gemini provider failure." : message),
+                model, status);
     }
 
     private static String extractText(JsonObject response) throws IOException {
