@@ -5,7 +5,7 @@
 The model returns exactly one JSON object with these required fields:
 
 - \`summary\`: string.
-- \`inputs\`: ordered array of unique primary-input names. The first input is the truth-table most-significant bit.
+- \`inputs\`: array of unique primary-input names. Any order is accepted; the array order defines truth-table bit positions (first input is MSB).
 - \`outputs\`: array of \`{ "name": string, "expression": string }\`.
 - \`truthTable\`: array of \`{ "output": string, "bits": string }\`; each bits string has \(2^n\) characters, only 0/1, row zero is all inputs low.
 
@@ -16,7 +16,7 @@ The application rejects malformed/extra fields, invalid names, duplicate names, 
 The current prompt in \`AiCircuitService.systemPrompt()\` instructs Gemini to:
 
 1. Treat the user's description as the circuit specification and return JSON only.
-2. Provide the primary inputs in truth-table order (MSB first), requested outputs only, and an independently reasoned truth table.
+2. List every primary input exactly once in any order; truth-table row bits follow the inputs array (first input is MSB). Include requested outputs only and an independently reasoned truth table.
 3. Use exactly the parser's syntax:
    - Highest: prefix \`!\`, \`~\`, \`NOT\`; postfix \`'\`.
    - Then \`&\`, \`*\`, \`AND\`, \`NAND\`.
@@ -122,9 +122,9 @@ no Markdown, code fences, commentary, or extra properties.
 
 JSON fields:
 - summary: short plain-language description.
-- inputs: every true primary input exactly once, in first-appearance order across
-  output expressions. This is the truth-table order; the first input is the
-  most-significant bit.
+- inputs: every true primary input exactly once. The inputs array may be in
+  any order; each truth-table row's bits follow the order of that inputs array.
+  The first input is the most-significant bit.
 - outputs: only the outputs the user requested, each with a unique name and
   one Boolean expression.
 - truthTable: independently reason from the user's description and provide
