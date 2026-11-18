@@ -83,7 +83,7 @@ class TidyCircuitServiceTest {
                 pin.componentId().equals("gate-and") && pin.pinId().equals("out")));
 
         Connectivity.Point crossing = new Connectivity.Point(400, 100);
-        assertTrue(schematic.wires().stream().filter(wire -> wire.isVertical())
+        assertTrue(schematic.wires().stream().filter(wire -> !wire.isHorizontal())
                 .anyMatch(wire -> crossing.x() == wire.x1()
                         && crossing.y() > wire.y1() && crossing.y() < wire.y2()));
         assertTrue(schematic.wires().stream().filter(WireSegment::isHorizontal)
