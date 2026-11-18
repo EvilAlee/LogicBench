@@ -1,12 +1,10 @@
 package io.github.evilalee.gatelab.ui;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import io.github.evilalee.gatelab.ai.AiCache;
 import io.github.evilalee.gatelab.ai.AiCircuitService;
 import io.github.evilalee.gatelab.ai.AiConfig;
+import io.github.evilalee.gatelab.ai.AiConnectionTester;
 import io.github.evilalee.gatelab.ai.GeminiProvider;
-import io.github.evilalee.gatelab.ai.Turn;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.synth.Expression;
 import io.github.evilalee.gatelab.synth.NamedExpression;
@@ -354,29 +352,11 @@ public final class AiCircuitDialog extends JDialog {
         if (!config.hasApiKey() || activeWorker != null || cacheOnly) return;
         testConnectionButton.setEnabled(false);
         generateButton.setEnabled(false);
-        appendLog("Testing Gemini connection...");
-        activeWorker = new SwingWorker<String, Void>() {
-            private long elapsedMillis;
-
+        appendLog("Testing Gemini connection and configured fallback models...");
+        activeWorker = new SwingWorker<AiConnectionTester.Result, Void>() {
             @Override
-            protected String doInBackground() throws Exception {
-                long start = System.nanoTime();
-                JsonObject schema = new JsonObject();
-                schema.addProperty("type", "OBJECT");
-                JsonObject properties = new JsonObject();
-                JsonObject ok = new JsonObject();
-                ok.addProperty("type", "BOOLEAN");
-                properties.add("ok", ok);
-                schema.add("properties", properties);
-                JsonArray required = new JsonArray();
-                required.add("ok");
-                schema.add("required", required);
-                String response = new GeminiProvider(config).complete(
-                        "Return a tiny JSON object with ok set to true.",
-                        List.of(new Turn(Turn.Role.USER, "Connection test. Return {\"ok\":true}.")),
-                        schema);
-                elapsedMillis = (System.nanoTime() - start) / 1_000_000;
-                return response;
+            protected AiConnectionTester.Result doInBackground() throws Exception {
+                return AiConnectionTester.test(new GeminiProvider(config));
             }
 
             @Override
@@ -385,11 +365,20 @@ public final class AiCircuitDialog extends JDialog {
                 generateButton.setEnabled(true);
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
-                    get();
-                    appendLog("Connection OK (" + elapsedMillis + " ms).");
-                    JOptionPane.showMessageDialog(AiCircuitDialog.this,
-                            "Gemini connection OK (" + elapsedMillis + " ms).",
-                            "Test connection", JOptionPane.INFORMATION_MESSAGE);
+                    AiConnectionTester.Result result = get();
+                    for (String line : result.modelAttempts()) appendLog(line);
+                    String details = String.join("\n", result.modelAttempts());
+                    if (result.connected()) {
+                        appendLog(result.message());
+                        JOptionPane.showMessageDialog(AiCircuitDialog.this,
+                                config.redact(result.message()) + "\n" + details,
+                                "Test connection", JOptionPane.INFORMATION_MESSAGE);
+                    } else {
+                        showFailure(result.message());
+                        JOptionPane.showMessageDialog(AiCircuitDialog.this,
+                                config.redact(result.message()) + "\n" + details,
+                                "Test connection", JOptionPane.ERROR_MESSAGE);
+                    }
                 } catch (CancellationException exception) {
                     appendLog("Connection test cancelled.");
                 } catch (InterruptedException exception) {
@@ -397,7 +386,7 @@ public final class AiCircuitDialog extends JDialog {
                     showFailure("Connection test interrupted.");
                 } catch (ExecutionException exception) {
                     Throwable cause = exception.getCause();
-                    showFailure(cause == null ? "Connection test failed." : connectionFailureMessage(cause));
+                    showFailure(cause == null ? "Connection test failed." : safeMessage(cause));
                 }
             }
         };
