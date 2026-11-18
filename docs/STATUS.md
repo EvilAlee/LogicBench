@@ -11,24 +11,29 @@
 - M7b: snapshot-based undo/redo, gesture grouping, Edit menu shortcuts and headless history tests
 - M8b-v2: validated move/rotation wire-follow links with no-short fallback and safe no-link behavior
 - M9a: per-component Facing/Size/Input-count attributes, variant resolution, save/load, undo and attribute table
-- Logisim-compatible handling of unconnected multi-input gate pins with a strict mode
-- Headless Boolean expression parser, validated netlists, shared AST synthesis and engine-verified truth tables (PR #20)
-
-## In progress
-- Expression layout compaction
-  - Branch: fix-layout-compaction
-  - Per-column pin-driven vertical placement with deterministic three-sweep compaction
-  - Existing orthogonal routing and production geometric connectivity self-check retained
-  - Live truth table preview, one-step replacement undo and fit-to-view
+- PR #19: Logisim-compatible handling of unconnected multi-input gate pins with a strict mode
+- PR #20: headless Boolean expression parser, validated netlists, shared AST synthesis and engine-verified truth tables
+- PR #21: editable schematics generated from Boolean expressions, with optional input/output pin labels
+- PR #22: compact expression-generated schematic layout with per-column pin-driven placement and production connectivity/overlap checks
 
 ## Next
-- M8 polish
+1. Circuit > Tidy circuit
+2. AI circuit generation (Gemini provider, verify-and-retry, demo cache)
+3. M9a attribute table with editable labels
+4. M9b gate variants
+5. Clock, flip-flops, 7-segment display
+6. M10 analysis (truth table, expression, batch mode)
+7. Polish pass, distZip, demo script
+
+## Known limitations
+- Feedback circuits (including latches) remain at X until forced by an input change.
+- Gates are 2-input only until the M9a/M9b work is complete.
 
 ## Decisions
 - M9a stores only non-default size and inputs overrides in each component's attrs map; Facing remains top-level. Variant choices are derived from the matching family entries in gates.json; unavailable combinations are rejected.
 - M9a tool-attribute values are remembered per component family for the current session and copied into subsequently placed components.
 - Save files contain version, components (including input HIGH state), optional non-empty IO labels, and geometric wires only.
-- Nets and simulation results are not serialized; loading rebuilds the simulation from the loaded schematic.
+- Nets and simulation results are not serialized; loading rebuilds the simulation from the components and wires.
 - Invalid files are parsed into a detached schematic and never replace the active document.
 - The Schematic modification counter advances once per successful mutation; title dirty state compares it to the saved revision.
 - M6 rebuilds a fresh engine Circuit and settles it on schematic changes or input changes; prior gate drivers seed fresh feedback latch state.
