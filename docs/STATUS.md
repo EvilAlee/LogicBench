@@ -15,18 +15,18 @@
 - PR #20: headless Boolean expression parser, validated netlists, shared AST synthesis and engine-verified truth tables
 - PR #21: editable schematics generated from Boolean expressions, with optional input/output pin labels
 - PR #22: compact expression-generated schematic layout with per-column pin-driven placement and production connectivity/overlap checks
+- PR #24: Circuit > Tidy circuit — headless extraction, verified relayout, one-step undo, preserved I/O labels and switch values
+- PR #25: named expression signals — `:=` internal signals with no output pin, later references inlined, and reused-output hint
 
 ## In progress
-- PR #24: Circuit > Tidy circuit — headless extraction of hand-built schematics, verified relayout through the production layout/compile paths, one-step undo, preserved I/O labels and switch values, and a headless test of the real Circuit menu. Java 25 CI is green (164 tests); GUI not launched by the coding agent. Awaiting user review and merge.
-- PR #25: named expression signals — `:=` declares an internal signal with no output pin; later references are inlined, while reused `=` outputs receive a non-blocking amber hint. Output probes on nets that also feed gate inputs receive a theme-aware outer ring. Java 25 CI is green (169 tests); no engine, connectivity semantics, layout, SVG, dependency, or file-format changes. Awaiting user review and merge.
+- PR #26: AI circuit generation — Gemini HTTP provider, schema-validated expression exchange, independent truth-table verification with retries, six offline demo answers, persistent user cache, cache-only mode, and Circuit > From description (AI)... dialog. Java 25 CI is green; tests use a local fake Gemini server and scripted providers. GUI not launched. Awaiting user review and merge.
 
 ## Next
-1. AI circuit generation (Gemini provider, verify-and-retry, demo cache)
-2. M9a attribute table with editable labels
-3. M9b gate variants
-4. Clock, flip-flops, 7-segment display
-5. M10 analysis (truth table, expression, batch mode)
-6. Polish pass, distZip, demo script
+1. M9a attribute table with editable labels
+2. M9b gate variants
+3. Clock, flip-flops, 7-segment display
+4. M10 analysis (truth table, expression, batch mode)
+5. Polish pass, distZip, demo script
 
 ## Known limitations
 - Feedback circuits (including latches) remain at X until forced by an input change.
@@ -59,3 +59,6 @@
 - One task, one branch from fresh main, one PR with base main.
 - ./gradlew test must be green. Do not commit screenshots or throwaway workflows.
 - User reviews and merges each milestone PR.
+
+- AI circuit generation uses `AiConfig` in `$XDG_CONFIG_HOME/logicbench/ai.json` or `~/.config/logicbench/ai.json` on Linux and `%APPDATA%\\LogicBench\\ai.json` on Windows. Verified live answers are cached in `ai_cache.json`; six bundled examples are in `demo_prompts.json`.
+- AI-generated output is parsed only as expression text, laid out through `SchematicLayout`, and checked through the placed-schematic engine and netlist truth-table engine before it can be placed. The AI response format currently inlines intermediates; although the parser supports `:=`, a previous `=` output referenced by a later expression remains a primary input.

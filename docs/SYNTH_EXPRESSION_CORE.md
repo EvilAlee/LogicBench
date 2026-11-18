@@ -15,14 +15,31 @@ Identifiers match `[A-Za-z][A-Za-z0-9_]*`; `0` and `1` are Boolean constants. Op
 
 Parentheses override precedence. Binary operators are left-associative. `ExpressionParser.parse` returns an immutable `Expression` AST; `Expression.variables()` returns distinct identifiers in first-appearance order. `ParseException.position()` is a zero-based offset into the supplied expression. `ExpressionEvaluator` evaluates the AST using ordinary two-valued Java booleans, independently of the simulator.
 
-A multi-output request contains one assignment per line or semicolon-delimited statement, for example:
+A multi-output request contains one assignment per line or semicolon-delimited statement:
 
 ```text
-F = A ^ B ^ Cin
-G = (A & B) | (Cin & (A ^ B))
+Sum = A ^ B ^ Cin
+Carry = (A & B) | (Cin & (A ^ B))
 ```
 
 An unassigned expression receives output name `F`. Consequently, multiple unnamed statements conflict and are rejected; name each output when compiling more than one expression.
+
+### Named output and internal-signal assignments
+
+- `Name = expression` defines an output pin named `Name`.
+- `Name := expression` defines an internal signal. It creates **no output pin**.
+- An internal signal may be referenced by later statements; it is resolved to its expression AST before netlist construction. Forward references are not supported.
+- Identical expression subtrees are interned by the compiler, so repeated logic is represented by shared gates.
+
+Example:
+
+```text
+S0 = A ^ B
+Carry0 := A & B
+S1 = A1 ^ B1 ^ Carry0
+```
+
+Important distinction: referencing a previous `=` output name does **not** refer back to that output's expression. The name is treated as a primary input in the later expression (and the compiler records the reused-output warning). For example, `S0 = A^B; S1 = S0^C` has primary inputs `A`, `B`, and `S0`. Use `:=` for a reusable intermediate signal. This behavior was verified through the real parse, netlist, layout, and placed-schematic engine-verification path.
 
 ## Netlist JSON schema
 
@@ -56,6 +73,8 @@ An unassigned expression receives output name `F`. Consequently, multiple unname
 `TruthTableGenerator.generate(netlist)` constructs `Circuit`, `InputPin`, `Gate`, and `OutputProbe` instances directly. It does not route through the editor `Schematic` or its geometry compiler. It enumerates assignments in binary order with the first listed input as the most-significant bit, updates every source, calls `Simulator.settle()`, and records engine `Value` outputs (`ZERO`, `ONE`, or `X`) plus the oscillation flag.
 
 `TruthTableVerifier.verify(compilation)` compares each engine output to the pure AST evaluator for the same assignment. `VerificationResult.verified()` is true only when there are no mismatching outputs or oscillating rows. `mismatches()` identifies the input row, output, expected and actual value; `mismatchingRows()` returns each affected truth-table row once.
+
+The expression-to-schematic path is documented in [SYNTH_EXPRESSION_LAYOUT.md](SYNTH_EXPRESSION_LAYOUT.md). `SchematicLayout` creates editable components and wires; `SchematicExpressionVerifier` checks the placed geometry through `SchematicCompiler.compileAndSettle` against the independent AST evaluator.
 
 ## Public API
 

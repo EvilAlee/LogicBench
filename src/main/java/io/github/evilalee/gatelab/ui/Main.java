@@ -14,6 +14,7 @@ import javax.swing.JComboBox;
 import javax.swing.SwingUtilities;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JFrame;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -185,6 +186,15 @@ public final class Main {
         JMenuItem fromExpression = new JMenuItem("From expression...");
         fromExpression.addActionListener(event -> ExpressionDialog.showDialog(frame, canvas));
         circuit.add(fromExpression);
+        circuit.addSeparator();
+
+        JMenuItem fromDescription = new JMenuItem("From description (AI)...");
+        JCheckBoxMenuItem cacheOnly = new JCheckBoxMenuItem("AI: use cache only (offline)");
+        fromDescription.addActionListener(event ->
+                AiCircuitDialog.showDialog(frame, canvas, cacheOnly.isSelected()));
+        circuit.add(fromDescription);
+        circuit.add(cacheOnly);
+        circuit.addSeparator();
 
         JMenuItem tidy = new JMenuItem("Tidy circuit");
         tidy.setEnabled(hasTidyableGate(canvas.schematic()));

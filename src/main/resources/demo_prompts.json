@@ -1,0 +1,192 @@
+{
+  "entries": [
+    {
+      "description": "design a full adder with inputs a, b and cin; outputs sum and carry",
+      "answer": {
+        "summary": "Full adder with sum and carry outputs.",
+        "inputs": [
+          "A",
+          "B",
+          "Cin"
+        ],
+        "outputs": [
+          {
+            "name": "Sum",
+            "expression": "A ^ B ^ Cin"
+          },
+          {
+            "name": "Carry",
+            "expression": "(A & B) | (Cin & (A ^ B))"
+          }
+        ],
+        "truthTable": [
+          {
+            "output": "Sum",
+            "bits": "01101001"
+          },
+          {
+            "output": "Carry",
+            "bits": "00010111"
+          }
+        ]
+      }
+    },
+    {
+      "description": "design a 2-bit comparator with greater-than, equal and less-than outputs",
+      "answer": {
+        "summary": "Unsigned 2-bit magnitude comparator.",
+        "inputs": [
+          "A1",
+          "B1",
+          "A0",
+          "B0"
+        ],
+        "outputs": [
+          {
+            "name": "GT",
+            "expression": "(A1 & !B1) | ((A1 XNOR B1) & A0 & !B0)"
+          },
+          {
+            "name": "EQ",
+            "expression": "(A1 XNOR B1) & (A0 XNOR B0)"
+          },
+          {
+            "name": "LT",
+            "expression": "(!A1 & B1) | ((A1 XNOR B1) & !A0 & B0)"
+          }
+        ],
+        "truthTable": [
+          {
+            "output": "GT",
+            "bits": "0010000011110010"
+          },
+          {
+            "output": "EQ",
+            "bits": "1001000000001001"
+          },
+          {
+            "output": "LT",
+            "bits": "0100111100000100"
+          }
+        ]
+      }
+    },
+    {
+      "description": "design a majority-of-three circuit",
+      "answer": {
+        "summary": "Output is high when at least two of the three inputs are high.",
+        "inputs": [
+          "A",
+          "B",
+          "C"
+        ],
+        "outputs": [
+          {
+            "name": "Y",
+            "expression": "A & B | A & C | B & C"
+          }
+        ],
+        "truthTable": [
+          {
+            "output": "Y",
+            "bits": "00010111"
+          }
+        ]
+      }
+    },
+    {
+      "description": "design a 2-to-4 decoder with an enable input",
+      "answer": {
+        "summary": "Enabled 2-to-4 one-hot decoder.",
+        "inputs": [
+          "E",
+          "A1",
+          "A0"
+        ],
+        "outputs": [
+          {
+            "name": "Y0",
+            "expression": "E & !A1 & !A0"
+          },
+          {
+            "name": "Y1",
+            "expression": "E & !A1 & A0"
+          },
+          {
+            "name": "Y2",
+            "expression": "E & A1 & !A0"
+          },
+          {
+            "name": "Y3",
+            "expression": "E & A1 & A0"
+          }
+        ],
+        "truthTable": [
+          {
+            "output": "Y0",
+            "bits": "00001000"
+          },
+          {
+            "output": "Y1",
+            "bits": "00000100"
+          },
+          {
+            "output": "Y2",
+            "bits": "00000010"
+          },
+          {
+            "output": "Y3",
+            "bits": "00000001"
+          }
+        ]
+      }
+    },
+    {
+      "description": "design a 4-bit parity circuit",
+      "answer": {
+        "summary": "Odd-parity output for four data inputs.",
+        "inputs": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "outputs": [
+          {
+            "name": "P",
+            "expression": "A ^ B ^ C ^ D"
+          }
+        ],
+        "truthTable": [
+          {
+            "output": "P",
+            "bits": "0110100110010110"
+          }
+        ]
+      }
+    },
+    {
+      "description": "design a 2:1 multiplexer with select, d0 and d1 inputs",
+      "answer": {
+        "summary": "Two-to-one multiplexer.",
+        "inputs": [
+          "S",
+          "D0",
+          "D1"
+        ],
+        "outputs": [
+          {
+            "name": "Y",
+            "expression": "(!S & D0) | (S & D1)"
+          }
+        ],
+        "truthTable": [
+          {
+            "output": "Y",
+            "bits": "00110101"
+          }
+        ]
+      }
+    }
+  ]
+}
