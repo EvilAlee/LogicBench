@@ -199,16 +199,16 @@ class TidyCircuitServiceTest {
         PlacedComponent gate = add(schematic, "gate-and", "and", 300, 100, "");
         PlacedComponent output = add(schematic, "output-f", "output", 500, 100, "F");
 
-        Connectivity.PinPosition gateInput0 = pin(schematic, gate.id(), "in0");
-        Connectivity.PinPosition gateInput1 = pin(schematic, gate.id(), "in1");
         Connectivity.PinPosition gateOutput = pin(schematic, gate.id(), "out");
         Connectivity.PinPosition outputInput = pin(schematic, output.id(), "in0");
 
-        schematic.addWire(0, 0, 400, 0);
-        schematic.addWire(400, 0, 400, 140);
-        schematic.addWire(400, 140, 500, 140);
-        schematic.addWire(500, 90, 500, 140);
-        schematic.addWire(270, 90, 500, 90);
+        schematic.addWire(0, 0, 100, 0);
+        schematic.addWire(100, 0, 100, 50);
+        schematic.addWire(100, 50, 400, 50);
+        schematic.addWire(400, 50, 400, 150);
+        schematic.addWire(260, 150, 400, 150);
+        schematic.addWire(260, 90, 260, 150);
+        schematic.addWire(260, 90, 270, 90);
         schematic.addWire(0, 200, 270, 200);
         schematic.addWire(270, 110, 270, 200);
         schematic.addWire(gateOutput.x(), gateOutput.y(),
