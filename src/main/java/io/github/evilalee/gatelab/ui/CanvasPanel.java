@@ -1399,6 +1399,11 @@ public final class CanvasPanel extends JPanel {
                 gateRenderer.render(
                         worldGraphics, definition, component.facing(), x, y);
                 worldGraphics.setComposite(AlphaComposite.SrcOver);
+                if (component.typeId().equals("output")
+                        && schematic.isOutputTapped(component.id())) {
+                    paintTappedOutputRing(
+                            screenGraphics, definition, component.facing(), x, y);
+                }
                 paintComponentLabel(screenGraphics, component, definition, x, y);
 
                 if (selected) {
@@ -1523,6 +1528,35 @@ public final class CanvasPanel extends JPanel {
                     + (metrics.getAscent() - metrics.getDescent()) / 2.0);
             g2.drawString(digit, left, baseline);
         } finally { g2.dispose(); }
+    }
+
+    private void paintTappedOutputRing(
+            Graphics2D graphics,
+            GateDef definition,
+            Facing facing,
+            int originX,
+            int originY) {
+        GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+        Point2D.Double center = transform.worldToScreen(
+                originX + bounds.x() + bounds.width() / 2.0,
+                originY + bounds.y() + bounds.height() / 2.0);
+        int diameter = (int) Math.round(
+                Math.max(bounds.width(), bounds.height()) * transform.scale() + 6.0);
+        Graphics2D ring = (Graphics2D) graphics.create();
+        try {
+            Color foreground = UIManager.getColor("Label.foreground");
+            if (foreground == null) {
+                foreground = UIManager.getColor("Component.borderColor");
+            }
+            ring.setColor(foreground == null ? Color.DARK_GRAY : foreground);
+            ring.setStroke(new BasicStroke(1.0f));
+            ring.drawOval(
+                    (int) Math.round(center.x - diameter / 2.0),
+                    (int) Math.round(center.y - diameter / 2.0),
+                    diameter, diameter);
+        } finally {
+            ring.dispose();
+        }
     }
 
     private static Color valueColor(Value value) {

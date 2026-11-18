@@ -37,6 +37,39 @@ class SchematicTest {
     }
 
     @Test
+    void outputReportsTappedOnlyWhenItsNetAlsoFeedsAGate() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        var source = schematic.add("and", 100, 100, Facing.EAST);
+        var output = schematic.add("output", 300, 110, Facing.EAST);
+
+        Connectivity.PinPosition sourcePin = schematic.pinPositions().stream()
+                .filter(pin -> pin.componentId().equals(source.id())
+                        && pin.pinId().equals("out"))
+                .findFirst().orElseThrow();
+        Connectivity.PinPosition outputPin = schematic.pinPositions().stream()
+                .filter(pin -> pin.componentId().equals(output.id())
+                        && pin.pinId().equals("in0"))
+                .findFirst().orElseThrow();
+        schematic.addWire(
+                sourcePin.x(), sourcePin.y(), outputPin.x(), outputPin.y());
+
+        assertFalse(schematic.isOutputTapped(output.id()),
+                "a probe on a net with only a driving gate is not a tap");
+
+        var consumer = schematic.add("or", 400, 110, Facing.EAST);
+        Connectivity.PinPosition consumerPin = schematic.pinPositions().stream()
+                .filter(pin -> pin.componentId().equals(consumer.id())
+                        && pin.pinId().equals("in0"))
+                .findFirst().orElseThrow();
+        schematic.addWire(
+                outputPin.x(), outputPin.y(), consumerPin.x(), consumerPin.y());
+
+        assertTrue(schematic.isOutputTapped(output.id()),
+                "the probe is a tap when the same net also feeds a gate input");
+        assertThrows(IllegalArgumentException.class, () -> schematic.isOutputTapped(source.id()));
+    }
+
+    @Test
     void optionalLabelsSurviveMoveFacingAndAttributeReplacement() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent input = new PlacedComponent(

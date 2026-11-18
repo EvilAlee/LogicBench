@@ -920,6 +920,41 @@ public final class Schematic {
         return List.copyOf(pins);
     }
 
+    /**
+     * Reports whether an output probe observes a net that also sinks into a gate.
+     * This is derived from current geometry and never stored in the document.
+     */
+    public boolean isOutputTapped(String outputId) {
+        PlacedComponent output = components.get(indexOf(outputId));
+        if (!output.typeId().equals("output")) {
+            throw new IllegalArgumentException("component is not an output: " + outputId);
+        }
+
+        List<Connectivity.PinPosition> pins = pinPositions();
+        Connectivity.PinPosition probeInput = pins.stream()
+                .filter(pin -> pin.componentId().equals(outputId)
+                        && pin.pinId().equals("in0"))
+                .findFirst().orElse(null);
+        if (probeInput == null) {
+            return false;
+        }
+
+        Connectivity.Net outputNet = Connectivity.analyze(pins, wires).nets().stream()
+                .filter(net -> net.pins().contains(probeInput))
+                .findFirst().orElse(null);
+        if (outputNet == null) {
+            return false;
+        }
+
+        Set<String> gateIds = components.stream()
+                .filter(component -> !component.typeId().equals("input")
+                        && !component.typeId().equals("output"))
+                .map(PlacedComponent::id)
+                .collect(java.util.stream.Collectors.toSet());
+        return outputNet.pins().stream().anyMatch(pin ->
+                gateIds.contains(pin.componentId()) && pin.pinId().startsWith("in"));
+    }
+
     private PlacedComponent requireInput(String id) {
         Objects.requireNonNull(id, "id");
         PlacedComponent component = components.get(indexOf(id));
