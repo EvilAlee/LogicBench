@@ -121,6 +121,22 @@ class AiCacheTest {
     }
 
     @Test
+    void cacheOnlyWithoutAnAnswerIsUnavailableRatherThanUnverified() throws Exception {
+        AiCache cache = new AiCache(directory);
+        AiProvider neverCall = (prompt, conversation, schema) -> {
+            fail("cache-only mode must not call the provider");
+            return "";
+        };
+
+        AiCircuitService.Result result = service(neverCall, cache)
+                .generate("A circuit description that is not cached.", true);
+
+        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
+        assertEquals(0, result.attemptCount());
+        assertTrue(result.summary().startsWith("AI unavailable:"));
+    }
+
+    @Test
     void noNetworkFailureCanFallBackToAJustAvailableCacheEntry() throws Exception {
         AiCache cache = new AiCache(directory);
         String description = "Build a two-input AND gate with inputs A and B.";
