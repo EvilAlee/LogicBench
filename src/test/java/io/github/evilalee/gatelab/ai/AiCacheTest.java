@@ -147,6 +147,66 @@ class AiCacheTest {
     }
 
     @Test
+    void preexistingCacheIsUsedOnlyAfterExhaustedTransportFailure() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "Build a two-input AND gate with inputs A and B.";
+        cache.storeVerified(description, AND_ANSWER);
+        int[] calls = {0};
+        List<Long> delays = new java.util.ArrayList<>();
+        AiProvider provider = (prompt, conversation, schema) -> {
+            calls[0]++;
+            throw new IOException("Gemini server error (HTTP 503).");
+        };
+
+        AiCircuitService.Result result = new AiCircuitService(
+                provider, GateLibrary.load().all(), cache, delays::add).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertTrue(result.fromCache());
+        assertEquals(0, result.attemptCount());
+        assertEquals(3, calls[0]);
+        assertEquals(List.of(2_000L, 6_000L), delays);
+        assertTrue(result.attemptLog().stream().anyMatch(line ->
+                line.startsWith("AI unavailable (HTTP 503, model default) - showing cached result")));
+    }
+
+    @Test
+    void rejectedKeyStillFallsBackToPreexistingCache() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "Design an AND function using A and B.";
+        cache.storeVerified(description, AND_ANSWER);
+        List<String> calls = new java.util.ArrayList<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                fail("model-aware overload should be used");
+                return "";
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("primary-model", "fallback-model");
+            }
+
+            @Override
+            public String complete(String model, String prompt,
+                                   List<Turn> conversation, JsonObject schema) throws IOException {
+                calls.add(model);
+                throw new ProviderFailure(ProviderFailure.Kind.KEY_REJECTED,
+                        "API key rejected (HTTP 403).", model, 403);
+            }
+        };
+
+        AiCircuitService.Result result = service(provider, cache).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertTrue(result.fromCache());
+        assertEquals(List.of("primary-model"), calls);
+        assertTrue(result.attemptLog().stream().anyMatch(line ->
+                line.startsWith("AI unavailable (HTTP 403, model primary-model) - showing cached result")));
+    }
+
+    @Test
     void cacheOnlyWithoutAnAnswerIsUnavailableRatherThanUnverified() throws Exception {
         AiCache cache = new AiCache(directory);
         AiProvider neverCall = (prompt, conversation, schema) -> {

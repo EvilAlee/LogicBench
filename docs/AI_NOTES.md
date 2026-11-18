@@ -59,11 +59,56 @@ builds a netlist through \`ExpressionCompiler\`, lays it out through
 with the model's claimed bits. The model's truth table is not trusted as a
 source for circuit construction.
 
-A failed answer is returned to the model with the previous JSON and concrete
-errors (including parser positions or up to eight mismatching rows). There are
-at most three attempts. After three failures, the result is UNVERIFIED and
-retains the attempt with the fewest mismatching rows.
+A model answer that fails verification is returned to the model with the
+previous JSON and concrete errors (including parser positions or up to eight
+mismatching rows). There are at most three verification attempts. After three
+failed answers, the result is UNVERIFIED and retains the attempt with the
+fewest mismatching rows. Provider transport failures are separate: they are
+retried across models/rounds and end as UNAVAILABLE or use a verified cache
+answer; they never consume verification attempts.
 
+
+## Model configuration and transport handling
+
+The configuration file `ai.json` accepts an optional ordered `fallbackModels`
+array. Older files without this property remain valid.
+
+```json
+{
+  "apiKey": "YOUR_KEY",
+  "model": "gemini-3.8-flash",
+  "fallbackModels": ["gemini-3.5-flash-lite", "another-supported-model"]
+}
+```
+
+The primary `model` is tried first, followed by `fallbackModels` in array
+order. Empty entries, duplicates, and a duplicate of the primary model are
+ignored. `GEMINI_MODEL` still overrides the primary model from the file; the
+fallback list remains file-configured.
+
+A model round calls each model not already marked unavailable once. HTTP 404
+marks only that model skipped for the rest of the current circuit-generation
+request. HTTP 429, HTTP 5xx, request timeout, DNS/unknown-host, and connection
+failures move to the next model. If all remaining models fail retryably, the
+service waits **2 seconds** and tries another round, then waits **6 seconds**
+before the final round. There are at most two retry rounds. The wait is
+interruptible, so Cancel interrupts it. HTTP 401/403 and an HTTP 400 response
+that identifies an invalid API key stop immediately; trying another model
+cannot repair the same rejected credential.
+
+The HTTP connect timeout is **5 seconds** and each request timeout is
+**20 seconds**.
+
+### Result statuses
+
+- **VERIFIED** — a model answered and the engine verified its expressions and truth table. The result header names the model, for example `VERIFIED via gemini-3.5-flash-lite`.
+- **UNVERIFIED** — a model answer arrived, but the answer failed expression/schema/engine verification after up to three verification attempts. The best attempted answer is retained for review.
+- **FROM CACHE** — the displayed answer came from the user cache or bundled cache after cache-only mode, or after live provider failure. The cached answer is engine-verified before display. Following a live provider failure, the result header shows the reason and model, e.g. `AI unavailable (HTTP 503, model gemini-3.8-flash) - showing cached result`.
+- **UNAVAILABLE** — no usable model answer or valid cache answer is available, or the API key was rejected. No circuit is placeable on this result.
+
+Live mode tries the configured models before looking for a cache fallback. On exhausted transport failure or rejected credentials, it looks up the normalized description in the user cache first, then the bundled cache. Cache-only mode checks those same caches immediately and makes no network request. A miss returns UNAVAILABLE.
+
+The Test connection action runs off the Swing EDT. It tries the primary model and then each configured fallback model, reports one line per model with its HTTP status (or a no-response reason), and stops immediately on key rejection. 429/503 messages name the affected model. The configured API key is redacted from diagnostics and UI text; it is only sent in the Gemini request header and stored in `ai.json`.
 
 ## Current prompt text
 

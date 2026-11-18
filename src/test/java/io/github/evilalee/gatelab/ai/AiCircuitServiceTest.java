@@ -273,37 +273,39 @@ class AiCircuitServiceTest {
     }
 
     @Test
-    void keyRejectionStopsWithoutRetryingOrTryingFallbackModels() throws Exception {
-        List<String> calls = new ArrayList<>();
-        List<Long> delays = new ArrayList<>();
-        AiProvider provider = new AiProvider() {
-            @Override
-            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
-                fail("model-aware overload should be used");
-                return "";
-            }
+    void keyRejection401And403StopWithoutRetryingOrTryingFallbackModels() throws Exception {
+        for (int status : List.of(401, 403)) {
+            List<String> calls = new ArrayList<>();
+            List<Long> delays = new ArrayList<>();
+            AiProvider provider = new AiProvider() {
+                @Override
+                public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                    fail("model-aware overload should be used");
+                    return "";
+                }
 
-            @Override
-            public List<String> models() {
-                return List.of("primary-model", "fallback-model");
-            }
+                @Override
+                public List<String> models() {
+                    return List.of("primary-model", "fallback-model");
+                }
 
-            @Override
-            public String complete(String model, String prompt,
-                                   List<Turn> conversation, JsonObject schema) throws IOException {
-                calls.add(model);
-                throw new ProviderFailure(ProviderFailure.Kind.KEY_REJECTED,
-                        "API key rejected (HTTP 401).", model, 401);
-            }
-        };
+                @Override
+                public String complete(String model, String prompt,
+                                       List<Turn> conversation, JsonObject schema) throws IOException {
+                    calls.add(model);
+                    throw new ProviderFailure(ProviderFailure.Kind.KEY_REJECTED,
+                            "API key rejected (HTTP " + status + ").", model, status);
+                }
+            };
 
-        AiCircuitService.Result result = service(provider, null, delays).generate("Make a circuit.");
+            AiCircuitService.Result result = service(provider, null, delays).generate("Make a circuit.");
 
-        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
-        assertTrue(result.summary().contains("API key rejected (HTTP 401)"));
-        assertEquals(List.of("primary-model"), calls);
-        assertTrue(delays.isEmpty());
-        assertEquals(0, result.attemptCount());
+            assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
+            assertTrue(result.summary().contains("API key rejected (HTTP " + status + ")"));
+            assertEquals(List.of("primary-model"), calls);
+            assertTrue(delays.isEmpty());
+            assertEquals(0, result.attemptCount());
+        }
     }
 
     @Test
@@ -334,6 +336,42 @@ class AiCircuitServiceTest {
         assertThrows(InterruptedException.class, () -> service.generate("Make a circuit."));
         assertEquals(1, calls[0]);
         assertEquals(List.of(2_000L), waits);
+    }
+
+    @Test
+    void transportFailureDuringVerificationRetryReturnsUnavailableNotUnverified() throws Exception {
+        int[] calls = {0};
+        List<Long> delays = new ArrayList<>();
+        AiProvider provider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                fail("model-aware overload should be used");
+                return "";
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("working-model");
+            }
+
+            @Override
+            public String complete(String model, String prompt,
+                                   List<Turn> conversation, JsonObject schema) throws IOException {
+                if (calls[0]++ == 0) return andAnswer("0000");
+                throw new ProviderFailure(ProviderFailure.Kind.RETRYABLE,
+                        "Gemini server error (HTTP 503).", model, 503);
+            }
+        };
+
+        AiCircuitService.Result result = service(provider, null, delays).generate(
+                "Build a two-input AND gate with inputs A and B.");
+
+        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
+        assertEquals(1, result.attemptCount());
+        assertNull(result.netlist());
+        assertEquals(4, calls[0]);
+        assertEquals(List.of(2_000L, 6_000L), delays);
+        assertTrue(result.summary().startsWith("AI unavailable:"));
     }
 
     @Test

@@ -291,9 +291,9 @@ public final class AiCircuitService {
             }
         }
 
-        Result cached = cachedResult(safeDescription, log, "Using", 0);
-        if (cached != null) return cached;
         if (cacheOnly) {
+            Result cached = cachedResult(safeDescription, log, "Using", 0);
+            if (cached != null) return cached;
             log.add("AI unavailable: cache-only mode is enabled and no valid cached answer exists.");
             return new Result(0, Status.UNAVAILABLE,
                     "AI unavailable: no valid cached answer is available offline.",
