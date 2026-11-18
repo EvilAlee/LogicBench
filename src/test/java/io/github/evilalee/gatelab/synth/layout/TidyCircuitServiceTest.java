@@ -8,7 +8,7 @@ import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
-import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import org.junit.jupiter.api.Test;
 
@@ -69,8 +69,8 @@ class TidyCircuitServiceTest {
     }
 
     @Test
-    void handBuiltCrossingCircuitRemainsEquivalentAndKeepsCrossingNetsSeparate() {
-        Schematic schematic = simpleCircuit(Facing.NORTH);
+    void handBuiltMessyCircuitWithCrossingWiresRemainsEquivalentAfterTidy() {
+        Schematic schematic = crossingCircuit();
         Connectivity.Result topology = Connectivity.analyze(
                 schematic.pinPositions(), schematic.wires());
         Connectivity.Net inputNet = topology.nets().stream()
@@ -81,6 +81,14 @@ class TidyCircuitServiceTest {
                 pin.componentId().equals("gate-and") && pin.pinId().equals("in0")));
         assertFalse(inputNet.pins().stream().anyMatch(pin ->
                 pin.componentId().equals("gate-and") && pin.pinId().equals("out")));
+
+        Connectivity.Point crossing = new Connectivity.Point(400, 100);
+        assertTrue(schematic.wires().stream().filter(wire -> wire.isVertical())
+                .anyMatch(wire -> crossing.x() == wire.x1()
+                        && crossing.y() > wire.y1() && crossing.y() < wire.y2()));
+        assertTrue(schematic.wires().stream().filter(WireSegment::isHorizontal)
+                .anyMatch(wire -> crossing.y() == wire.y1()
+                        && crossing.x() > wire.x1() && crossing.x() < wire.x2()));
 
         TidyCircuitService.TidyResult result =
                 TidyCircuitService.tidy(schematic, DEFINITIONS);
@@ -182,6 +190,31 @@ class TidyCircuitServiceTest {
                 "and", 100, 100, Facing.EAST,
                 Map.of("size", "normal", "inputs", "3"));
         assertRefusal(unsupportedArity, threeInputDefinitions, "Unsupported input count");
+    }
+
+    private static Schematic crossingCircuit() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent inputA = add(schematic, "input-a", "input", 0, 0, "A");
+        PlacedComponent inputB = add(schematic, "input-b", "input", 0, 200, "B");
+        PlacedComponent gate = add(schematic, "gate-and", "and", 300, 100, "");
+        PlacedComponent output = add(schematic, "output-f", "output", 500, 100, "F");
+
+        Connectivity.PinPosition gateInput0 = pin(schematic, gate.id(), "in0");
+        Connectivity.PinPosition gateInput1 = pin(schematic, gate.id(), "in1");
+        Connectivity.PinPosition gateOutput = pin(schematic, gate.id(), "out");
+        Connectivity.PinPosition outputInput = pin(schematic, output.id(), "in0");
+
+        schematic.addWire(0, 0, 400, 0);
+        schematic.addWire(400, 0, 400, 140);
+        schematic.addWire(400, 140, 500, 140);
+        schematic.addWire(500, 90, 500, 140);
+        schematic.addWire(270, 90, 500, 90);
+        schematic.addWire(0, 200, 270, 200);
+        schematic.addWire(270, 110, 270, 200);
+        schematic.addWire(gateOutput.x(), gateOutput.y(),
+                outputInput.x(), outputInput.y());
+        schematic.setInputValue(inputB.id(), true);
+        return schematic;
     }
 
     private static Schematic simpleCircuit(Facing facing) {

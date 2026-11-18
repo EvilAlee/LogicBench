@@ -7,6 +7,7 @@ import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.Netlist;
 import org.junit.jupiter.api.DynamicTest;
@@ -132,6 +133,8 @@ class SchematicLayoutTest {
                             + " mismatches=" + verification.mismatches());
             assertTrue(compilation.netlist().inputs().size() <= 5);
             assertNoComponentOverlaps(placed.schematic());
+            assertNoDanglingWireEndpoints(placed.schematic());
+            assertTrunksSpanExactlyTheirConnectedRows(placed.schematic());
 
             LayoutMetrics actual = dimensions(placed.schematic());
             LayoutMetrics legacy = legacyMetrics(compilation.netlist());
@@ -432,6 +435,63 @@ class SchematicLayoutTest {
         return new GateGeometry.Bounds(
                 component.x() + local.x(), component.y() + local.y(),
                 local.width(), local.height());
+    }
+
+    private static void assertNoDanglingWireEndpoints(Schematic schematic) {
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        for (Connectivity.Net net : topology.nets()) {
+            for (WireSegment wire : net.segments()) {
+                assertEndpointConnected(schematic, net, wire, wire.x1(), wire.y1());
+                assertEndpointConnected(schematic, net, wire, wire.x2(), wire.y2());
+            }
+        }
+    }
+
+    private static void assertEndpointConnected(
+            Schematic schematic,
+            Connectivity.Net net,
+            WireSegment wire,
+            int x,
+            int y) {
+        boolean componentPin = schematic.pinPositions().stream()
+                .anyMatch(pin -> pin.x() == x && pin.y() == y);
+        boolean sameNetWire = net.segments().stream()
+                .anyMatch(other -> !other.equals(wire) && contains(other, x, y));
+        assertTrue(componentPin || sameNetWire,
+                "dangling endpoint (" + x + ", " + y + ") on " + wire);
+    }
+
+    private static void assertTrunksSpanExactlyTheirConnectedRows(Schematic schematic) {
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        for (Connectivity.Net net : topology.nets()) {
+            for (WireSegment trunk : net.segments()) {
+                if (trunk.isHorizontal()) {
+                    continue;
+                }
+                List<Integer> connectedRows = net.segments().stream()
+                        .filter(WireSegment::isHorizontal)
+                        .filter(branch -> branch.x1() == trunk.x1()
+                                || branch.x2() == trunk.x1())
+                        .map(WireSegment::y1)
+                        .toList();
+                assertFalse(connectedRows.isEmpty(),
+                        "vertical trunk has no connected horizontal branches: " + trunk);
+                int low = connectedRows.stream().mapToInt(Integer::intValue).min().orElseThrow();
+                int high = connectedRows.stream().mapToInt(Integer::intValue).max().orElseThrow();
+                assertEquals(low, Math.min(trunk.y1(), trunk.y2()),
+                        "trunk begins at its lowest connected branch: " + trunk);
+                assertEquals(high, Math.max(trunk.y1(), trunk.y2()),
+                        "trunk ends at its highest connected branch: " + trunk);
+            }
+        }
+    }
+
+    private static boolean contains(WireSegment wire, int x, int y) {
+        return wire.isHorizontal()
+                ? y == wire.y1() && x >= wire.x1() && x <= wire.x2()
+                : x == wire.x1() && y >= wire.y1() && y <= wire.y2();
     }
 
     private static String randomExpression(Random random, int depth) {
