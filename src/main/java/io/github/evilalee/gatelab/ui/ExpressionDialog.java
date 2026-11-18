@@ -142,10 +142,16 @@ public final class ExpressionDialog extends JDialog {
                     ExpressionCompiler.compile(expressionText.getText());
             currentCompilation = compilation;
             List<String> variables = compilation.netlist().inputs();
-            statusLine.setForeground(labelForeground());
-            statusLine.setText(variables.isEmpty()
-                    ? "Variables: none"
-                    : "Variables: " + String.join(", ", variables));
+            String reuseHint = outputReuseHint(compilation);
+            if (reuseHint != null) {
+                statusLine.setForeground(hintForeground());
+                statusLine.setText(reuseHint);
+            } else {
+                statusLine.setForeground(labelForeground());
+                statusLine.setText(variables.isEmpty()
+                        ? "Variables: none"
+                        : "Variables: " + String.join(", ", variables));
+            }
 
             if (variables.size() > TABLE_INPUT_LIMIT) {
                 tableNote.setText("Truth table preview is limited to 10 inputs; "
@@ -217,9 +223,35 @@ public final class ExpressionDialog extends JDialog {
         }
     }
 
+    static String outputReuseHint(ExpressionCompiler.Compilation compilation) {
+        Objects.requireNonNull(compilation, "compilation");
+        if (compilation.reusedOutputNames().isEmpty()) {
+            return null;
+        }
+        return compilation.reusedOutputNames().getFirst()
+                + " is both an output and used by later lines. "
+                + "Use := for an internal signal with no pin.";
+    }
+
     private static Color labelForeground() {
         Color color = UIManager.getColor("Label.foreground");
         return color == null ? Color.DARK_GRAY : color;
+    }
+
+    private static Color hintForeground() {
+        Color color = UIManager.getColor("Actions.Yellow");
+        if (color != null) {
+            return color;
+        }
+        color = UIManager.getColor("Component.warning.focusColor");
+        if (color != null) {
+            return color;
+        }
+        Color background = UIManager.getColor("Panel.background");
+        boolean darkBackground = background != null
+                && (background.getRed() * 299 + background.getGreen() * 587
+                        + background.getBlue() * 114) / 1000 < 128;
+        return darkBackground ? new Color(255, 196, 92) : new Color(145, 88, 0);
     }
 
     private static final class TruthTableModel extends AbstractTableModel {
