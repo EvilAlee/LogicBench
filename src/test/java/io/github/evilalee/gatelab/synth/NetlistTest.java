@@ -106,13 +106,15 @@ class NetlistTest {
     }
 
     @Test
-    void rejectsMoreThanTwelveInputs() {
+    void netlistsAboveTwelveInputsRemainAvailableForSchematicLayout() {
         List<String> inputs = java.util.stream.IntStream.range(0, 13)
                 .mapToObj(index -> "A" + index).toList();
-        assertInvalid(
-                () -> new Netlist(inputs,
-                        List.of(new Netlist.Output("F", "A0")), List.of()),
-                "maximum is 12");
+        Netlist netlist = new Netlist(inputs,
+                List.of(new Netlist.Output("F", "A0")), List.of());
+        assertEquals(13, netlist.inputs().size());
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class, () -> TruthTableGenerator.generate(netlist));
+        assertTrue(exception.getMessage().contains("at most 12"));
     }
 
     @Test

@@ -22,6 +22,10 @@ public final class TruthTableGenerator {
 
     public static TruthTable generate(Netlist netlist) {
         Objects.requireNonNull(netlist, "netlist");
+        if (netlist.inputs().size() > 12) {
+            throw new IllegalArgumentException(
+                    "truth-table generation supports at most 12 inputs");
+        }
 
         Circuit circuit = new Circuit();
         Map<String, InputPin> inputComponents = new LinkedHashMap<>();

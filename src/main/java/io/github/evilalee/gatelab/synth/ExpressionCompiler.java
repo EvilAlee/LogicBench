@@ -67,6 +67,11 @@ public final class ExpressionCompiler {
             variables.addAll(named.expression().variables());
         }
 
+        if (variables.size() > 12) {
+            throw new IllegalArgumentException(
+                    "netlist has " + variables.size() + " inputs; maximum is 12");
+        }
+
         Builder builder = new Builder(variables);
         List<Netlist.Output> outputs = new ArrayList<>();
         for (NamedExpression expression : expressions) {
