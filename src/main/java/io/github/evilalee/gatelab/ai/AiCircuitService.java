@@ -270,10 +270,10 @@ public final class AiCircuitService {
             }
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
-            feedbackLines.addAll(current.mismatchRows());
+            feedbackLines.addAll(current.mismatchRows().stream().limit(8).toList());
             String feedback = String.join("\n", feedbackLines);
             if (!current.mismatchRows().isEmpty()) {
-                log.add("Mismatch at rows " + String.join("; ", current.mismatchRows())
+                log.add("Mismatch at rows " + String.join("; ", current.mismatchRows().stream().limit(8).toList())
                         + (attemptNumber < MAX_ATTEMPTS ? ", retrying" : ""));
             } else {
                 log.add("Validation failed: " + feedback
@@ -541,7 +541,7 @@ public final class AiCircuitService {
                 }
             }
         }
-        return mismatches.stream().limit(8).toList();
+        return List.copyOf(mismatches);
     }
 
     private static String stripCodeFence(String text) {

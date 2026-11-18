@@ -159,6 +159,16 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void expressionLengthOverOneThousandIsRejectedByTheSchemaValidator() throws Exception {
+        String oversized = "A".repeat(AiCircuitService.MAX_EXPRESSION_LENGTH + 1);
+        ScriptedProvider provider = new ScriptedProvider(
+                answer(List.of("A"), List.of(new Output("F", oversized)), "01"));
+        AiCircuitService.Result result = service(provider).generate("Build a circuit from this description.");
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("exceeds 1000 characters")));
+    }
+
+    @Test
     void parsableExpressionDescriptionSkipsTheProviderEntirely() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate("F = A & B");
