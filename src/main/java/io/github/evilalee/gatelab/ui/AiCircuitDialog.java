@@ -25,6 +25,8 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -83,6 +85,11 @@ public final class AiCircuitDialog extends JDialog {
         description.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         description.setLineWrap(true);
         description.setWrapStyleWord(true);
+        description.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
+        });
         JScrollPane descriptionScroll = new JScrollPane(description);
         descriptionScroll.setBorder(BorderFactory.createTitledBorder("Circuit description"));
         top.add(descriptionScroll, BorderLayout.CENTER);
@@ -190,6 +197,7 @@ public final class AiCircuitDialog extends JDialog {
         placeButton.setEnabled(false);
         generateButton.setEnabled(false);
         testConnectionButton.setEnabled(false);
+        description.setEditable(false);
         statusBadge.setText("WORKING");
         summary.setText("Generating and verifying...");
         appendLog("Starting generation.");
@@ -203,6 +211,7 @@ public final class AiCircuitDialog extends JDialog {
             protected void done() {
                 activeWorker = null;
                 generateButton.setEnabled(true);
+                description.setEditable(true);
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
                     currentResult = get();
@@ -222,6 +231,17 @@ public final class AiCircuitDialog extends JDialog {
             }
         };
         activeWorker.execute();
+    }
+
+    private void invalidateResult() {
+        if (activeWorker != null) return;
+        currentResult = null;
+        placeButton.setEnabled(false);
+        expressionsArea.setText("");
+        tableModel.setTable(null);
+        summary.setText(" ");
+        statusBadge.setText("READY");
+        statusBadge.setBackground(new Color(235, 235, 235));
     }
 
     private void showResult(AiCircuitService.Result result) {
