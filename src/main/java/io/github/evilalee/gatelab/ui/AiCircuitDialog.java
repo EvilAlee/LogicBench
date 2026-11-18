@@ -254,6 +254,9 @@ public final class AiCircuitDialog extends JDialog {
         } else if (result.status() == AiCircuitService.Status.VERIFIED) {
             statusBadge.setText("VERIFIED");
             statusBadge.setBackground(new Color(215, 240, 220));
+        } else if (result.status() == AiCircuitService.Status.UNAVAILABLE) {
+            statusBadge.setText("UNAVAILABLE");
+            statusBadge.setBackground(new Color(250, 235, 195));
         } else {
             statusBadge.setText("UNVERIFIED");
             statusBadge.setBackground(new Color(250, 225, 205));
@@ -378,7 +381,7 @@ public final class AiCircuitDialog extends JDialog {
                     showFailure("Connection test interrupted.");
                 } catch (ExecutionException exception) {
                     Throwable cause = exception.getCause();
-                    showFailure(cause == null ? "Connection test failed." : safeMessage(cause));
+                    showFailure(cause == null ? "Connection test failed." : connectionFailureMessage(cause));
                 }
             }
         };
@@ -400,6 +403,14 @@ public final class AiCircuitDialog extends JDialog {
             activeWorker.cancel(true);
             activeWorker = null;
         }
+    }
+
+    private String connectionFailureMessage(Throwable cause) {
+        String message = safeMessage(cause);
+        if (message.contains("HTTP 429") || message.contains("HTTP 503")) {
+            return message + " Model in use: " + config.model();
+        }
+        return message;
     }
 
     private void showFailure(String message) {

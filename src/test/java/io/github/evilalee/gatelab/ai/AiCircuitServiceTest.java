@@ -4,7 +4,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +16,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AiCircuitServiceTest {
+    @TempDir Path directory;
+
     private record Output(String name, String expression) { }
 
     private static final class ScriptedProvider implements AiProvider {
@@ -35,6 +40,10 @@ class AiCircuitServiceTest {
 
     private static AiCircuitService service(ScriptedProvider provider) {
         return new AiCircuitService(provider, GateLibrary.load().all());
+    }
+
+    private AiCircuitService service(AiProvider provider, AiCache cache, List<Long> delays) {
+        return new AiCircuitService(provider, GateLibrary.load().all(), cache, delays::add);
     }
 
     private static String answer(List<String> inputs, List<Output> outputs, String... bits) {
@@ -100,6 +109,87 @@ class AiCircuitServiceTest {
         assertEquals("F", result.expressions().getFirst().name());
         assertNotNull(result.netlist());
         assertNotNull(result.truthTable());
+    }
+
+    @Test
+    void transient503ThenSuccessUsesOneVerificationAttemptAndRetriesSameRequest() throws Exception {
+        int[] calls = {0};
+        List<Long> delays = new ArrayList<>();
+        AiProvider provider = (prompt, conversation, schema) -> {
+            if (calls[0]++ == 0) throw new IOException("Gemini server error (HTTP 503).");
+            return andAnswer("0001");
+        };
+
+        AiCircuitService.Result result = service(provider, null, delays).generate(
+                "Build a two-input AND gate with inputs A and B.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, result.attemptCount());
+        assertEquals(2, calls[0]);
+        assertEquals(List.of(2_000L), delays);
+    }
+
+    @Test
+    void repeated503FallsBackToCacheAndShowsUnavailableNotice() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "Build a two-input AND gate with inputs A and B.";
+        int[] calls = {0};
+        List<Long> delays = new ArrayList<>();
+        AiProvider provider = (prompt, conversation, schema) -> {
+            calls[0]++;
+            cache.storeVerified(description, andAnswer("0001"));
+            throw new IOException("Gemini server error (HTTP 503).");
+        };
+
+        AiCircuitService.Result result = service(provider, cache, delays).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertTrue(result.fromCache());
+        assertEquals(0, result.attemptCount());
+        assertEquals(3, calls[0]);
+        assertEquals(List.of(2_000L, 6_000L), delays);
+        assertTrue(result.attemptLog().contains("AI unavailable, using cached answer"));
+    }
+
+    @Test
+    void repeated503WithoutCacheReturnsUnavailableRatherThanUnverified() throws Exception {
+        int[] calls = {0};
+        List<Long> delays = new ArrayList<>();
+        AiProvider provider = (prompt, conversation, schema) -> {
+            calls[0]++;
+            throw new IOException("Gemini server error (HTTP 503).");
+        };
+
+        AiCircuitService.Result result = service(provider, null, delays).generate(
+                "Build a two-input AND gate with inputs A and B.");
+
+        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
+        assertEquals(0, result.attemptCount());
+        assertNull(result.netlist());
+        assertTrue(result.summary().startsWith("AI unavailable: "));
+        assertTrue(result.summary().contains("HTTP 503"));
+        assertEquals(3, calls[0]);
+        assertEquals(List.of(2_000L, 6_000L), delays);
+    }
+
+    @Test
+    void repeated429ReturnsTheRequestedRateLimitHint() throws Exception {
+        int[] calls = {0};
+        List<Long> delays = new ArrayList<>();
+        AiProvider provider = (prompt, conversation, schema) -> {
+            calls[0]++;
+            throw new IOException("Gemini rate limit or quota reached (HTTP 429). "
+                    + "Rate limit reached, try again in a minute or switch model in ai.json.");
+        };
+
+        AiCircuitService.Result result = service(provider, null, delays).generate(
+                "Build a two-input AND gate with inputs A and B.");
+
+        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
+        assertTrue(result.summary().contains(
+                "Rate limit reached, try again in a minute or switch model in ai.json"));
+        assertEquals(3, calls[0]);
+        assertEquals(List.of(2_000L, 6_000L), delays);
     }
 
     @Test

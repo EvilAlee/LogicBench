@@ -53,13 +53,13 @@ public final class GeminiProvider implements AiProvider {
             String systemPrompt, List<Turn> conversation, JsonObject schema)
             throws IOException, InterruptedException {
         JsonObject first = requestBody(systemPrompt, conversation, schema, 0);
-        HttpResponse<String> response = sendWithRateLimitRetry(first);
+        HttpResponse<String> response = send(first);
         if (response.statusCode() == 400 && mentionsResponseFormat(response.body())) {
             JsonObject older = requestBody(systemPrompt, conversation, schema, 1);
-            response = sendWithRateLimitRetry(older);
+            response = send(older);
             if (response.statusCode() == 400) {
                 JsonObject withoutSchema = requestBody(systemPrompt, conversation, null, 2);
-                response = sendWithRateLimitRetry(withoutSchema);
+                response = send(withoutSchema);
             }
         }
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -70,16 +70,6 @@ public final class GeminiProvider implements AiProvider {
         } catch (RuntimeException exception) {
             throw new IOException("Gemini returned an invalid response.");
         }
-    }
-
-    private HttpResponse<String> sendWithRateLimitRetry(JsonObject body)
-            throws IOException, InterruptedException {
-        HttpResponse<String> response = send(body);
-        if (response.statusCode() == 429 || response.statusCode() == 503) {
-            Thread.sleep(2_000);
-            response = send(body);
-        }
-        return response;
     }
 
     private HttpResponse<String> send(JsonObject body)
@@ -155,7 +145,8 @@ public final class GeminiProvider implements AiProvider {
             case 400 -> new IOException("Gemini rejected the request (HTTP 400).");
             case 401, 403 -> new IOException("Gemini API key rejected (HTTP " + status + ").");
             case 404 -> new IOException("Gemini model not found; check the model name (HTTP 404).");
-            case 429 -> new IOException("Gemini rate limit or quota reached (HTTP 429).");
+            case 429 -> new IOException("Gemini rate limit or quota reached (HTTP 429). "
+                    + "Rate limit reached, try again in a minute or switch model in ai.json.");
             default -> status >= 500
                     ? new IOException("Gemini server error (HTTP " + status + ").")
                     : new IOException("Gemini request failed (HTTP " + status + ").");

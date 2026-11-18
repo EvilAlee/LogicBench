@@ -37,7 +37,14 @@ public final class AiCircuitService {
     public static final int MAX_GATES = 200;
     public static final int MAX_ATTEMPTS = 3;
 
-    public enum Status { VERIFIED, UNVERIFIED }
+    public enum Status { VERIFIED, UNVERIFIED, UNAVAILABLE }
+
+    @FunctionalInterface
+    interface RetryDelay {
+        void pause(long milliseconds) throws InterruptedException;
+    }
+
+    private static final long[] TRANSPORT_RETRY_DELAYS_MILLIS = {2_000, 6_000};
 
     public record Result(
             int attemptCount,
@@ -84,15 +91,22 @@ public final class AiCircuitService {
     private final AiProvider provider;
     private final SchematicLayout layoutBuilder;
     private final AiCache cache;
+    private final RetryDelay retryDelay;
 
     public AiCircuitService(AiProvider provider, Collection<GateDef> definitions) {
         this(provider, definitions, null);
     }
 
     public AiCircuitService(AiProvider provider, Collection<GateDef> definitions, AiCache cache) {
+        this(provider, definitions, cache, Thread::sleep);
+    }
+
+    AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
+                     AiCache cache, RetryDelay retryDelay) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.layoutBuilder = new SchematicLayout(Objects.requireNonNull(definitions, "definitions"));
         this.cache = cache;
+        this.retryDelay = Objects.requireNonNull(retryDelay, "retryDelay");
     }
 
     /** JSON schema sent to Gemini for structured output. */
@@ -272,22 +286,17 @@ public final class AiCircuitService {
             log.add("Attempt " + attemptNumber + ": asking model");
             String raw;
             try {
-                raw = provider.complete(systemPrompt(), List.copyOf(conversation), responseSchema());
+                raw = completeWithTransportRetry(conversation, log);
             } catch (IOException exception) {
                 String error = safeProviderError(exception);
-                log.add("Attempt " + attemptNumber + ": " + error);
-                if (error.toLowerCase(java.util.Locale.ROOT).contains("no network")) {
-                    Result fallback = cachedResult(description, log,
-                            "No network connection; falling back to", attemptNumber);
-                    if (fallback != null) return fallback;
-                }
-                conversation.add(new Turn(Turn.Role.USER,
-                        "The previous request failed: " + error
-                                + " Return a valid JSON answer for the original circuit description."));
-                if (attemptNumber == MAX_ATTEMPTS) {
-                    break;
-                }
-                continue;
+                Result fallback = cachedResult(description, log,
+                        "AI unavailable, using cached answer", attemptNumber - 1);
+                if (fallback != null) return fallback;
+
+                log.add("AI unavailable: " + error);
+                return new Result(attemptNumber - 1, Status.UNAVAILABLE,
+                        "AI unavailable: " + error, List.of(), null, null, null,
+                        List.of(), log, false);
             }
             conversation.add(new Turn(Turn.Role.MODEL, raw));
             Attempt current = validate(raw);
@@ -330,10 +339,39 @@ public final class AiCircuitService {
         }
 
         if (best == null) {
-            return new Result(MAX_ATTEMPTS, Status.UNVERIFIED, "No valid model answer was received.",
+            return new Result(0, Status.UNAVAILABLE, "AI unavailable: no model answer was received.",
                     List.of(), null, null, null, List.of(), log, false);
         }
         return result(MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false);
+    }
+
+    private String completeWithTransportRetry(List<Turn> conversation, List<String> log)
+            throws IOException, InterruptedException {
+        for (int retry = 0; ; retry++) {
+            try {
+                // A transport retry repeats the exact same request and conversation.
+                return provider.complete(systemPrompt(), List.copyOf(conversation), responseSchema());
+            } catch (IOException exception) {
+                if (!isRetryableTransportFailure(exception)
+                        || retry >= TRANSPORT_RETRY_DELAYS_MILLIS.length) {
+                    throw exception;
+                }
+                long delay = TRANSPORT_RETRY_DELAYS_MILLIS[retry];
+                log.add("AI transport unavailable; retrying the same request in "
+                        + (delay / 1_000) + " seconds.");
+                retryDelay.pause(delay);
+            }
+        }
+    }
+
+    private static boolean isRetryableTransportFailure(IOException exception) {
+        String message = safeProviderError(exception).toLowerCase(java.util.Locale.ROOT);
+        return message.contains("no network connection")
+                || message.contains("timed out")
+                || message.contains("timeout")
+                || message.contains("http 429")
+                || message.contains("server error")
+                || message.matches("(?s).*http 5[0-9]{2}.*");
     }
 
     private static boolean isExpressionSource(String source) {
@@ -389,7 +427,12 @@ public final class AiCircuitService {
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
             if (cachedAttempt.errors().isEmpty()) {
                 int rows = cachedAttempt.truthTable().rows().size();
-                log.add(prefix + " " + source + " cache.");
+                if (prefix.startsWith("AI unavailable")) {
+                    log.add(prefix);
+                    log.add("Using " + source + " cache.");
+                } else {
+                    log.add(prefix + " " + source + " cache.");
+                }
                 log.add("FROM CACHE: Verified " + rows + "/" + rows + " rows");
                 return result(attemptCount, Status.VERIFIED, cachedAttempt, log, true);
             }

@@ -124,16 +124,21 @@ class AiCacheTest {
     void noNetworkFailureCanFallBackToAJustAvailableCacheEntry() throws Exception {
         AiCache cache = new AiCache(directory);
         String description = "Build a two-input AND gate with inputs A and B.";
+        int[] calls = {0};
+        List<Long> delays = new java.util.ArrayList<>();
         AiProvider provider = (prompt, conversation, schema) -> {
+            calls[0]++;
             cache.storeVerified(description, AND_ANSWER);
             throw new IOException("No network connection to Gemini.");
         };
-        AiCircuitService.Result result = service(provider, cache).generate(description);
+        AiCircuitService.Result result = new AiCircuitService(
+                provider, GateLibrary.load().all(), cache, delays::add).generate(description);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertTrue(result.fromCache());
-        assertEquals(1, result.attemptCount());
-        assertTrue(result.attemptLog().stream()
-                .anyMatch(line -> line.contains("No network connection; falling back to user cache")));
+        assertEquals(0, result.attemptCount());
+        assertEquals(3, calls[0]);
+        assertEquals(List.of(2_000L, 6_000L), delays);
+        assertTrue(result.attemptLog().contains("AI unavailable, using cached answer"));
     }
 }

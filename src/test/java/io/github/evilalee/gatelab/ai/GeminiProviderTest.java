@@ -164,15 +164,22 @@ class GeminiProviderTest {
     }
 
     @Test
-    void retries429And503ExactlyOnce() throws Exception {
+    void returns429And503ToTheServiceRetryLayerWithoutLocalRetry() throws Exception {
         for (int status : List.of(429, 503)) {
             AtomicInteger count = new AtomicInteger();
             try (ServerFixture fixture = server(exchange -> {
-                if (count.incrementAndGet() == 1) respond(exchange, status, "{}");
-                else respond(exchange, 200, success("{\"ok\":1}"));
+                count.incrementAndGet();
+                respond(exchange, status, "{}");
             })) {
-                assertEquals("{\"ok\":1}", complete(provider(fixture.baseUrl())));
-                assertEquals(2, count.get());
+                IOException error = assertThrows(IOException.class,
+                        () -> complete(provider(fixture.baseUrl())));
+                assertEquals(1, count.get());
+                if (status == 429) {
+                    assertTrue(error.getMessage().contains(
+                            "Rate limit reached, try again in a minute or switch model in ai.json"));
+                } else {
+                    assertTrue(error.getMessage().contains("server error (HTTP 503)"));
+                }
             }
         }
     }
