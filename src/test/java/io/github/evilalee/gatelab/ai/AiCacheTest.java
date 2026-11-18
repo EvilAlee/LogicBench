@@ -156,6 +156,6 @@ class AiCacheTest {
         assertEquals(3, calls[0]);
         assertEquals(List.of(2_000L, 6_000L), delays);
         assertTrue(result.attemptLog().stream().anyMatch(line ->
-                line.startsWith("AI unavailable (HTTP 503, model default) - showing cached result")));
+                line.startsWith("AI unavailable (No network connection to Gemini., model default) - showing cached result")));
     }
 }
