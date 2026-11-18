@@ -88,8 +88,8 @@ public final class SchematicNetlistExtractor {
                     "Tidy circuit requires at least one Output component.");
         }
 
-        Map<String, String> inputNames = assignNames(inputs, "In");
-        Map<String, String> outputNames = assignNames(outputs, "Out");
+        Map<String, String> inputNames = assignNames(inputs, "In", true);
+        Map<String, String> outputNames = assignNames(outputs, "Out", false);
         Map<String, String> inputIds = new LinkedHashMap<>();
         Map<String, String> outputIds = new LinkedHashMap<>();
         for (PlacedComponent input : inputs) {
@@ -205,7 +205,9 @@ public final class SchematicNetlistExtractor {
     }
 
     private static Map<String, String> assignNames(
-            List<PlacedComponent> components, String generatedPrefix) {
+            List<PlacedComponent> components,
+            String generatedPrefix,
+            boolean allowLiteralConstantLabels) {
         Map<String, String> names = new LinkedHashMap<>();
         Set<String> used = new HashSet<>();
         for (PlacedComponent component : components) {
@@ -213,6 +215,10 @@ public final class SchematicNetlistExtractor {
                 continue;
             }
             String label = component.label().trim();
+            // Expression layouts use ordinary input switches labeled 0 and 1 as constant sources.
+            if (allowLiteralConstantLabels && (label.equals("0") || label.equals("1"))) {
+                continue;
+            }
             if (!label.matches("[A-Za-z][A-Za-z0-9_]*")) {
                 throw new IllegalArgumentException(
                         "Label '" + component.label()

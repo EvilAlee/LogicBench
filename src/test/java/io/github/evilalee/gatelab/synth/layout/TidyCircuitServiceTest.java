@@ -69,6 +69,48 @@ class TidyCircuitServiceTest {
     }
 
     @Test
+    void tidiesExpressionGeneratedLiteralInputAndPreservesItsDisplayLabelAndValue() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                F = A & B
+                Constant = 1
+                """);
+        SchematicLayout.LayoutResult generated =
+                new SchematicLayout(DEFINITIONS).layout(compilation.netlist());
+        PlacedComponent literal = generated.schematic().components().stream()
+                .filter(component -> component.typeId().equals("input")
+                        && component.label().equals("1"))
+                .findFirst().orElseThrow();
+        assertTrue(generated.schematic().inputValue(literal.id()));
+
+        TidyCircuitService.TidyResult result =
+                TidyCircuitService.tidy(generated.schematic(), DEFINITIONS);
+        assertFalse(result.equivalenceSkipped());
+        assertEquals(8, result.verificationRows());
+        PlacedComponent retainedLiteral = result.schematic().components().stream()
+                .filter(component -> component.typeId().equals("input")
+                        && component.label().equals("1"))
+                .findFirst().orElseThrow();
+        assertTrue(result.schematic().inputValue(retainedLiteral.id()));
+    }
+
+    @Test
+    void tidyIsIdempotentForAComplexMultiOutputCircuit() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                F = (A & B) | (C ^ D)
+                G = (A NAND C) ^ (B NOR D)
+                """);
+        SchematicLayout.LayoutResult generated =
+                new SchematicLayout(DEFINITIONS).layout(compilation.netlist());
+        TidyCircuitService.TidyResult first =
+                TidyCircuitService.tidy(generated.schematic(), DEFINITIONS);
+        TidyCircuitService.TidyResult second =
+                TidyCircuitService.tidy(first.schematic(), DEFINITIONS);
+
+        assertEquals(first.schematic().components(), second.schematic().components());
+        assertEquals(first.schematic().wires(), second.schematic().wires());
+    }
+
+    @Test
     void handBuiltMessyCircuitWithCrossingWiresRemainsEquivalentAfterTidy() {
         Schematic schematic = crossingCircuit();
         Connectivity.Result topology = Connectivity.analyze(
@@ -161,10 +203,15 @@ class TidyCircuitServiceTest {
         PlacedComponent input1 = add(noOutputDriver, "input-a", "input", 0, 0, "A");
         PlacedComponent input2 = add(noOutputDriver, "input-b", "input", 0, 200, "B");
         PlacedComponent noOutputGate = add(noOutputDriver, "gate-and", "and", 300, 100, "");
-        add(noOutputDriver, "output-f", "output", 500, 500, "F");
+        PlacedComponent undrivenOutput = add(
+                noOutputDriver, "output-f", "output", 500, 500, "F");
+        PlacedComponent secondUndrivenOutput = add(
+                noOutputDriver, "output-g", "output", 700, 500, "G");
         connect(noOutputDriver, input1.id(), "out", noOutputGate.id(), "in0");
         connect(noOutputDriver, input2.id(), "out", noOutputGate.id(), "in1");
-        assertRefusal(noOutputDriver, DEFINITIONS, "bare (unconnected)");
+        connect(noOutputDriver, undrivenOutput.id(), "in0",
+                secondUndrivenOutput.id(), "in0");
+        assertRefusal(noOutputDriver, DEFINITIONS, "net with no driver");
 
         Schematic feedback = feedbackCircuit();
         assertRefusal(feedback, DEFINITIONS, "combinational cycle");

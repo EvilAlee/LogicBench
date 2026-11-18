@@ -234,10 +234,8 @@ public final class Main {
     }
 
     private static boolean hasTidyableGate(Schematic schematic) {
-        return schematic.components().stream().anyMatch(component -> switch (component.typeId()) {
-            case "and", "or", "not", "nand", "nor", "xor", "xnor", "buffer" -> true;
-            default -> false;
-        });
+        return schematic.components().stream().anyMatch(component ->
+                !component.typeId().equals("input") && !component.typeId().equals("output"));
     }
 
     private static void tidyCircuit(JFrame frame, CanvasPanel canvas) {
