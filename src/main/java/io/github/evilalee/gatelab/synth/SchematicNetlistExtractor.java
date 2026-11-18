@@ -82,6 +82,7 @@ public final class SchematicNetlistExtractor {
                 .thenComparing(PlacedComponent::id);
         inputs.sort(visualOrder);
         outputs.sort(visualOrder);
+        gates.sort(visualOrder);
         if (outputs.isEmpty()) {
             throw new IllegalArgumentException(
                     "Tidy circuit requires at least one Output component.");
@@ -191,6 +192,9 @@ public final class SchematicNetlistExtractor {
             String pinDescription) {
         if (net == null || net.pins().isEmpty()) {
             throw new IllegalArgumentException(pinDescription + " is not connected.");
+        }
+        if (net.segments().isEmpty() && net.pins().size() == 1) {
+            throw new IllegalArgumentException(pinDescription + " is bare (unconnected).");
         }
         String signal = signalByNet.get(net);
         if (signal == null) {

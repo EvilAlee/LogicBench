@@ -6,14 +6,12 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.Value;
-import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.synth.SchematicNetlistExtractor;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -68,7 +66,7 @@ public final class TidyCircuitService {
             return new TidyResult(tidied, inputCount, 0, true);
         }
 
-        verifyEquivalent(original, tidied, extraction, layout);
+        verifyEquivalent(original, tidied, extraction, layout, library);
         return new TidyResult(tidied, inputCount, 1 << inputCount, false);
     }
 
@@ -113,13 +111,14 @@ public final class TidyCircuitService {
             Schematic original,
             Schematic tidied,
             SchematicNetlistExtractor.Extraction extraction,
-            SchematicLayout.LayoutResult layout) {
+            SchematicLayout.LayoutResult layout,
+            List<GateDef> definitions) {
         List<String> inputNames = extraction.netlist().inputs();
-        Map<String, String> oldOutputIds = outputIds(extraction);
+        Map<String, String> oldOutputIds = extraction.outputComponentIds();
         Map<String, String> newOutputIds = layout.outputComponentIds();
 
-        Schematic before = copy(original, definitionsFor(original));
-        Schematic after = copy(tidied, definitionsFor(tidied));
+        Schematic before = copy(original, definitions);
+        Schematic after = copy(tidied, definitions);
         int rowCount = 1 << inputNames.size();
         for (int row = 0; row < rowCount; row++) {
             for (int index = 0; index < inputNames.size(); index++) {
@@ -151,11 +150,6 @@ public final class TidyCircuitService {
         }
     }
 
-    private static Map<String, String> outputIds(
-            SchematicNetlistExtractor.Extraction extraction) {
-        return extraction.outputComponentIds();
-    }
-
     private static Schematic copy(Schematic source, List<GateDef> definitions) {
         Schematic copy = new Schematic(definitions);
         copy.restoreSnapshot(SchematicSnapshot.capture(source));
@@ -168,8 +162,4 @@ public final class TidyCircuitService {
         return copy;
     }
 
-    private static List<GateDef> definitionsFor(Schematic schematic) {
-        // All schematics passed here were created from the same catalogue as the action.
-        return io.github.evilalee.gatelab.io.GateLibrary.load().all();
-    }
 }
