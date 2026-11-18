@@ -16,14 +16,16 @@
 - PR #21: editable schematics generated from Boolean expressions, with optional input/output pin labels
 - PR #22: compact expression-generated schematic layout with per-column pin-driven placement and production connectivity/overlap checks
 
+## In progress
+- PR #24: Circuit > Tidy circuit — headless extraction of hand-built schematics, verified relayout through the production layout/compile paths, one-step undo, preserved I/O labels and switch values, and a headless test of the real Circuit menu. Java 25 CI is green (164 tests); GUI not launched by the coding agent. Awaiting user review and merge.
+
 ## Next
-1. Circuit > Tidy circuit
-2. AI circuit generation (Gemini provider, verify-and-retry, demo cache)
-3. M9a attribute table with editable labels
-4. M9b gate variants
-5. Clock, flip-flops, 7-segment display
-6. M10 analysis (truth table, expression, batch mode)
-7. Polish pass, distZip, demo script
+1. AI circuit generation (Gemini provider, verify-and-retry, demo cache)
+2. M9a attribute table with editable labels
+3. M9b gate variants
+4. Clock, flip-flops, 7-segment display
+5. M10 analysis (truth table, expression, batch mode)
+6. Polish pass, distZip, demo script
 
 ## Known limitations
 - Feedback circuits (including latches) remain at X until forced by an input change.
@@ -49,6 +51,8 @@
 - Expression layout retains deterministic depth columns, dummy nodes for skipped columns, and four barycenter ordering sweep pairs; compact coordinates use a fixed 60-unit input pitch and three alternating pin-driven vertical sweeps within each later column, with a 40-unit minimum body clearance and closest-safe pin-row shifts to prevent cross-signal T-junctions. Per-net channel trunks use 20-unit margins and 20-unit pitch, sized to the actual trunk count.
 - Layout verification extracts actual geometric nets and requires a one-to-one partition match with the netlist before returning a Schematic; a single retry doubles layout spacing.
 - The Generate action verifies the placed Schematic through the standard geometry-to-engine compile path over every declared-input row before replacing the current topology in one history step.
+- Tidy circuit extracts the current geometric nets, orders primary inputs and outputs by current y then x, preserves their visible labels and switch states, and reuses the production SchematicLayout engine. Gate facings are reset to EAST; applying a verified result is one undo step and fits the view.
+- Tidy circuit compares the original and replacement through SchematicCompiler for every input combination up to 12 inputs; above 12 it explicitly skips equivalence checking. The general Netlist supports larger input sets for layout-only use, while expression compilation and exhaustive truth-table generation remain capped at 12.
 
 ## Workflow
 - One task, one branch from fresh main, one PR with base main.

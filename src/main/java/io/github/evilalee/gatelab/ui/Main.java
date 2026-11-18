@@ -6,6 +6,7 @@ import io.github.evilalee.gatelab.io.SchematicJson;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.UndefinedInputMode;
+import io.github.evilalee.gatelab.synth.layout.TidyCircuitService;
 
 import javax.swing.AbstractAction;
 import javax.swing.AbstractCellEditor;
@@ -42,6 +43,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.GraphicsEnvironment;
 import java.awt.Insets;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
@@ -157,7 +159,11 @@ public final class Main {
         return content;
     }
 
-    private static JMenuBar createMenuBar(
+    static JMenuBar createMenuBar(CanvasPanel canvas) {
+        return createMenuBar(null, canvas, new DocumentState());
+    }
+
+    static JMenuBar createMenuBar(
             JFrame frame, CanvasPanel canvas, DocumentState document) {
         JMenuBar menuBar = new JMenuBar();
         JMenu file = new JMenu("File");
@@ -179,6 +185,22 @@ public final class Main {
         JMenuItem fromExpression = new JMenuItem("From expression...");
         fromExpression.addActionListener(event -> ExpressionDialog.showDialog(frame, canvas));
         circuit.add(fromExpression);
+
+        JMenuItem tidy = new JMenuItem("Tidy circuit");
+        tidy.setEnabled(hasTidyableGate(canvas.schematic()));
+        tidy.addActionListener(event -> tidyCircuit(frame, canvas));
+        Schematic[] observedSchematic = {null};
+        Runnable updateTidyEnabled = () ->
+                tidy.setEnabled(hasTidyableGate(canvas.schematic()));
+        canvas.addSchematicListener(schematic -> {
+            if (observedSchematic[0] != null) {
+                observedSchematic[0].removeChangeListener(updateTidyEnabled);
+            }
+            observedSchematic[0] = schematic;
+            schematic.addChangeListener(updateTidyEnabled);
+            updateTidyEnabled.run();
+        });
+        circuit.add(tidy);
         menuBar.add(circuit);
 
         JMenu edit = new JMenu("Edit");
@@ -209,6 +231,32 @@ public final class Main {
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
         menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
         return menuBar;
+    }
+
+    private static boolean hasTidyableGate(Schematic schematic) {
+        return schematic.components().stream().anyMatch(component ->
+                !component.typeId().equals("input") && !component.typeId().equals("output"));
+    }
+
+    private static void tidyCircuit(JFrame frame, CanvasPanel canvas) {
+        try {
+            TidyCircuitService.TidyResult result = TidyCircuitService.tidy(
+                    canvas.schematic(), GateLibrary.load().all());
+            canvas.replaceWithTidiedCircuit(result.schematic());
+            String message = "Tidy complete. " + result.verificationMessage()
+                    + " Gate facings reset to EAST.";
+            canvas.setStatusMessage(message);
+            if (!GraphicsEnvironment.isHeadless()) {
+                JOptionPane.showMessageDialog(
+                        frame, message, "Tidy circuit", JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            String message = exception.getMessage() == null
+                    ? "The current circuit cannot be tidied." : exception.getMessage();
+            canvas.setStatusMessage("Tidy circuit failed: " + message);
+            JOptionPane.showMessageDialog(
+                    frame, message, "Cannot tidy circuit", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     static JMenu createSimulateMenu(CanvasPanel canvas) {
@@ -258,6 +306,9 @@ public final class Main {
     }
 
     private static void installUndoRedoBindings(JFrame frame, CanvasPanel canvas) {
+        if (frame == null) {
+            return;
+        }
         javax.swing.InputMap input = frame.getRootPane().getInputMap(
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
         javax.swing.ActionMap actions = frame.getRootPane().getActionMap();

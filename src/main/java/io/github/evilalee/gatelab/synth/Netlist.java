@@ -87,10 +87,6 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
     }
 
     private static void validate(List<String> inputs, List<Output> outputs, List<Gate> gates) {
-        if (inputs.size() > 12) {
-            throw new IllegalArgumentException(
-                    "netlist has " + inputs.size() + " inputs; maximum is 12");
-        }
         if (outputs.isEmpty()) {
             throw new IllegalArgumentException("netlist must define at least one output");
         }
