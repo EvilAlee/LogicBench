@@ -40,7 +40,7 @@ class SchematicTest {
     void outputReportsTappedOnlyWhenItsNetAlsoFeedsAGate() {
         Schematic schematic = new Schematic(DEFINITIONS);
         var source = schematic.add("and", 100, 100, Facing.EAST);
-        var output = schematic.add("output", 300, 110, Facing.EAST);
+        var output = schematic.add("output", 300, 100, Facing.EAST);
 
         Connectivity.PinPosition sourcePin = schematic.pinPositions().stream()
                 .filter(pin -> pin.componentId().equals(source.id())
@@ -56,7 +56,7 @@ class SchematicTest {
         assertFalse(schematic.isOutputTapped(output.id()),
                 "a probe on a net with only a driving gate is not a tap");
 
-        var consumer = schematic.add("or", 400, 110, Facing.EAST);
+        var consumer = schematic.add("or", 430, 110, Facing.EAST);
         Connectivity.PinPosition consumerPin = schematic.pinPositions().stream()
                 .filter(pin -> pin.componentId().equals(consumer.id())
                         && pin.pinId().equals("in0"))
