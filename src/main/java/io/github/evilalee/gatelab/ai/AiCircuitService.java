@@ -83,10 +83,16 @@ public final class AiCircuitService {
     private static final Pattern NAME = Pattern.compile("[A-Za-z][A-Za-z0-9_]*");
     private final AiProvider provider;
     private final SchematicLayout layoutBuilder;
+    private final AiCache cache;
 
     public AiCircuitService(AiProvider provider, Collection<GateDef> definitions) {
+        this(provider, definitions, null);
+    }
+
+    public AiCircuitService(AiProvider provider, Collection<GateDef> definitions, AiCache cache) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.layoutBuilder = new SchematicLayout(Objects.requireNonNull(definitions, "definitions"));
+        this.cache = cache;
     }
 
     /** JSON schema sent to Gemini for structured output. */
@@ -198,6 +204,12 @@ public final class AiCircuitService {
      * not call the provider. Otherwise request, validate and retry up to three times.
      */
     public Result generate(String description) throws IOException, InterruptedException {
+        return generate(description, false);
+    }
+
+    /** When cacheOnly is true, no provider request is made. */
+    public Result generate(String description, boolean cacheOnly)
+            throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
         List<String> log = new ArrayList<>();
 
@@ -238,6 +250,14 @@ public final class AiCircuitService {
             }
         }
 
+        Result cached = cachedResult(description, log, "Using");
+        if (cached != null) return cached;
+        if (cacheOnly) {
+            log.add("AI cache only is enabled; no valid cached answer exists.");
+            return new Result(0, Status.UNVERIFIED, "No valid cached answer is available offline.",
+                    List.of(), null, null, null, List.of(), log, false);
+        }
+
         List<Turn> conversation = new ArrayList<>();
         conversation.add(new Turn(Turn.Role.USER, description));
         Attempt best = null;
@@ -249,6 +269,11 @@ public final class AiCircuitService {
             } catch (IOException exception) {
                 String error = safeProviderError(exception);
                 log.add("Attempt " + attemptNumber + ": " + error);
+                if (error.toLowerCase(java.util.Locale.ROOT).contains("no network")) {
+                    Result fallback = cachedResult(description, log,
+                            "No network connection; falling back to");
+                    if (fallback != null) return fallback;
+                }
                 conversation.add(new Turn(Turn.Role.USER,
                         "The previous request failed: " + error
                                 + " Return a valid JSON answer for the original circuit description."));
@@ -267,6 +292,14 @@ public final class AiCircuitService {
             if (current.errors().isEmpty()) {
                 int rows = current.truthTable().rows().size();
                 log.add("Verified " + rows + "/" + rows + " rows");
+                if (cache != null) {
+                    try {
+                        cache.storeVerified(description, raw);
+                        log.add("Saved verified live answer to the user cache.");
+                    } catch (IOException cacheError) {
+                        log.add("Verified answer, but could not save the user cache.");
+                    }
+                }
                 return result(attemptNumber, Status.VERIFIED, current, log, false);
             }
 
@@ -294,6 +327,23 @@ public final class AiCircuitService {
                     List.of(), null, null, null, List.of(), log, false);
         }
         return result(MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false);
+    }
+
+    private Result cachedResult(String description, List<String> log, String prefix) {
+        if (cache == null) return null;
+        for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
+            Attempt cachedAttempt = validate(hit.answerJson());
+            String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
+            if (cachedAttempt.errors().isEmpty()) {
+                int rows = cachedAttempt.truthTable().rows().size();
+                log.add(prefix + " " + source + " cache.");
+                log.add("FROM CACHE: Verified " + rows + "/" + rows + " rows");
+                return result(0, Status.VERIFIED, cachedAttempt, log, true);
+            }
+            log.add("Ignored invalid " + source + " cache entry: "
+                    + String.join("; ", cachedAttempt.errors()));
+        }
+        return null;
     }
 
     private Result result(int attempts, Status status, Attempt attempt,
