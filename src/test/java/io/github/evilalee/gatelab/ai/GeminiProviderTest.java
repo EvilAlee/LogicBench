@@ -118,7 +118,8 @@ class GeminiProviderTest {
             key.set(exchange.getRequestHeaders().getFirst("x-goog-api-key"));
             body.set(JsonParser.parseString(new String(
                     exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject());
-            respond(exchange, 200, success("\`\`\`json\n{\"ok\":true}\n\`\`\`"));
+            String fence = String.valueOf((char) 96).repeat(3);
+            respond(exchange, 200, success(fence + "json\\n{\"ok\":true}\\n" + fence));
         })) {
             assertEquals("{\"ok\":true}", complete(provider(fixture.baseUrl())));
             assertEquals("/v1beta/models/gemini-3.8-flash:generateContent", path.get());
