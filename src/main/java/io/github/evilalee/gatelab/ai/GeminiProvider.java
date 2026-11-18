@@ -186,7 +186,7 @@ public final class GeminiProvider implements AiProvider {
             case 404 -> failure(ProviderFailure.Kind.MODEL_UNAVAILABLE,
                     "Gemini model not found (HTTP 404).", model, status);
             case 429 -> failure(ProviderFailure.Kind.RETRYABLE,
-                    "Gemini is rate limited (HTTP 429). Rate limit reached, try again in a minute or switch model in ai.json.",
+                    "Gemini rate limit or quota reached (HTTP 429). Rate limit reached, try again in a minute or switch model in ai.json.",
                     model, status);
             default -> status >= 500
                     ? failure(ProviderFailure.Kind.RETRYABLE,
