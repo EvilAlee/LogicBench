@@ -169,6 +169,18 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void parsableExpressionBeyondCompilerInputLimitStillSkipsTheProvider() throws Exception {
+        String description = "F = A & B & C & D & E & F & G & H & I & J & K & L & M";
+        ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
+        AiCircuitService.Result result = service(provider).generate(description);
+
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertEquals(0, result.attemptCount());
+        assertEquals(0, provider.calls);
+        assertTrue(result.attemptLog().getFirst().contains("parses as expression text"));
+    }
+
+    @Test
     void parsableExpressionDescriptionSkipsTheProviderEntirely() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate("F = A & B");

@@ -217,6 +217,13 @@ public final class AiCircuitService {
         try {
             local = ExpressionCompiler.compile(description);
         } catch (RuntimeException notExpressionText) {
+            if (isExpressionSource(description)) {
+                log.add("Description parses as expression text but cannot be compiled: "
+                        + safeParseMessage(notExpressionText));
+                return new Result(0, Status.UNVERIFIED,
+                        "Expression text is valid but exceeds synthesis constraints.",
+                        List.of(), null, null, null, List.of(), log, false);
+            }
             // Natural-language descriptions continue to the provider.
         }
         if (local != null) {
@@ -327,6 +334,51 @@ public final class AiCircuitService {
                     List.of(), null, null, null, List.of(), log, false);
         }
         return result(MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false);
+    }
+
+    private static boolean isExpressionSource(String source) {
+        List<String> statements = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        for (int index = 0; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == '(') {
+                depth++;
+            } else if (current == ')' && depth > 0) {
+                depth--;
+            } else if ((current == ';' || current == '\n') && depth == 0) {
+                addExpressionStatement(statements, source, start, index);
+                start = index + 1;
+            }
+        }
+        addExpressionStatement(statements, source, start, source.length());
+        if (statements.isEmpty()) return false;
+
+        for (String statement : statements) {
+            String trimmed = statement.trim();
+            int equals = trimmed.indexOf('=');
+            String expression = trimmed;
+            if (equals >= 0) {
+                int assignmentStart = equals > 0 && trimmed.charAt(equals - 1) == ':'
+                        ? equals - 1 : equals;
+                String name = trimmed.substring(0, assignmentStart).trim();
+                if (!NAME.matcher(name).matches()) return false;
+                expression = trimmed.substring(equals + 1).trim();
+            }
+            if (expression.isEmpty()) return false;
+            try {
+                ExpressionParser.parse(expression);
+            } catch (RuntimeException exception) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void addExpressionStatement(
+            List<String> statements, String source, int start, int end) {
+        String statement = source.substring(start, end);
+        if (!statement.isBlank()) statements.add(statement);
     }
 
     private Result cachedResult(String description, List<String> log, String prefix) {
