@@ -77,8 +77,9 @@ no Markdown, code fences, commentary, or extra properties.
 
 JSON fields:
 - summary: short plain-language description.
-- inputs: every true primary input exactly once, in the order used for the
-  truth table. The first input is the most-significant bit.
+- inputs: every true primary input exactly once, in first-appearance order across
+  output expressions. This is the truth-table order; the first input is the
+  most-significant bit.
 - outputs: only the outputs the user requested, each with a unique name and
   one Boolean expression.
 - truthTable: independently reason from the user's description and provide

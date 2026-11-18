@@ -161,8 +161,9 @@ public final class AiCircuitService {
 
                 JSON fields:
                 - summary: short plain-language description.
-                - inputs: every true primary input exactly once, in the order used for the
-                  truth table. The first input is the most-significant bit.
+                - inputs: every true primary input exactly once, in first-appearance order across
+                  output expressions. This is the truth-table order; the first input
+                  is the most-significant bit.
                 - outputs: only the outputs the user requested, each with a unique name and
                   one Boolean expression.
                 - truthTable: independently reason from the user's description and provide
@@ -525,7 +526,7 @@ public final class AiCircuitService {
     }
 
     private static List<String> compareClaimedTable(Answer answer, TruthTable engineTable) {
-        List<String> mismatches = new ArrayList<>();
+        Map<Integer, List<String>> mismatchesByRow = new LinkedHashMap<>();
         for (int outputIndex = 0; outputIndex < engineTable.outputNames().size(); outputIndex++) {
             String outputName = engineTable.outputNames().get(outputIndex);
             String claimedBits = answer.claimedBits().get(outputName);
@@ -534,14 +535,20 @@ public final class AiCircuitService {
                 char actualBit = actual == Value.ONE ? '1' : actual == Value.ZERO ? '0' : 'X';
                 char claimedBit = claimedBits.charAt(row.index());
                 if (actualBit != claimedBit || row.oscillating()) {
-                    String line = "output " + outputName + ", inputs " + row.inputBits()
-                            + ": you claimed " + claimedBit + ", circuit gives " + actualBit;
-                    if (row.oscillating()) line += " (oscillating)";
-                    mismatches.add(line);
+                    String detail = "output " + outputName + ": you claimed " + claimedBit
+                            + ", circuit gives " + actualBit;
+                    if (row.oscillating()) detail += " (oscillating)";
+                    mismatchesByRow.computeIfAbsent(row.index(), ignored -> new ArrayList<>())
+                            .add(detail);
                 }
             }
         }
-        return List.copyOf(mismatches);
+        List<String> result = new ArrayList<>();
+        for (Map.Entry<Integer, List<String>> entry : mismatchesByRow.entrySet()) {
+            String bits = engineTable.rows().get(entry.getKey()).inputBits();
+            result.add("inputs " + bits + ": " + String.join("; ", entry.getValue()));
+        }
+        return List.copyOf(result);
     }
 
     private static String stripCodeFence(String text) {
