@@ -87,8 +87,7 @@ class AiCircuitServiceTest {
         assertEquals(2, result.attemptCount());
         assertEquals(2, provider.calls);
         assertTrue(provider.conversations.get(1).stream()
-                .anyMatch(turn -> turn.text().contains("inputs 11")
-                        && turn.text().contains("you claimed 0, circuit gives 1")));
+                .anyMatch(turn -> turn.text().contains("A=1 B=1: F claimed 0, circuit gives 1")));
         assertTrue(provider.conversations.get(1).stream()
                 .anyMatch(turn -> turn.text().contains(andAnswer("0000"))));
         assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("Verified 4/4 rows")));
@@ -105,7 +104,7 @@ class AiCircuitServiceTest {
         assertEquals(3, result.attemptCount());
         assertEquals(3, provider.calls);
         assertEquals(1, result.mismatchingRows().size());
-        assertTrue(result.mismatchingRows().getFirst().contains("inputs 11"));
+        assertTrue(result.mismatchingRows().getFirst().contains("A=1 B=1"));
         assertEquals("F", result.expressions().getFirst().name());
         assertNotNull(result.netlist());
         assertNotNull(result.truthTable());
@@ -543,6 +542,27 @@ class AiCircuitServiceTest {
                 assertTrue(log.contains("duplicate input name"), log);
             }
         }
+    }
+
+
+    @Test
+    void permutedTwoBitAdderWrongBitProducesNamedAssignmentFeedback() throws Exception {
+        List<String> declaredOrder = List.of("A1", "A0", "B1", "B0");
+        ScriptedProvider provider = new ScriptedProvider(
+                twoBitAdderAnswer(declaredOrder, true),
+                twoBitAdderAnswer(declaredOrder, false));
+
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, result.attemptCount());
+        String retryConversation = String.join("\\n", provider.conversations.get(1).stream()
+                .map(Turn::text).toList());
+        assertTrue(retryConversation.contains(
+                "A0=0 B0=0 A1=0 B1=1: S0 claimed 1, circuit gives 0"));
+        String instruction = "Rows in your table are interpreted using the order of YOUR inputs array.";
+        assertTrue(retryConversation.contains(instruction));
+        assertEquals(retryConversation.indexOf(instruction), retryConversation.lastIndexOf(instruction));
     }
 
 }

@@ -353,6 +353,7 @@ public final class AiCircuitService {
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
             feedbackLines.addAll(current.mismatchRows().stream().limit(8).toList());
+            feedbackLines.add("Rows in your table are interpreted using the order of YOUR inputs array.");
             String feedback = String.join("\n", feedbackLines);
             if (!current.mismatchRows().isEmpty()) {
                 log.add("Mismatch at rows " + String.join("; ",
@@ -834,7 +835,7 @@ public final class AiCircuitService {
                 char actualBit = actual == Value.ONE ? '1' : actual == Value.ZERO ? '0' : 'X';
                 char claimedBit = claimedBits.charAt(claimedRowIndex);
                 if (actualBit != claimedBit || row.oscillating()) {
-                    String detail = "output " + outputName + ": you claimed " + claimedBit
+                    String detail = outputName + " claimed " + claimedBit
                             + ", circuit gives " + actualBit;
                     if (row.oscillating()) detail += " (oscillating)";
                     mismatchesByRow.computeIfAbsent(row.index(), ignored -> new ArrayList<>())
@@ -844,8 +845,14 @@ public final class AiCircuitService {
         }
         List<String> result = new ArrayList<>();
         for (Map.Entry<Integer, List<String>> entry : mismatchesByRow.entrySet()) {
-            String bits = engineTable.rows().get(entry.getKey()).inputBits();
-            result.add("inputs " + bits + ": " + String.join("; ", entry.getValue()));
+            TruthTable.Row row = engineTable.rows().get(entry.getKey());
+            StringBuilder assignment = new StringBuilder();
+            for (int inputIndex = 0; inputIndex < engineTable.inputNames().size(); inputIndex++) {
+                if (inputIndex > 0) assignment.append(' ');
+                assignment.append(engineTable.inputNames().get(inputIndex))
+                        .append('=').append(row.inputBits().charAt(inputIndex));
+            }
+            result.add(assignment + ": " + String.join("; ", entry.getValue()));
         }
         return List.copyOf(result);
     }
