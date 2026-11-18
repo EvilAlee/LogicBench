@@ -559,7 +559,7 @@ public final class AiCircuitService {
             String description, List<String> log, String prefix, int attemptCount) {
         if (cache == null) return null;
         for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
-            Attempt cachedAttempt = validate(hit.answerJson());
+            Attempt cachedAttempt = validate(provider.redact(hit.answerJson()));
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
             if (cachedAttempt.errors().isEmpty()) {
                 int rows = cachedAttempt.truthTable().rows().size();

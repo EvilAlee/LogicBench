@@ -207,6 +207,34 @@ class AiCacheTest {
     }
 
     @Test
+    void cacheOnlyRedactsSecretsFromPreexistingCacheAnswers() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "A circuit description with a preexisting cached answer.";
+        String secret = "sensitive-key";
+        cache.storeVerified(description, AND_ANSWER.replace("AND gate", secret + " AND gate"));
+        AiProvider neverCall = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                fail("cache-only mode must not call the provider");
+                return "";
+            }
+
+            @Override
+            public String redact(String text) {
+                return text == null ? "" : text.replace(secret, "***");
+            }
+        };
+
+        AiCircuitService.Result result = service(neverCall, cache).generate(description, true);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertTrue(result.fromCache());
+        assertFalse(result.summary().contains(secret));
+        assertTrue(result.summary().contains("***"));
+        assertFalse(String.join("\n", result.attemptLog()).contains(secret));
+    }
+
+    @Test
     void cacheOnlyWithoutAnAnswerIsUnavailableRatherThanUnverified() throws Exception {
         AiCache cache = new AiCache(directory);
         AiProvider neverCall = (prompt, conversation, schema) -> {
