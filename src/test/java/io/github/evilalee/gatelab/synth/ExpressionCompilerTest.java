@@ -8,6 +8,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ExpressionCompilerTest {
     @Test
+    void internalAssignmentsAreInlinedWithoutCreatingOutputPins() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
+                "S0C := A & B\nF = S0C | C");
+
+        assertEquals(List.of("F"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::name).toList());
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertTrue(compilation.reusedOutputNames().isEmpty());
+        assertEquals(2, compilation.netlist().gates().size());
+        assertEquals(List.of("A", "B"), compilation.netlist().gates().getFirst().inputs());
+        assertEquals(List.of("g1", "C"), compilation.netlist().gates().get(1).inputs());
+    }
+
+    @Test
+    void outputDefinitionsReferencedLaterAreReportedButRemainOutputs() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
+                "S0C = A & B\nF = S0C | C");
+
+        assertEquals(List.of("S0C", "F"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::name).toList());
+        assertEquals(List.of("A", "B", "S0C", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("S0C"), compilation.reusedOutputNames());
+    }
+
+    @Test
     void identicalSubexpressionsAreSharedAcrossOutputs() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("F = A & B\nG = (A & B) | C");

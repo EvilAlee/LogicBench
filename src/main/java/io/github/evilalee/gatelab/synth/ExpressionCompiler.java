@@ -15,6 +15,14 @@ public final class ExpressionCompiler {
     private record Statement(String text, int sourceOffset) {
     }
 
+    private enum AssignmentKind {
+        OUTPUT,
+        INTERNAL
+    }
+
+    private record Assignment(String name, AssignmentKind kind, Expression expression) {
+    }
+
     private record GateKey(GateOperator type, List<String> inputs) {
         private GateKey {
             inputs = List.copyOf(inputs);
@@ -22,10 +30,19 @@ public final class ExpressionCompiler {
     }
 
     /** Parsed ASTs are retained so the engine truth table can be checked independently. */
-    public record Compilation(Netlist netlist, List<NamedExpression> expressions) {
+    public record Compilation(
+            Netlist netlist,
+            List<NamedExpression> expressions,
+            List<String> reusedOutputNames) {
+        public Compilation(Netlist netlist, List<NamedExpression> expressions) {
+            this(netlist, expressions, List.of());
+        }
+
         public Compilation {
             Objects.requireNonNull(netlist, "netlist");
             expressions = List.copyOf(Objects.requireNonNull(expressions, "expressions"));
+            reusedOutputNames = List.copyOf(
+                    Objects.requireNonNull(reusedOutputNames, "reusedOutputNames"));
             if (expressions.size() != netlist.outputs().size()) {
                 throw new IllegalArgumentException(
                         "expression count must match the netlist output count");
@@ -44,8 +61,9 @@ public final class ExpressionCompiler {
 
     /**
      * Accepts one expression per line or semicolon-delimited statement.
-     * A statement may be written as "name = expression"; an unnamed statement
-     * receives the default output name "F".
+     * "name = expression" creates an output; "name := expression" defines an
+     * internal signal that can be referenced by later statements without a pin.
+     * An unnamed statement receives the default output name "F".
      */
     public static Compilation compile(String source) {
         Objects.requireNonNull(source, "source");
@@ -54,17 +72,33 @@ public final class ExpressionCompiler {
             throw new ParseException(0, "expression list is empty");
         }
 
+        List<Assignment> assignments = new ArrayList<>();
+        Set<String> definedNames = new HashSet<>();
+        for (Statement statement : statements) {
+            Assignment assignment = parseStatement(statement);
+            if (!definedNames.add(assignment.name())) {
+                throw new IllegalArgumentException(
+                        assignment.kind() == AssignmentKind.OUTPUT
+                                ? "duplicate output name: " + assignment.name()
+                                : "duplicate signal definition: " + assignment.name());
+            }
+            assignments.add(assignment);
+        }
+
+        List<String> reusedOutputNames = findReusedOutputNames(assignments);
+        Map<String, Expression> internalSignals = new LinkedHashMap<>();
         List<NamedExpression> expressions = new ArrayList<>();
         LinkedHashSet<String> variables = new LinkedHashSet<>();
-        Set<String> outputNames = new HashSet<>();
-        for (Statement statement : statements) {
-            NamedExpression named = parseStatement(statement);
-            if (!outputNames.add(named.name())) {
-                throw new IllegalArgumentException(
-                        "duplicate output name: " + named.name());
+        for (Assignment assignment : assignments) {
+            Expression resolved = resolveInternalSignals(
+                    assignment.expression(), internalSignals);
+            if (assignment.kind() == AssignmentKind.INTERNAL) {
+                internalSignals.put(assignment.name(), resolved);
+            } else {
+                NamedExpression named = new NamedExpression(assignment.name(), resolved);
+                expressions.add(named);
+                variables.addAll(resolved.variables());
             }
-            expressions.add(named);
-            variables.addAll(named.expression().variables());
         }
 
         if (variables.size() > 12) {
@@ -80,10 +114,43 @@ public final class ExpressionCompiler {
         }
         Netlist netlist = new Netlist(
                 List.copyOf(variables), outputs, builder.gates());
-        return new Compilation(netlist, expressions);
+        return new Compilation(netlist, expressions, reusedOutputNames);
     }
 
-    private static NamedExpression parseStatement(Statement statement) {
+    private static List<String> findReusedOutputNames(List<Assignment> assignments) {
+        LinkedHashSet<String> reused = new LinkedHashSet<>();
+        for (int index = 0; index < assignments.size(); index++) {
+            Assignment definition = assignments.get(index);
+            if (definition.kind() != AssignmentKind.OUTPUT) {
+                continue;
+            }
+            for (int later = index + 1; later < assignments.size(); later++) {
+                if (assignments.get(later).expression().variables()
+                        .contains(definition.name())) {
+                    reused.add(definition.name());
+                    break;
+                }
+            }
+        }
+        return List.copyOf(reused);
+    }
+
+    private static Expression resolveInternalSignals(
+            Expression expression, Map<String, Expression> internalSignals) {
+        return switch (expression) {
+            case Expression.Constant constant -> constant;
+            case Expression.Variable variable ->
+                    internalSignals.getOrDefault(variable.name(), variable);
+            case Expression.Unary unary -> new Expression.Unary(
+                    unary.operator(), resolveInternalSignals(unary.operand(), internalSignals));
+            case Expression.Binary binary -> new Expression.Binary(
+                    binary.operator(),
+                    resolveInternalSignals(binary.left(), internalSignals),
+                    resolveInternalSignals(binary.right(), internalSignals));
+        };
+    }
+
+    private static Assignment parseStatement(Statement statement) {
         String text = statement.text();
         int leading = 0;
         while (leading < text.length() && Character.isWhitespace(text.charAt(leading))) {
@@ -98,17 +165,23 @@ public final class ExpressionCompiler {
         String name = "F";
         String expressionText = trimmed;
         int expressionOffset = statement.sourceOffset() + leading;
+        AssignmentKind kind = AssignmentKind.OUTPUT;
         if (equals >= 0) {
+            int operatorStart = equals;
+            if (equals > 0 && trimmed.charAt(equals - 1) == ':') {
+                operatorStart = equals - 1;
+                kind = AssignmentKind.INTERNAL;
+            }
             if (trimmed.indexOf('=', equals + 1) >= 0) {
                 throw new ParseException(
                         statement.sourceOffset() + leading + equals + 1,
-                        "unexpected second '='");
+                        "unexpected second assignment operator");
             }
-            String candidate = trimmed.substring(0, equals).trim();
+            String candidate = trimmed.substring(0, operatorStart).trim();
             if (!candidate.matches("[A-Za-z][A-Za-z0-9_]*")) {
                 throw new ParseException(
                         statement.sourceOffset() + leading,
-                        "expected an output name before '='");
+                        "expected a signal name before the assignment operator");
             }
             name = candidate;
             int expressionLeading = equals + 1;
@@ -123,10 +196,10 @@ public final class ExpressionCompiler {
         if (expressionText.isBlank()) {
             throw new ParseException(
                     statement.sourceOffset() + text.length(),
-                    "expected an expression after output name");
+                    "expected an expression after signal name");
         }
         try {
-            return new NamedExpression(name, ExpressionParser.parse(expressionText));
+            return new Assignment(name, kind, ExpressionParser.parse(expressionText));
         } catch (ParseException exception) {
             throw new ParseException(
                     expressionOffset + exception.position(), exception.detail());

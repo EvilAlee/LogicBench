@@ -18,6 +18,7 @@
 
 ## In progress
 - PR #24: Circuit > Tidy circuit — headless extraction of hand-built schematics, verified relayout through the production layout/compile paths, one-step undo, preserved I/O labels and switch values, and a headless test of the real Circuit menu. Java 25 CI is green (164 tests); GUI not launched by the coding agent. Awaiting user review and merge.
+- PR #25: named expression signals — `:=` declares an internal signal with no output pin; later references are inlined, while reused `=` outputs receive a non-blocking amber hint. Output probes on nets that also feed gate inputs receive a theme-aware outer ring. Java 25 CI is green (169 tests); no engine, connectivity semantics, layout, SVG, dependency, or file-format changes. Awaiting user review and merge.
 
 ## Next
 1. AI circuit generation (Gemini provider, verify-and-retry, demo cache)
