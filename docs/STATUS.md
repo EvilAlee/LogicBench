@@ -21,6 +21,7 @@
 - PR #29: visible gate names and editable per-gate labels, with app preferences and version-1 file persistence
 
 ## In progress
+- feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
 - feature-sequential-clock: add an app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, and UI tick controls.
 
 ## Next
