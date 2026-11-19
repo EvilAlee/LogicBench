@@ -2,6 +2,8 @@ package io.github.evilalee.gatelab.ui;
 
 /** Stable short names used when identifying built-in logic gates on the canvas. */
 public final class GateNameRenderer {
+    public static final double MIN_ZOOM = 0.75;
+
     private GateNameRenderer() {
     }
 
