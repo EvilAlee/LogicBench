@@ -76,6 +76,26 @@ class SchematicCompilerTest {
     }
 
     @Test
+    void changingGateLabelDoesNotChangeConnectivityOrSimulation() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent input = schematic.add("input", 0, 0, Facing.EAST);
+        PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
+        PlacedComponent output = schematic.add("output", 180, 0, Facing.EAST);
+        connect(schematic, input, "out", gate, "in0");
+        connect(schematic, gate, "out", output, "in0");
+        schematic.setInputValue(input.id(), true);
+
+        SimulationResult before = SchematicCompiler.compileAndSettle(schematic);
+        assertTrue(schematic.setLabel(gate.id(), "main stage"));
+        SimulationResult after = SchematicCompiler.compileAndSettle(schematic, before);
+
+        assertEquals(before.topology(), after.topology());
+        assertEquals(before.outputValues(), after.outputValues());
+        assertEquals(before.gateOutputValues(), after.gateOutputValues());
+        assertEquals(Value.ONE, after.outputValues().get(output.id()));
+    }
+
+    @Test
     void crossCoupledNorLatchCanSetHoldAndResetAcrossFreshRebuilds() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent reset = schematic.add("input", 50, -10, Facing.EAST);
