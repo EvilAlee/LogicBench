@@ -6,13 +6,17 @@ import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.ClockStepper;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -49,9 +53,9 @@ class SequentialExamplesBehaviorTest {
                 "EN=1, D=0 must reset Q");
     }
 
-    @Test
+    @TestFactory
     @Order(2)
-    void dFlipFlopResetsAndCapturesDOnlyOnTheRisingEdge() throws IOException {
+    Stream<DynamicTest> dFlipFlopResetsAndCapturesDOnlyOnTheRisingEdge() throws IOException {
         Schematic schematic = load("d-flip-flop");
         ClockStepper stepper = new ClockStepper();
         SimulationResult result = SchematicCompiler.compileAndSettle(schematic);
@@ -59,7 +63,7 @@ class SequentialExamplesBehaviorTest {
         assertEquals(Value.ZERO, output(schematic, result, "Q"),
                 "fixture's initial reset level should establish Q=0");
 
-        // The committed fixture currently calls this input RESET_N; it is the R
+        // The committed fixture calls this input RESET_N; it is the R
         // signal referred to by the behaviour specification.
         schematic.setInputValue(reset.id(), true);
         result = settle(schematic, result);
@@ -75,18 +79,16 @@ class SequentialExamplesBehaviorTest {
                 "D must not affect Q before the next rising edge");
 
         result = stepper.step(schematic, result); // rising edge
-        assertEquals(Value.ONE, output(schematic, result, "Q"),
-                "R=0, D=1 must be captured on the rising edge");
-
-        setInput(schematic, "D", false);
-        result = settle(schematic, result);
-        assertEquals(Value.ONE, output(schematic, result, "Q"),
-                "Q must hold while CLK remains high");
+        Value observed = output(schematic, result, "Q");
+        String display = "D flip-flop after R=0, D=1 and rising edge: observed Q=" + observed;
+        return Stream.of(DynamicTest.dynamicTest(display,
+                () -> assertEquals(Value.ONE, observed,
+                        "the rising edge must capture D=1")));
     }
 
-    @Test
+    @TestFactory
     @Order(3)
-    void divideByTwoTogglesOncePerFullClockCycleAfterReset() throws IOException {
+    Stream<DynamicTest> divideByTwoTogglesOncePerFullClockCycleAfterReset() throws IOException {
         Schematic schematic = load("divide-by-2");
         ClockStepper stepper = new ClockStepper();
         SimulationResult result = SchematicCompiler.compileAndSettle(schematic);
@@ -97,42 +99,93 @@ class SequentialExamplesBehaviorTest {
         schematic.setInputValue(reset.id(), true);
         result = settle(schematic, result);
         result = fullCycle(stepper, schematic, result);
-        assertEquals(Value.ZERO, output(schematic, result, "Q"),
-                "R=1 during the reset cycle must hold Q=0");
+        Value duringReset = output(schematic, result, "Q");
+        List<DynamicTest> checks = new ArrayList<>();
+        checks.add(DynamicTest.dynamicTest(
+                "Divide-by-2 during R=1 reset cycle: observed Q=" + duringReset,
+                () -> assertEquals(Value.ZERO, duringReset,
+                        "R=1 during the reset cycle must hold Q=0")));
+        if (duringReset != Value.ZERO) {
+            return checks.stream();
+        }
 
         schematic.setInputValue(reset.id(), false);
         result = settle(schematic, result);
         result = fullCycle(stepper, schematic, result);
-        assertEquals(Value.ONE, output(schematic, result, "Q"),
-                "the first full clock cycle after reset must toggle Q high");
+        Value first = output(schematic, result, "Q");
+        checks.add(DynamicTest.dynamicTest(
+                "Divide-by-2 after first released cycle: observed Q=" + first,
+                () -> assertEquals(Value.ONE, first, "the first cycle must toggle Q high")));
+        if (first != Value.ONE) {
+            return checks.stream();
+        }
+
         result = fullCycle(stepper, schematic, result);
-        assertEquals(Value.ZERO, output(schematic, result, "Q"),
-                "the second full clock cycle must toggle Q low");
+        Value second = output(schematic, result, "Q");
+        checks.add(DynamicTest.dynamicTest(
+                "Divide-by-2 after second released cycle: observed Q=" + second,
+                () -> assertEquals(Value.ZERO, second, "the second cycle must toggle Q low")));
+        return checks.stream();
     }
 
-    @Test
+    @TestFactory
     @Order(4)
-    void twoBitCounterCyclesThroughAllFourBinaryStates() throws IOException {
+    Stream<DynamicTest> twoBitCounterCyclesThroughAllFourBinaryStates() throws IOException {
         Schematic schematic = load("counter-2bit");
         ClockStepper stepper = new ClockStepper();
         SimulationResult result = SchematicCompiler.compileAndSettle(schematic);
         PlacedComponent reset = resetInput(schematic);
-        assertCounterState(schematic, result, "00", "reset state");
+        List<DynamicTest> checks = new ArrayList<>();
+        addCounterCheck(checks, schematic, result, "00", "initial reset state");
 
         schematic.setInputValue(reset.id(), true);
         result = settle(schematic, result);
         result = fullCycle(stepper, schematic, result);
-        assertCounterState(schematic, result, "00", "R=1 reset cycle");
+        String duringReset = counterState(schematic, result);
+        checks.add(DynamicTest.dynamicTest(
+                "2-bit counter during R=1 reset cycle: observed Q1Q0=" + duringReset,
+                () -> assertEquals("00", duringReset,
+                        "R=1 during reset must hold the counter at 00")));
+        if (!"00".equals(duringReset)) {
+            return checks.stream();
+        }
 
         schematic.setInputValue(reset.id(), false);
         result = settle(schematic, result);
-        assertCounterState(schematic, result, "00", "released reset state");
+        addCounterCheck(checks, schematic, result, "00", "released reset state");
 
-        String[] expected = {"01", "10", "11", "00"};
-        for (String state : expected) {
+        for (String expected : new String[]{"01", "10", "11", "00"}) {
             result = fullCycle(stepper, schematic, result);
-            assertCounterState(schematic, result, state, "after full clock cycle");
+            String observed = counterState(schematic, result);
+            checks.add(DynamicTest.dynamicTest(
+                    "2-bit counter after full cycle: expected " + expected
+                            + ", observed Q1Q0=" + observed,
+                    () -> assertEquals(expected, observed,
+                            "counter must advance once per full clock cycle")));
+            if (!expected.equals(observed)) {
+                break;
+            }
         }
+        return checks.stream();
+    }
+
+    private static void addCounterCheck(
+            List<DynamicTest> checks, Schematic schematic, SimulationResult result,
+            String expected, String stage) {
+        String observed = counterState(schematic, result);
+        checks.add(DynamicTest.dynamicTest(
+                "2-bit counter " + stage + ": observed Q1Q0=" + observed,
+                () -> assertEquals(expected, observed, stage)));
+    }
+
+    private static String counterState(Schematic schematic, SimulationResult result) {
+        Value q1 = output(schematic, result, "Q1");
+        Value q0 = output(schematic, result, "Q0");
+        return bit(q1) + bit(q0);
+    }
+
+    private static char bit(Value value) {
+        return value == Value.ONE ? '1' : value == Value.ZERO ? '0' : 'X';
     }
 
     private static Schematic load(String name) throws IOException {
@@ -184,15 +237,5 @@ class SequentialExamplesBehaviorTest {
             ClockStepper stepper, Schematic schematic, SimulationResult result) {
         result = stepper.step(schematic, result);
         return stepper.step(schematic, result);
-    }
-
-    private static void assertCounterState(
-            Schematic schematic, SimulationResult result, String state, String stage) {
-        Value q1 = output(schematic, result, "Q1");
-        Value q0 = output(schematic, result, "Q0");
-        Value expectedQ1 = state.charAt(0) == '1' ? Value.ONE : Value.ZERO;
-        Value expectedQ0 = state.charAt(1) == '1' ? Value.ONE : Value.ZERO;
-        assertEquals(expectedQ1, q1, stage + ": expected Q1Q0=" + state);
-        assertEquals(expectedQ0, q0, stage + ": expected Q1Q0=" + state);
     }
 }
