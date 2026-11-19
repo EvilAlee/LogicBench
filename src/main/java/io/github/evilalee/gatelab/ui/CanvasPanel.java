@@ -12,6 +12,7 @@ import io.github.evilalee.gatelab.model.SchematicHistory;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.ClockStepper;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
 
@@ -125,6 +126,7 @@ public final class CanvasPanel extends JPanel {
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private final List<Consumer<Schematic>> schematicListeners = new ArrayList<>();
     private SimulationResult simulationResult;
+    private final ClockStepper clockStepper = new ClockStepper();
     private long simulationRecomputeCount;
     private final Set<String> selectedIds = new LinkedHashSet<>();
     private final Set<WireSegment> selectedWires = new LinkedHashSet<>();
@@ -264,14 +266,56 @@ public final class CanvasPanel extends JPanel {
         resetGesture();
         transform.resetToDefault();
         simulationResult = null;
+        clockStepper.reset(schematic);
         notifySelectionChanged();
         toolModeListener.accept(activeTool);
         notifySchematicReplaced();
         notifyHistoryStateChanged();
         recomputeSimulation();
+        statusMessageListener.accept(simulationStatusText());
     }
 
     public SimulationResult simulationResult() { return simulationResult; }
+
+    /** Advances every Clock once while preserving the previously settled gate outputs. */
+    public void stepClock() {
+        if (galleryMode) {
+            return;
+        }
+        schematic.removeChangeListener(schematicSimulationListener);
+        try {
+            simulationResult = clockStepper.step(schematic, simulationResult);
+        } finally {
+            schematic.addChangeListener(schematicSimulationListener);
+        }
+        simulationRecomputeCount++;
+        repaint();
+        statusMessageListener.accept(simulationStatusText());
+    }
+
+    /** Resets input and Clock sources, the step counter, and all prior gate state. */
+    public void resetSimulation() {
+        if (galleryMode) {
+            return;
+        }
+        schematic.removeChangeListener(schematicSimulationListener);
+        try {
+            simulationResult = clockStepper.reset(schematic);
+        } finally {
+            schematic.addChangeListener(schematicSimulationListener);
+        }
+        simulationRecomputeCount++;
+        repaint();
+        statusMessageListener.accept(simulationStatusText());
+    }
+
+    public String simulationStatusText() {
+        long steps = clockStepper.stepCount();
+        double cycles = steps / 2.0;
+        String cycleText = cycles == Math.rint(cycles)
+                ? Long.toString((long) cycles) : Double.toString(cycles);
+        return "Step " + steps + ", cycle " + cycleText;
+    }
 
     public void setShowGateNames(boolean show) {
         if (showGateNames != show) {
@@ -1440,8 +1484,14 @@ public final class CanvasPanel extends JPanel {
                             component.facing(), x, y);
                 }
                 Value signal = componentSignal(component);
-                if (signal != null) paintSignalDigit(screenGraphics, definition,
-                        component.facing(), x, y, signal);
+                if (signal != null) {
+                    if (component.typeId().equals("clock")) {
+                        paintClockLevel(screenGraphics, definition, component.facing(), x, y, signal);
+                    } else {
+                        paintSignalDigit(screenGraphics, definition,
+                                component.facing(), x, y, signal);
+                    }
+                }
             }
 
             worldGraphics.setColor(Color.BLACK);
@@ -1644,10 +1694,32 @@ public final class CanvasPanel extends JPanel {
 
     private Value componentSignal(PlacedComponent component) {
         return switch (component.typeId()) {
-            case "input" -> simulationResult.inputValues().getOrDefault(component.id(), Value.ZERO);
+            case "input", "clock" ->
+                    simulationResult.inputValues().getOrDefault(component.id(), Value.ZERO);
             case "output" -> simulationResult.outputValues().getOrDefault(component.id(), Value.X);
             default -> null;
         };
+    }
+
+    private void paintClockLevel(Graphics2D graphics, GateDef definition, Facing facing,
+            int originX, int originY, Value value) {
+        GateGeometry.Bounds bounds = GateGeometry.bounds(definition, facing);
+        Point2D.Double center = transform.worldToScreen(
+                originX + bounds.x() + bounds.width() / 2.0,
+                originY + bounds.y() + bounds.height() * 0.72);
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            String digit = value == Value.ONE ? "1" : "0";
+            g2.setColor(valueColor(value));
+            g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
+            java.awt.FontMetrics metrics = g2.getFontMetrics();
+            float left = (float) (center.x - metrics.stringWidth(digit) / 2.0);
+            float baseline = (float) (center.y
+                    + (metrics.getAscent() - metrics.getDescent()) / 2.0);
+            g2.drawString(digit, left, baseline);
+        } finally {
+            g2.dispose();
+        }
     }
 
     private void paintSignalDigit(Graphics2D graphics, GateDef definition, Facing facing,
