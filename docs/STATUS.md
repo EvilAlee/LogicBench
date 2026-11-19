@@ -20,7 +20,7 @@
 - PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
 
 ## In progress
-- feature-gate-names: add app-preference visibility for gate family names and optional per-gate labels with file persistence and undo support.
+- feature-gate-names: implementation complete in PR #29; Java 25 GitHub Actions tests pass; awaiting review and merge.
 
 ## Next
 1. M9a attribute table with editable labels
