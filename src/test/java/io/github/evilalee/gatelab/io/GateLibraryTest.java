@@ -19,10 +19,10 @@ class GateLibraryTest {
     private static final int GRID = 10;
 
     @Test
-    void gatesJsonLoadsTenDefinitionsAndEverySvgParsesWithJsvg() {
+    void gatesJsonLoadsElevenDefinitionsAndEverySvgParsesWithJsvg() {
         GateLibrary library = GateLibrary.load();
 
-        assertEquals(10, library.all().size());
+        assertEquals(11, library.all().size());
         assertSame(library, GateLibrary.load());
 
         SVGLoader loader = new SVGLoader();
@@ -34,6 +34,16 @@ class GateLibraryTest {
             assertTrue(document.viewBox().width > 0, definition.id() + " SVG viewBox width");
             assertTrue(document.viewBox().height > 0, definition.id() + " SVG viewBox height");
         }
+    }
+
+    @Test
+    void clockIsAnInputSizedComponentWithOneOutputAndNoInputs() {
+        GateDef clock = GateLibrary.load().get("clock");
+        assertEquals(20, clock.width());
+        assertEquals(20, clock.height());
+        assertEquals(List.of(), clock.inputs());
+        assertEquals(new GateGeometry.Offset(20, 10), clock.output());
+        assertEquals("svg/clock.svg", clock.svgResource());
     }
 
     @Test

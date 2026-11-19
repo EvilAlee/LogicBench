@@ -94,6 +94,35 @@ class SchematicJsonTest {
     }
 
     @Test
+    void clockLevelsRoundTripAndSchematicsWithoutClocksKeepTheirExistingJson() {
+        Schematic clocked = new Schematic(DEFINITIONS);
+        PlacedComponent highClock = clocked.add("clock", 0, 0, Facing.EAST);
+        PlacedComponent lowClock = clocked.add("clock", 100, 0, Facing.EAST);
+        clocked.setClockValue(highClock.id(), true);
+
+        String clockJson = SchematicJson.toJson(clocked);
+        assertTrue(clockJson.contains("\"type\": \"clock\""));
+        assertTrue(clockJson.contains("\"high\": true"));
+        assertTrue(clockJson.contains("\"high\": false"));
+        Schematic loadedClocks = SchematicJson.fromJson(clockJson, DEFINITIONS);
+        assertTrue(loadedClocks.clockValue(highClock.id()));
+        assertFalse(loadedClocks.clockValue(lowClock.id()));
+        assertEquals(clockJson, SchematicJson.toJson(loadedClocks));
+
+        Schematic legacy = new Schematic(DEFINITIONS);
+        PlacedComponent input = legacy.add("input", 0, 0, Facing.EAST);
+        legacy.add("and", 100, 0, Facing.EAST);
+        legacy.setInputValue(input.id(), true);
+        String legacyJson = SchematicJson.toJson(legacy);
+        assertFalse(legacyJson.contains("\"type\": \"clock\""));
+
+        Schematic reloadedLegacy = SchematicJson.fromJson(legacyJson, DEFINITIONS);
+        assertEquals(legacyJson, SchematicJson.toJson(reloadedLegacy));
+        assertTrue(reloadedLegacy.components().stream()
+                .noneMatch(component -> component.typeId().equals("clock")));
+    }
+
+    @Test
     void undefinedInputModeRoundTripsAndLegacyDocumentsDefaultToIgnore() {
         Schematic original = new Schematic(DEFINITIONS);
         original.setUndefinedInputMode(UndefinedInputMode.ERROR);

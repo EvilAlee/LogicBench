@@ -53,6 +53,7 @@ public final class SchematicCompiler {
         Circuit circuit = new Circuit();
         Map<PinKey, Pin> pinsByKey = new LinkedHashMap<>();
         Map<String, InputPin> inputs = new LinkedHashMap<>();
+        Set<String> clockIds = new LinkedHashSet<>();
         Map<String, OutputProbe> outputs = new LinkedHashMap<>();
         Map<String, Gate> gates = new LinkedHashMap<>();
         Set<String> gateIds = new LinkedHashSet<>();
@@ -74,6 +75,13 @@ public final class SchematicCompiler {
                     circuit.addComponent(output);
                     outputs.put(placed.id(), output);
                     pinsByKey.put(new PinKey(placed.id(), "in0"), output.input());
+                }
+                case "clock" -> {
+                    InputPin clock = new InputPin(placed.id());
+                    circuit.addComponent(clock);
+                    inputs.put(placed.id(), clock);
+                    clockIds.add(placed.id());
+                    pinsByKey.put(new PinKey(placed.id(), "out"), clock.output());
                 }
                 default -> {
                     gateIds.add(placed.id());
@@ -140,8 +148,10 @@ public final class SchematicCompiler {
         simulator.setInitialGateOutputValues(
                 previous == null ? Map.of() : previous.gateOutputValues());
         for (Map.Entry<String, InputPin> entry : inputs.entrySet()) {
-            simulator.setInputValue(entry.getValue(),
-                    schematic.inputValue(entry.getKey()) ? Value.ONE : Value.ZERO);
+            boolean high = clockIds.contains(entry.getKey())
+                    ? schematic.clockValue(entry.getKey())
+                    : schematic.inputValue(entry.getKey());
+            simulator.setInputValue(entry.getValue(), high ? Value.ONE : Value.ZERO);
         }
         simulator.settle();
 
@@ -164,7 +174,9 @@ public final class SchematicCompiler {
 
         Map<String, Value> inputValues = new LinkedHashMap<>();
         for (String id : inputs.keySet()) {
-            inputValues.put(id, schematic.inputValue(id) ? Value.ONE : Value.ZERO);
+            boolean high = clockIds.contains(id)
+                    ? schematic.clockValue(id) : schematic.inputValue(id);
+            inputValues.put(id, high ? Value.ONE : Value.ZERO);
         }
         Map<String, Value> outputValues = new LinkedHashMap<>();
         for (Map.Entry<String, OutputProbe> entry : outputs.entrySet()) {

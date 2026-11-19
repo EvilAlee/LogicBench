@@ -12,6 +12,7 @@ import javax.swing.AbstractAction;
 import javax.swing.AbstractCellEditor;
 import javax.swing.JComboBox;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JCheckBoxMenuItem;
@@ -153,6 +154,7 @@ public final class Main {
         JLabel statusMessage = new JLabel(" ");
         statusMessage.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
         canvas.setStatusMessageListener(statusMessage::setText);
+        canvas.setStatusMessage(canvas.simulationStatusText());
         content.add(statusMessage, BorderLayout.SOUTH);
 
         canvas.setToolModeListener(tool -> {
@@ -240,15 +242,18 @@ public final class Main {
         menuBar.add(edit);
         menuBar.add(createViewMenu(canvas));
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
-        menuBar.add(createSimulateMenu(canvas));
+        menuBar.add(createSimulateMenu(canvas, document));
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
         menuBar.add(menuWithDisabledItems("Help", "User Guide", "About LogicBench"));
         return menuBar;
     }
 
     private static boolean hasTidyableGate(Schematic schematic) {
-        return schematic.components().stream().anyMatch(component ->
-                !component.typeId().equals("input") && !component.typeId().equals("output"));
+        return schematic.components().stream().noneMatch(component ->
+                component.typeId().equals("clock"))
+                && schematic.components().stream().anyMatch(component ->
+                        !component.typeId().equals("input")
+                                && !component.typeId().equals("output"));
     }
 
     private static void tidyCircuit(JFrame frame, CanvasPanel canvas) {
@@ -287,11 +292,32 @@ public final class Main {
     }
 
     static JMenu createSimulateMenu(CanvasPanel canvas) {
-        JMenu simulate = menuWithDisabledItems("Simulate", "Tick Once", "Ticks Enabled");
+        return createSimulateMenu(canvas, new DocumentState());
+    }
+
+    private static JMenu createSimulateMenu(CanvasPanel canvas, DocumentState document) {
+        JMenu simulate = new JMenu("Simulate");
         JMenuItem reset = new JMenuItem("Reset");
-        reset.addActionListener(event -> canvas.resetInputs());
-        simulate.insert(reset, 0);
-        simulate.insertSeparator(1);
+        reset.addActionListener(event -> canvas.resetSimulation());
+        simulate.add(reset);
+        simulate.addSeparator();
+
+        JMenuItem tickOnce = new JMenuItem("Tick Once");
+        tickOnce.addActionListener(event -> canvas.stepClock());
+        JCheckBoxMenuItem ticksEnabled = new JCheckBoxMenuItem("Ticks Enabled");
+        Timer timer = new Timer(500, event -> canvas.stepClock());
+        timer.setCoalesce(true);
+        ticksEnabled.addActionListener(event -> {
+            if (ticksEnabled.isSelected()) {
+                timer.start();
+            } else {
+                timer.stop();
+            }
+        });
+        document.clockTimer = timer;
+        document.ticksEnabledItem = ticksEnabled;
+        simulate.add(tickOnce);
+        simulate.add(ticksEnabled);
 
         JRadioButtonMenuItem ignore =
                 new JRadioButtonMenuItem("Ignore unconnected inputs");
@@ -371,6 +397,7 @@ public final class Main {
 
     private static void createNew(
             JFrame frame, CanvasPanel canvas, DocumentState document) {
+        stopClockTicks(document);
         if (!confirmUnsavedChanges(frame, canvas, document)) {
             return;
         }
@@ -382,6 +409,7 @@ public final class Main {
 
     private static void openDocument(
             JFrame frame, CanvasPanel canvas, DocumentState document) {
+        stopClockTicks(document);
         JFileChooser chooser = schematicChooser();
         if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) {
             return;
@@ -518,7 +546,17 @@ public final class Main {
     private static void requestClose(
             JFrame frame, CanvasPanel canvas, DocumentState document) {
         if (confirmUnsavedChanges(frame, canvas, document)) {
+            stopClockTicks(document);
             frame.dispose();
+        }
+    }
+
+    private static void stopClockTicks(DocumentState document) {
+        if (document.clockTimer != null) {
+            document.clockTimer.stop();
+        }
+        if (document.ticksEnabledItem != null) {
+            document.ticksEnabledItem.setSelected(false);
         }
     }
 
@@ -554,6 +592,8 @@ public final class Main {
         private long savedModificationCount;
         private Schematic observedSchematic;
         private Runnable titleListener;
+        private Timer clockTimer;
+        private JCheckBoxMenuItem ticksEnabledItem;
     }
 
     private static JMenu menuWithDisabledItems(String title, String... items) {
@@ -599,7 +639,7 @@ public final class Main {
         for (String family : GateLibrary.load().families()) {
             ComponentTreeItem item = new ComponentTreeItem(
                     family, treeLabel(family));
-            if (family.equals("input") || family.equals("output")) {
+            if (family.equals("input") || family.equals("output") || family.equals("clock")) {
                 pins.add(new DefaultMutableTreeNode(item));
             } else {
                 gates.add(new DefaultMutableTreeNode(item));
@@ -681,6 +721,7 @@ public final class Main {
             case "buffer" -> "Buffer";
             case "input" -> "Input";
             case "output" -> "Output";
+            case "clock" -> "Clock";
             default -> id;
         };
     }

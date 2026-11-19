@@ -5,12 +5,46 @@ import org.junit.jupiter.api.Test;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
 import java.awt.Component;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MainMenuTest {
+    @Test
+    void simulateMenuEnablesTickOnceAndExposesTicksEnabledCheckbox() {
+        CanvasPanel canvas = new CanvasPanel();
+        JMenu simulate = Main.createSimulateMenu(canvas);
+        JMenuItem tickOnce = null;
+        JCheckBoxMenuItem ticksEnabled = null;
+        JMenuItem reset = null;
+        for (Component item : simulate.getMenuComponents()) {
+            if (item instanceof JCheckBoxMenuItem checkbox
+                    && "Ticks Enabled".equals(checkbox.getText())) {
+                ticksEnabled = checkbox;
+            } else if (item instanceof JMenuItem tickItem
+                    && "Tick Once".equals(tickItem.getText())) {
+                tickOnce = tickItem;
+            } else if (item instanceof JMenuItem resetItem
+                    && "Reset".equals(resetItem.getText())) {
+                reset = resetItem;
+            }
+        }
+
+        assertNotNull(tickOnce);
+        assertTrue(tickOnce.isEnabled());
+        assertNotNull(ticksEnabled);
+        assertNotNull(reset);
+
+        tickOnce.doClick();
+        assertTrue(canvas.simulationStatusText().contains("Step 1"));
+        assertTrue(canvas.simulationStatusText().contains("cycle 0.5"));
+        reset.doClick();
+        assertEquals("Step 0, cycle 0", canvas.simulationStatusText());
+    }
+
     @Test
     void startupMenuBarContainsShowGateNamesUnderView() {
         // createMenuBar is the same builder used by Main.createFrame during startup.
