@@ -150,6 +150,28 @@ class SchematicHistoryTest {
     }
 
     @Test
+    void changingAGateLabelIsExactlyOneUndoableStep() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        SchematicHistory history = new SchematicHistory();
+        PlacedComponent gate = schematic.add("and", 0, 0, Facing.EAST);
+        long before = schematic.modificationCount();
+
+        history.begin(schematic);
+        assertTrue(schematic.setLabel(gate.id(), "sum stage"));
+        assertTrue(history.commit(schematic));
+
+        assertEquals(before + 1, schematic.modificationCount());
+        assertEquals(1, history.undoDepth());
+        assertEquals("sum stage", schematic.components().getFirst().label());
+        assertTrue(history.undo(schematic));
+        assertEquals("", schematic.components().getFirst().label());
+        assertFalse(history.canUndo());
+        assertTrue(history.canRedo());
+        assertTrue(history.redo(schematic));
+        assertEquals("sum stage", schematic.components().getFirst().label());
+    }
+
+    @Test
     void historyIsBoundedToTheLatestOneHundredSteps() {
         Schematic schematic = new Schematic(DEFINITIONS);
         SchematicHistory history = new SchematicHistory();
