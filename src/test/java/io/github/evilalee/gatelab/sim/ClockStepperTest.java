@@ -74,8 +74,10 @@ class ClockStepperTest {
         assertEquals(Value.ONE, result.outputValues().get(q.id()));
         assertEquals(Value.ZERO, result.outputValues().get(qBar.id()));
 
+        schematic.setInputValue(reset.id(), true);
         result = stepper.reset(schematic);
         assertFalse(schematic.clockValue(clock.id()));
+        assertFalse(schematic.inputValue(reset.id()));
         assertEquals(0, stepper.stepCount());
         assertEquals(Value.X, result.outputValues().get(q.id()));
         assertEquals(Value.X, result.outputValues().get(qBar.id()));
