@@ -186,9 +186,9 @@ class SequentialExamplesBehaviorTest {
             Schematic schematic, SimulationResult result, String state, String stage) {
         Value q1 = output(schematic, result, "Q1");
         Value q0 = output(schematic, result, "Q0");
-        assertEquals(Value.valueOf(String.valueOf(state.charAt(0))),
-                q1, stage + ": expected Q1Q0=" + state);
-        assertEquals(Value.valueOf(String.valueOf(state.charAt(1))),
-                q0, stage + ": expected Q1Q0=" + state);
+        Value expectedQ1 = state.charAt(0) == '1' ? Value.ONE : Value.ZERO;
+        Value expectedQ0 = state.charAt(1) == '1' ? Value.ONE : Value.ZERO;
+        assertEquals(expectedQ1, q1, stage + ": expected Q1Q0=" + state);
+        assertEquals(expectedQ0, q0, stage + ": expected Q1Q0=" + state);
     }
 }
