@@ -22,8 +22,7 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
-- feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
-- feature-sequential-clock: add an app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, and UI tick controls.
+- feature-sequential-examples: add the Examples menu and loader tests. The D-latch fixture passes the specified behavior checks; the existing D flip-flop, divide-by-2, and 2-bit counter fixtures currently fail the specified active-high reset sequence. Their reset inputs are labeled RESET_N; fixture files are not changed by this work.
 
 ## Next
 1. M9a attribute table with editable labels
