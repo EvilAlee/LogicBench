@@ -4,6 +4,7 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.JMenu;
+import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import java.awt.Component;
 import java.io.IOException;
