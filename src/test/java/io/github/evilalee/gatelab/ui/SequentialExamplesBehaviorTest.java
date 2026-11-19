@@ -121,8 +121,12 @@ class SequentialExamplesBehaviorTest {
 
         schematic.setInputValue(reset.id(), true);
         result = settle(schematic, result);
+        result = fullCycle(stepper, schematic, result);
+        assertCounterState(schematic, result, "00", "R=1 reset cycle");
+
         schematic.setInputValue(reset.id(), false);
         result = settle(schematic, result);
+        assertCounterState(schematic, result, "00", "released reset state");
 
         String[] expected = {"01", "10", "11", "00"};
         for (String state : expected) {
