@@ -19,7 +19,6 @@ import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
-import java.awt.event.Adjustable;
 
 /**
  * Scrollable timing-diagram view over a {@link SignalRecorder}.
@@ -124,9 +123,15 @@ public final class WaveformPanel extends JPanel {
                 java.util.List<String> labels = recorder.labels();
                 int sampleCount = recorder.sampleCount();
                 int traceRight = getWidth() - RIGHT_PADDING;
-                int traceColorLabelWidth = labelColumnWidth();
 
-                g2.setFont(getFont() == null ? UIManager.getFont("Label.font") : getFont());
+                Font paintFont = getFont();
+                if (paintFont == null) {
+                    paintFont = UIManager.getFont("Label.font");
+                }
+                if (paintFont == null) {
+                    paintFont = new Font(Font.DIALOG, Font.PLAIN, 12);
+                }
+                g2.setFont(paintFont);
                 g2.setColor(themeColor("Label.foreground", Color.DARK_GRAY));
 
                 for (int row = 0; row < labels.size(); row++) {
