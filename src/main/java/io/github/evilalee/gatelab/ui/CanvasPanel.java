@@ -18,6 +18,8 @@ import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
+import javax.swing.JOptionPane;
+import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -40,7 +42,9 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
+import java.awt.geom.Line2D;
 import java.awt.geom.Point2D;
+import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -145,6 +149,7 @@ public final class CanvasPanel extends JPanel {
     private Point lastPanPoint;
 
     private Tool activeTool = Tool.EDIT;
+    private boolean showGateNames = true;
     private String previewTypeId;
     private Facing previewFacing = Facing.EAST;
     private int previewX;
@@ -267,6 +272,17 @@ public final class CanvasPanel extends JPanel {
     }
 
     public SimulationResult simulationResult() { return simulationResult; }
+
+    public void setShowGateNames(boolean show) {
+        if (showGateNames != show) {
+            showGateNames = show;
+            repaint();
+        }
+    }
+
+    public boolean showGateNames() {
+        return showGateNames;
+    }
 
     /**
      * Replaces the current topology as one history gesture, retaining the active
@@ -729,6 +745,14 @@ public final class CanvasPanel extends JPanel {
 
     private void installMouseControls() {
         MouseAdapter mouseControls = new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)
+                        && !galleryMode && activeTool == Tool.EDIT) {
+                    editGateLabelAt(event.getPoint());
+                }
+            }
+
             @Override
             public void mousePressed(MouseEvent event) {
                 requestFocusInWindow();
@@ -1386,6 +1410,9 @@ public final class CanvasPanel extends JPanel {
                 int labelMargin = component.label().isEmpty()
                         ? DIRTY_REGION_MARGIN : Math.max(
                                 DIRTY_REGION_MARGIN, component.label().length() * 7 + 10);
+                if (isGateComponent(component)) {
+                    labelMargin = Math.max(labelMargin, 30);
+                }
                 if (!screenClip.intersects(componentScreenBounds(
                         definition, component.facing(), x, y, labelMargin))) {
                     continue;
@@ -1405,6 +1432,7 @@ public final class CanvasPanel extends JPanel {
                             screenGraphics, definition, component.facing(), x, y);
                 }
                 paintComponentLabel(screenGraphics, component, definition, x, y);
+                paintGateName(worldGraphics, component, definition, x, y);
 
                 if (selected) {
                     paintSelectionOutline(worldGraphics, definition,
@@ -1470,7 +1498,7 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
-    /** Labels are screen-sized text outside the artwork and use the active Look & Feel color. */
+    /** User labels remain screen-sized and sit above gates or beside I/O pins. */
     private void paintComponentLabel(
             Graphics2D graphics,
             PlacedComponent component,
@@ -1481,11 +1509,6 @@ public final class CanvasPanel extends JPanel {
             return;
         }
         GateGeometry.Bounds bounds = GateGeometry.bounds(definition, component.facing());
-        double labelX = component.typeId().equals("input")
-                ? originX + bounds.x() : originX + bounds.x() + bounds.width();
-        double labelY = originY + bounds.y() + bounds.height() / 2.0;
-        Point2D.Double screen = transform.worldToScreen(labelX, labelY);
-
         Graphics2D labelGraphics = (Graphics2D) graphics.create();
         try {
             Color foreground = UIManager.getColor("Label.foreground");
@@ -1493,14 +1516,129 @@ public final class CanvasPanel extends JPanel {
             labelGraphics.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10));
             java.awt.FontMetrics metrics = labelGraphics.getFontMetrics();
             int textWidth = metrics.stringWidth(component.label());
-            float x = (float) (component.typeId().equals("input")
-                    ? screen.x - textWidth - 6.0 : screen.x + 6.0);
-            float baseline = (float) (screen.y
-                    + (metrics.getAscent() - metrics.getDescent()) / 2.0);
+            final float x;
+            final float baseline;
+            if (isGateComponent(component)) {
+                double centerX = originX + bounds.x() + bounds.width() / 2.0;
+                double topY = originY + bounds.y();
+                Point2D.Double screen = transform.worldToScreen(centerX, topY);
+                x = (float) (screen.x - textWidth / 2.0);
+                baseline = (float) (screen.y - 6.0);
+                Rectangle2D.Double textArea = new Rectangle2D.Double(
+                        centerX - (textWidth / 2.0 + 3.0) / transform.scale(),
+                        topY - (metrics.getAscent() + 9.0) / transform.scale(),
+                        (textWidth + 6.0) / transform.scale(),
+                        (metrics.getHeight() + 4.0) / transform.scale());
+                if (!isLabelAreaClear(textArea, component.id())) {
+                    return;
+                }
+            } else {
+                double labelX = component.typeId().equals("input")
+                        ? originX + bounds.x() : originX + bounds.x() + bounds.width();
+                double labelY = originY + bounds.y() + bounds.height() / 2.0;
+                Point2D.Double screen = transform.worldToScreen(labelX, labelY);
+                x = (float) (component.typeId().equals("input")
+                        ? screen.x - textWidth - 6.0 : screen.x + 6.0);
+                baseline = (float) (screen.y
+                        + (metrics.getAscent() - metrics.getDescent()) / 2.0);
+            }
             labelGraphics.drawString(component.label(), x, baseline);
         } finally {
             labelGraphics.dispose();
         }
+    }
+
+    /**
+     * Gate names sit just below the rotated artwork and inherit the canvas zoom.
+     * They are skipped when the text would obscure a wire, pin or other component.
+     */
+    private void paintGateName(
+            Graphics2D graphics,
+            PlacedComponent component,
+            GateDef definition,
+            int originX,
+            int originY) {
+        if (!showGateNames || transform.scale() < GateNameRenderer.MIN_ZOOM
+                || !isGateComponent(component)) {
+            return;
+        }
+        String text = GateNameRenderer.textForType(component.typeId());
+        Font font = new Font(Font.SANS_SERIF, Font.PLAIN, 8);
+        GateGeometry.Bounds bounds = GateGeometry.bounds(definition, component.facing());
+        java.awt.FontMetrics metrics = graphics.getFontMetrics(font);
+        int textWidth = metrics.stringWidth(text);
+        double left = originX + bounds.x() + (bounds.width() - textWidth) / 2.0;
+        double baseline = originY + bounds.y() + bounds.height() + 11.0;
+        Rectangle2D.Double textArea = new Rectangle2D.Double(
+                left - 2.0, baseline - metrics.getAscent() - 2.0,
+                textWidth + 4.0, metrics.getHeight() + 4.0);
+        if (!isLabelAreaClear(textArea, component.id())) {
+            return;
+        }
+
+        Graphics2D nameGraphics = (Graphics2D) graphics.create();
+        try {
+            Color foreground = UIManager.getColor("Label.foreground");
+            nameGraphics.setColor(foreground == null ? Color.DARK_GRAY : foreground);
+            nameGraphics.setFont(font);
+            nameGraphics.drawString(text, (float) left, (float) baseline);
+        } finally {
+            nameGraphics.dispose();
+        }
+    }
+
+    private boolean isLabelAreaClear(Rectangle2D area, String ownerComponentId) {
+        for (WireSegment wire : schematic.wires()) {
+            if (new Line2D.Double(
+                    wire.x1(), wire.y1(), wire.x2(), wire.y2()).intersects(area)) {
+                return false;
+            }
+        }
+        for (Connectivity.PinPosition pin : schematic.pinPositions()) {
+            if (area.contains(pin.x(), pin.y())) {
+                return false;
+            }
+        }
+        for (PlacedComponent other : schematic.components()) {
+            if (other.id().equals(ownerComponentId)) {
+                continue;
+            }
+            GateGeometry.Bounds bounds =
+                    GateGeometry.bounds(schematic.definitionFor(other), other.facing());
+            Rectangle2D otherBounds = new Rectangle2D.Double(
+                    other.x() + bounds.x(), other.y() + bounds.y(),
+                    bounds.width(), bounds.height());
+            if (otherBounds.intersects(area)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isGateComponent(PlacedComponent component) {
+        return !component.typeId().equals("input") && !component.typeId().equals("output")
+                && !GateNameRenderer.textForType(component.typeId()).isEmpty();
+    }
+
+    private void editGateLabelAt(Point screenPoint) {
+        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        PlacedComponent component = schematic.componentAt(
+                (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
+        if (component == null || !isGateComponent(component)) {
+            return;
+        }
+
+        JTextField field = new JTextField(component.label(), 24);
+        int choice = JOptionPane.showConfirmDialog(
+                this, new Object[]{"Gate label:", field}, "Edit gate label",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+        beginHistoryGesture();
+        schematic.setLabel(component.id(), field.getText());
+        commitHistoryGesture();
+        repaint();
     }
 
     private Value componentSignal(PlacedComponent component) {
