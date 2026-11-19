@@ -40,6 +40,7 @@ public final class Schematic {
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<WireSegment> wires = new ArrayList<>();
     private final Map<String, Boolean> inputValues = new HashMap<>();
+    private final Map<String, Boolean> clockValues = new HashMap<>();
     private final List<Runnable> changeListeners = new ArrayList<>();
     private long modificationCount;
     private long nextComponentNumber = 1;
@@ -148,6 +149,7 @@ public final class Schematic {
             if (components.get(index).id().equals(id)) {
                 components.remove(index);
                 inputValues.remove(id);
+                clockValues.remove(id);
                 notifyChanged();
                 return true;
             }
@@ -646,10 +648,14 @@ public final class Schematic {
         }
 
         Map<String, Boolean> survivingInputValues = new HashMap<>();
+        Map<String, Boolean> survivingClockValues = new HashMap<>();
         for (PlacedComponent current : components) {
             if ("input".equals(current.typeId())
                     && Boolean.TRUE.equals(inputValues.get(current.id()))) {
                 survivingInputValues.put(current.id(), true);
+            } else if ("clock".equals(current.typeId())
+                    && Boolean.TRUE.equals(clockValues.get(current.id()))) {
+                survivingClockValues.put(current.id(), true);
             }
         }
 
@@ -658,10 +664,14 @@ public final class Schematic {
         wires.clear();
         wires.addAll(replacementWires);
         inputValues.clear();
+        clockValues.clear();
         for (PlacedComponent replacement : replacementComponents) {
             if ("input".equals(replacement.typeId())
                     && Boolean.TRUE.equals(survivingInputValues.get(replacement.id()))) {
                 inputValues.put(replacement.id(), true);
+            } else if ("clock".equals(replacement.typeId())
+                    && Boolean.TRUE.equals(survivingClockValues.get(replacement.id()))) {
+                clockValues.put(replacement.id(), true);
             }
         }
         notifyChanged();
@@ -733,6 +743,56 @@ public final class Schematic {
             return false;
         }
         inputValues.clear();
+        notifyChanged();
+        return true;
+    }
+
+    /** Current app-controlled level of a Clock component; new clocks start LOW. */
+    public boolean clockValue(String id) {
+        requireClock(id);
+        return Boolean.TRUE.equals(clockValues.get(id));
+    }
+
+    public void setClockValue(String id, boolean value) {
+        requireClock(id);
+        if (clockValue(id) == value) {
+            return;
+        }
+        if (value) {
+            clockValues.put(id, true);
+        } else {
+            clockValues.remove(id);
+        }
+        notifyChanged();
+    }
+
+    /** Flips every Clock together and publishes one schematic change. */
+    public boolean toggleClocks() {
+        boolean found = false;
+        for (PlacedComponent component : components) {
+            if (!"clock".equals(component.typeId())) {
+                continue;
+            }
+            found = true;
+            if (clockValue(component.id())) {
+                clockValues.remove(component.id());
+            } else {
+                clockValues.put(component.id(), true);
+            }
+        }
+        if (found) {
+            notifyChanged();
+        }
+        return found;
+    }
+
+    /** Clears all user input values and Clock levels as one mutation. */
+    public boolean resetSimulationSources() {
+        if (inputValues.isEmpty() && clockValues.isEmpty()) {
+            return false;
+        }
+        inputValues.clear();
+        clockValues.clear();
         notifyChanged();
         return true;
     }
@@ -980,6 +1040,15 @@ public final class Schematic {
         PlacedComponent component = components.get(indexOf(id));
         if (!"input".equals(component.typeId())) {
             throw new IllegalArgumentException("component is not an input: " + id);
+        }
+        return component;
+    }
+
+    private PlacedComponent requireClock(String id) {
+        Objects.requireNonNull(id, "id");
+        PlacedComponent component = components.get(indexOf(id));
+        if (!"clock".equals(component.typeId())) {
+            throw new IllegalArgumentException("component is not a Clock: " + id);
         }
         return component;
     }
