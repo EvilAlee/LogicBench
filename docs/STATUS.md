@@ -18,19 +18,20 @@
 - PR #24: Circuit > Tidy circuit — headless extraction, verified relayout, one-step undo, preserved I/O labels and switch values
 - PR #25: named expression signals — `:=` internal signals with no output pin, later references inlined, and reused-output hint
 - PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
+- PR #29: visible gate names and editable per-gate labels, with app preferences and version-1 file persistence
 
 ## In progress
-- feature-gate-names: implementation complete in PR #29; Java 25 GitHub Actions tests pass; awaiting review and merge.
+- feature-sequential-clock: add an app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, and UI tick controls.
 
 ## Next
 1. M9a attribute table with editable labels
 2. M9b gate variants
-3. Clock, flip-flops, 7-segment display
+3. Flip-flops, 7-segment display
 4. M10 analysis (truth table, expression, batch mode)
 5. Polish pass, distZip, demo script
 
 ## Known limitations
-- Feedback circuits (including latches) remain at X until forced by an input change.
+- Feedback circuits (including latches) remain at X until an input or Clock source establishes a state.
 - Gates are 2-input only until the M9a/M9b work is complete.
 
 ## Decisions
