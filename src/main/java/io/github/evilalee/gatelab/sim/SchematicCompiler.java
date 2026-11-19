@@ -174,7 +174,9 @@ public final class SchematicCompiler {
 
         Map<String, Value> inputValues = new LinkedHashMap<>();
         for (String id : inputs.keySet()) {
-            inputValues.put(id, schematic.inputValue(id) ? Value.ONE : Value.ZERO);
+            boolean high = clockIds.contains(id)
+                    ? schematic.clockValue(id) : schematic.inputValue(id);
+            inputValues.put(id, high ? Value.ONE : Value.ZERO);
         }
         Map<String, Value> outputValues = new LinkedHashMap<>();
         for (Map.Entry<String, OutputProbe> entry : outputs.entrySet()) {
