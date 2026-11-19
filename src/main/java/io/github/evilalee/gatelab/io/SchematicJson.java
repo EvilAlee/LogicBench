@@ -161,10 +161,7 @@ public final class SchematicJson {
                     throw new IllegalArgumentException(context + ".label must be a string");
                 }
                 label = labelElement.getAsString();
-                if (!label.isBlank() && !type.equals("input") && !type.equals("output")) {
-                    throw new IllegalArgumentException(
-                            context + ".label is only valid for input and output components");
-                }
+                // Labels are optional presentation metadata for any placed component.
             }
 
             Map<String, String> attributes = new LinkedHashMap<>();
