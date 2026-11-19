@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
 import java.awt.Component;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
