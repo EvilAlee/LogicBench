@@ -187,7 +187,7 @@ class SequentialExamplesBehaviorTest {
     private static String counterState(Schematic schematic, SimulationResult result) {
         Value q1 = output(schematic, result, "Q1");
         Value q0 = output(schematic, result, "Q0");
-        return bit(q1) + bit(q0);
+        return String.valueOf(bit(q1)) + bit(q0);
     }
 
     private static char bit(Value value) {
