@@ -266,7 +266,7 @@ public final class CanvasPanel extends JPanel {
         resetGesture();
         transform.resetToDefault();
         simulationResult = null;
-        clockStepper.reset(schematic);
+        clockStepper.resetStepCount();
         notifySelectionChanged();
         toolModeListener.accept(activeTool);
         notifySchematicReplaced();
