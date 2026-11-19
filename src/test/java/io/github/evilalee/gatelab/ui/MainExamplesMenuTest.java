@@ -15,7 +15,16 @@ class MainExamplesMenuTest {
     @Test
     void examplesMenuListsAllBundledCircuitsAndLoadsSelectedExampleAsUntitledDocument() {
         CanvasPanel canvas = new CanvasPanel();
-        JMenu examples = Main.createExamplesMenu(canvas);
+        JMenuBar menuBar = Main.createMenuBar(canvas);
+        JMenu examples = null;
+        for (int index = 0; index < menuBar.getMenuCount(); index++) {
+            JMenu candidate = menuBar.getMenu(index);
+            if (candidate != null && "Examples".equals(candidate.getText())) {
+                examples = candidate;
+                break;
+            }
+        }
+        assertNotNull(examples, "the startup menu bar must contain Examples");
 
         assertEquals(List.of("D latch", "D flip-flop", "Divide by 2", "2-bit counter"),
                 menuItemLabels(examples));
