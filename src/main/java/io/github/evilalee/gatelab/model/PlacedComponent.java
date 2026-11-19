@@ -42,9 +42,7 @@ public record PlacedComponent(
         if (label.isBlank()) {
             label = "";
         }
-        if (!label.isEmpty() && !typeId.equals("input") && !typeId.equals("output")) {
-            throw new IllegalArgumentException("only input and output components may have labels");
-        }
+        // Labels are presentation metadata; gates may carry optional user names too.
     }
 
     private static String requireText(String value, String name) {
