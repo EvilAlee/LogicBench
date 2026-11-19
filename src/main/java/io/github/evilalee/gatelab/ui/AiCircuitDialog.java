@@ -66,6 +66,7 @@ public final class AiCircuitDialog extends JDialog {
 
     private AiCircuitDialog(JFrame owner, CanvasPanel canvas, boolean cacheOnly) {
         super(owner, "From description (AI)", ModalityType.APPLICATION_MODAL);
+        setIconImages(AppIcons.load());
         this.canvas = Objects.requireNonNull(canvas, "canvas");
         this.cacheOnly = cacheOnly;
         this.config = AiConfig.load();
