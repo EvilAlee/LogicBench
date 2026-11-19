@@ -136,7 +136,13 @@ class SequentialExamplesBehaviorTest {
         SimulationResult result = SchematicCompiler.compileAndSettle(schematic);
         PlacedComponent reset = resetInput(schematic);
         List<DynamicTest> checks = new ArrayList<>();
-        addCounterCheck(checks, schematic, result, "00", "initial reset state");
+        String initial = counterState(schematic, result);
+        checks.add(DynamicTest.dynamicTest(
+                "2-bit counter initial reset state: observed Q1Q0=" + initial,
+                () -> assertEquals("00", initial, "initial reset state")));
+        if (!"00".equals(initial)) {
+            return checks.stream();
+        }
 
         schematic.setInputValue(reset.id(), true);
         result = settle(schematic, result);
