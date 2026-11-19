@@ -1411,7 +1411,8 @@ public final class CanvasPanel extends JPanel {
                         ? DIRTY_REGION_MARGIN : Math.max(
                                 DIRTY_REGION_MARGIN, component.label().length() * 7 + 10);
                 if (isGateComponent(component)) {
-                    labelMargin = Math.max(labelMargin, 30);
+                    labelMargin = Math.max(labelMargin,
+                            (int) Math.ceil(22.0 * transform.scale() + 6.0));
                 }
                 if (!screenClip.intersects(componentScreenBounds(
                         definition, component.facing(), x, y, labelMargin))) {
