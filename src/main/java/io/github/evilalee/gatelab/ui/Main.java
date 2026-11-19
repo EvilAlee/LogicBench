@@ -58,6 +58,8 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -227,6 +229,7 @@ public final class Main {
         exit.addActionListener(event -> requestClose(frame, canvas, document));
         file.add(exit);
         menuBar.add(file);
+        menuBar.add(createExamplesMenu(frame, canvas, document));
 
         JMenu circuit = new JMenu("Circuit");
         JMenuItem fromExpression = new JMenuItem("From expression...");
@@ -317,6 +320,79 @@ public final class Main {
             JOptionPane.showMessageDialog(
                     frame, message, "Cannot tidy circuit", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    static JMenu createExamplesMenu(CanvasPanel canvas) {
+        return createExamplesMenu(null, canvas, new DocumentState());
+    }
+
+    private static JMenu createExamplesMenu(
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        JMenu examples = new JMenu("Examples");
+        addExampleItem(examples, "D latch", "examples/d-latch.lbc", frame, canvas, document);
+        addExampleItem(examples, "D flip-flop", "examples/d-flip-flop.lbc", frame, canvas, document);
+        addExampleItem(examples, "Divide by 2", "examples/divide-by-2.lbc", frame, canvas, document);
+        addExampleItem(examples, "2-bit counter", "examples/counter-2bit.lbc", frame, canvas, document);
+        return examples;
+    }
+
+    private static void addExampleItem(
+            JMenu examples, String label, String resourcePath,
+            JFrame frame, CanvasPanel canvas, DocumentState document) {
+        JMenuItem item = new JMenuItem(label);
+        item.addActionListener(event -> openExample(
+                frame, canvas, document, resourcePath));
+        examples.add(item);
+    }
+
+    private static void openExample(
+            JFrame frame, CanvasPanel canvas, DocumentState document, String resourcePath) {
+        stopClockTicks(document);
+        if (!confirmUnsavedChanges(frame, canvas, document)) {
+            return;
+        }
+
+        final Schematic loaded;
+        try {
+            loaded = loadExampleSchematic(resourcePath);
+        } catch (IOException | IllegalArgumentException exception) {
+            String detail = exception.getMessage() == null
+                    ? "The selected example could not be loaded." : exception.getMessage();
+            String message = "Could not load example: " + detail;
+            canvas.setStatusMessage(message);
+            if (!GraphicsEnvironment.isHeadless()) {
+                JOptionPane.showMessageDialog(
+                        frame, message, "Example unavailable", JOptionPane.INFORMATION_MESSAGE);
+            }
+            return;
+        }
+
+        document.file = null;
+        document.savedModificationCount = loaded.modificationCount();
+        canvas.clearSignalHistory();
+        canvas.replaceSchematic(loaded);
+    }
+
+    /**
+     * Uses the same versioned parser as File > Open for bundled example resources.
+     * The path is relative to the classpath root, for example examples/d-latch.lbc.
+     */
+    static Schematic loadExampleSchematic(String resourcePath) throws IOException {
+        if (resourcePath == null || resourcePath.isBlank()) {
+            throw new IllegalArgumentException("Example resource path must not be blank");
+        }
+        String classpathPath = resourcePath.startsWith("/")
+                ? resourcePath : "/" + resourcePath;
+        try (InputStream stream = Main.class.getResourceAsStream(classpathPath)) {
+            if (stream == null) {
+                throw new IOException("Example resource not found: " + resourcePath);
+            }
+            return loadSchematic(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
+
+    private static Schematic loadSchematic(String json) {
+        return SchematicJson.fromJson(json, GateLibrary.load().all());
     }
 
     static JMenu createViewMenu(CanvasPanel canvas) {
@@ -472,7 +548,7 @@ public final class Main {
         final Schematic loaded;
         try {
             String json = Files.readString(selected);
-            loaded = SchematicJson.fromJson(json, GateLibrary.load().all());
+            loaded = loadSchematic(json);
         } catch (IOException | IllegalArgumentException exception) {
             showFileError(frame, "Could not open schematic", exception);
             return;
