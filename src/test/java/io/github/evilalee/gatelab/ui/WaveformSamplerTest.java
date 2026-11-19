@@ -56,8 +56,8 @@ class WaveformSamplerTest {
         PlacedComponent clock = schematic.add("clock", 0, 100, Facing.EAST);
         PlacedComponent inputOutput = schematic.add("output", 300, 0, Facing.EAST);
         PlacedComponent clockOutput = schematic.add("output", 300, 100, Facing.EAST);
-        schematic.addWire(20, 10, 300, 10);
-        schematic.addWire(20, 110, 300, 110);
+        schematic.addWire(0, 0, 300, 0);
+        schematic.addWire(0, 100, 300, 100);
 
         SchematicCompiler.SimulationResult simulation =
                 SchematicCompiler.compileAndSettle(schematic);
