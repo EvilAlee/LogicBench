@@ -54,15 +54,19 @@ class SchematicJsonTest {
         original.add(new PlacedComponent(
                 "output-F", "output", 100, 0, Facing.EAST, java.util.Map.of(), "F"));
         original.add(new PlacedComponent("input-empty", "input", 200, 0, Facing.EAST));
+        original.add(new PlacedComponent(
+                "gate-and", "and", 300, 0, Facing.EAST, java.util.Map.of(), "stage one"));
 
         String json = SchematicJson.toJson(original);
         assertTrue(json.contains("\"label\": \"A\""));
         assertTrue(json.contains("\"label\": \"F\""));
-        assertEquals(2, occurrences(json, "\"label\""));
+        assertTrue(json.contains("\"label\": \"stage one\""));
+        assertEquals(3, occurrences(json, "\"label\""));
 
         Schematic loaded = SchematicJson.fromJson(json, DEFINITIONS);
         assertEquals(original.components(), loaded.components());
-        assertEquals("", loaded.components().getLast().label());
+        assertEquals("", loaded.components().get(2).label());
+        assertEquals("stage one", loaded.components().getLast().label());
     }
 
     @Test
@@ -70,17 +74,21 @@ class SchematicJsonTest {
         Schematic loaded = SchematicJson.fromJson(
                 "{\"version\":1,\"components\":["
                         + "{\"id\":\"in\",\"type\":\"input\",\"x\":0,\"y\":0,"
+                        + "\"facing\":\"EAST\"},"
+                        + "{\"id\":\"gate\",\"type\":\"and\",\"x\":100,\"y\":0,"
                         + "\"facing\":\"EAST\"}],\"wires\":[]}", DEFINITIONS);
         assertEquals("", loaded.components().getFirst().label());
+        assertEquals("", loaded.components().getLast().label(),
+                "version-1 gate entries without labels remain valid");
     }
 
     @Test
-    void rejectsLabelsOnNonIoComponentsAndNonStringLabels() {
-        assertInvalid(document(component("g", "and", 0, 0, "EAST")
-                .replace("}", ",\"label\":\"not allowed\"}")),
-                "only valid for input and output");
+    void gateLabelsAreAcceptedAndNonStringLabelsAreRejected() {
+        Schematic loaded = SchematicJson.fromJson(document(component("g", "and", 0, 0, "EAST")
+                .replace("}", ",\"label\":\"sum stage\"}")), DEFINITIONS);
+        assertEquals("sum stage", loaded.components().getFirst().label());
         assertInvalid("{\"version\":1,\"components\":["
-                + "{\"id\":\"in\",\"type\":\"input\",\"x\":0,\"y\":0,"
+                + "{\"id\":\"g\",\"type\":\"and\",\"x\":0,\"y\":0,"
                 + "\"facing\":\"EAST\",\"label\":7}],\"wires\":[]}",
                 "label must be a string");
     }

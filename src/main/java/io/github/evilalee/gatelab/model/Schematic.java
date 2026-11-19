@@ -255,6 +255,26 @@ public final class Schematic {
     }
 
     /**
+     * Updates a component's visible label without changing its geometry or pins.
+     *
+     * @return true when the component exists and the request was accepted
+     */
+    public boolean setLabel(String id, String label) {
+        Objects.requireNonNull(label, "label");
+        int index = indexOf(id);
+        PlacedComponent current = components.get(index);
+        String normalized = label.isBlank() ? "" : label.trim();
+        if (current.label().equals(normalized)) {
+            return true;
+        }
+        components.set(index, new PlacedComponent(
+                current.id(), current.typeId(), current.x(), current.y(),
+                current.facing(), current.attributes(), normalized));
+        notifyChanged();
+        return true;
+    }
+
+    /**
      * Changes one registered attribute through the same atomic mutation path as
      * facing changes. Size/input variants therefore use M8b-v2's validated links.
      */

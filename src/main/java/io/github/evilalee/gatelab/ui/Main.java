@@ -238,6 +238,7 @@ public final class Main {
         });
         installUndoRedoBindings(frame, canvas);
         menuBar.add(edit);
+        menuBar.add(createViewMenu(canvas));
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
         menuBar.add(createSimulateMenu(canvas));
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
@@ -269,6 +270,20 @@ public final class Main {
             JOptionPane.showMessageDialog(
                     frame, message, "Cannot tidy circuit", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    static JMenu createViewMenu(CanvasPanel canvas) {
+        JMenu view = new JMenu("View");
+        JCheckBoxMenuItem showGateNames =
+                new JCheckBoxMenuItem("Show gate names", GateNamePreferences.load());
+        canvas.setShowGateNames(showGateNames.isSelected());
+        showGateNames.addActionListener(event -> {
+            boolean show = showGateNames.isSelected();
+            canvas.setShowGateNames(show);
+            GateNamePreferences.save(show);
+        });
+        view.add(showGateNames);
+        return view;
     }
 
     static JMenu createSimulateMenu(CanvasPanel canvas) {
