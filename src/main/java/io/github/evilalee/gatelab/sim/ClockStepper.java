@@ -15,6 +15,11 @@ public final class ClockStepper {
         return stepCount;
     }
 
+    /** Resets only the progress counter without changing persisted source levels. */
+    public void resetStepCount() {
+        stepCount = 0;
+    }
+
     /**
      * Flips all Clock components once, then settles while restoring previous
      * gate outputs so feedback circuits retain their established state.
