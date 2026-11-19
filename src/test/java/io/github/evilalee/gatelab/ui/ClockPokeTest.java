@@ -26,6 +26,21 @@ class ClockPokeTest {
         assertTrue(canvas.schematic().inputValue(input.id()));
     }
 
+    @Test
+    void replacingTheDocumentPreservesItsSavedClockLevelAndRestartsProgress() {
+        CanvasPanel canvas = new CanvasPanel();
+        var replacement = new io.github.evilalee.gatelab.model.Schematic(
+                io.github.evilalee.gatelab.io.GateLibrary.load().all());
+        PlacedComponent clock = replacement.add("clock", 0, 0, Facing.EAST);
+        replacement.setClockValue(clock.id(), true);
+
+        canvas.stepClock();
+        canvas.replaceSchematic(replacement);
+
+        assertTrue(canvas.schematic().clockValue(clock.id()));
+        assertTrue(canvas.simulationStatusText().equals("Step 0, cycle 0"));
+    }
+
     private static void clickComponentCenter(CanvasPanel canvas, PlacedComponent component) {
         GateGeometry.Bounds bounds = GateGeometry.bounds(
                 canvas.schematic().definitionFor(component), component.facing());
