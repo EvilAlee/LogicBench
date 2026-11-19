@@ -20,7 +20,7 @@
 - PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
 
 ## In progress
-- fix-ai-input-order: make AI truth-table verification independent of the declared inputs-array order, report named mismatching assignments, and document/test the inputs-array bit-order contract.
+- feature-app-icon: add the fixed LogicBench window icon, classpath PNG loading helper, and resource-loading regression tests.
 
 ## Next
 1. M9a attribute table with editable labels

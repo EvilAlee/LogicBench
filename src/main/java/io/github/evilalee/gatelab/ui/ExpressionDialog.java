@@ -51,6 +51,7 @@ public final class ExpressionDialog extends JDialog {
 
     private ExpressionDialog(JFrame owner, CanvasPanel canvas) {
         super(owner, "From expression", ModalityType.APPLICATION_MODAL);
+        setIconImages(AppIcons.load());
         this.canvas = Objects.requireNonNull(canvas, "canvas");
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));

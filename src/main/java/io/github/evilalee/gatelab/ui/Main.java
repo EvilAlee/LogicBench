@@ -79,6 +79,7 @@ public final class Main {
         }
 
         boolean galleryMode = Arrays.asList(args).contains("--gallery");
+        AppIcons.load(); // Decode the small classpath icons before the event-dispatch thread starts.
         javax.swing.SwingUtilities.invokeLater(() -> showWindow(galleryMode));
     }
 
@@ -98,6 +99,7 @@ public final class Main {
 
     static JFrame createFrame(boolean galleryMode) {
         JFrame frame = new JFrame("LogicBench - Untitled");
+        frame.setIconImages(AppIcons.load());
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         CanvasPanel canvas = new CanvasPanel(galleryMode);
         DocumentState document = new DocumentState();

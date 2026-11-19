@@ -6,6 +6,8 @@
 
 The project uses **Java 25**, **Swing/FlatLaf** for the interface, **jSVG** for component artwork, **Gson** for files, and Gradle. The entry point is `io.github.evilalee.gatelab.ui.Main`. It creates the window and connects the canvas, menus, component explorer, attribute table, status area, and file actions.
 
+Application window icons are in `src/main/resources/icons/`; missing or unreadable PNGs are ignored with a warning.
+
 On startup, `CanvasPanel` loads the `GateLibrary`, creates the editable `Schematic`, and prepares the `GateRenderer`. The library reads `src/main/resources/gates.json`, validates definitions, and indexes variants by family, size, and input count. SVG files supply artwork; `GateGeometry` calculates rotated pin positions and bounds.
 
 ## Main layers
