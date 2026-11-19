@@ -6,6 +6,7 @@ import io.github.evilalee.gatelab.io.SchematicJson;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.UndefinedInputMode;
+import io.github.evilalee.gatelab.sim.SignalRecorder;
 import io.github.evilalee.gatelab.synth.layout.TidyCircuitService;
 
 import javax.swing.AbstractAction;
@@ -61,6 +62,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 /** Swing application entry point for the LogicBench desktop window. */
 public final class Main {
@@ -104,11 +106,20 @@ public final class Main {
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         CanvasPanel canvas = new CanvasPanel(galleryMode);
         DocumentState document = new DocumentState();
+        SignalRecorder signalRecorder = new SignalRecorder();
+        WaveformPanel waveformPanel = new WaveformPanel(signalRecorder);
+        canvas.setSignalRecorderCallbacks(signalRecorder::clear, () -> {
+            signalRecorder.record(WaveformSampler.sample(
+                    canvas.schematic(), canvas.simulationResult()));
+            waveformPanel.refresh();
+        });
 
         canvas.setSchematicListener(schematic ->
                 observeSchematic(frame, canvas, document, schematic));
-        frame.setJMenuBar(createMenuBar(frame, canvas, document));
-        frame.setContentPane(createContent(canvas));
+        EditorContent editorContent = createContent(canvas, waveformPanel);
+        frame.setJMenuBar(createMenuBar(
+                frame, canvas, document, editorContent.waveformVisibility()));
+        frame.setContentPane(editorContent.component());
         frame.setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
         frame.setLocationRelativeTo(null);
         frame.addWindowListener(new WindowAdapter() {
@@ -120,7 +131,8 @@ public final class Main {
         return frame;
     }
 
-    private static Container createContent(CanvasPanel canvas) {
+    private static EditorContent createContent(
+            CanvasPanel canvas, WaveformPanel waveformPanel) {
         javax.swing.JPanel content = new javax.swing.JPanel(new BorderLayout());
         JToggleButton edit = new JToggleButton("Edit");
         JToggleButton poke = new JToggleButton("Poke");
@@ -150,7 +162,18 @@ public final class Main {
         workspace.setResizeWeight(0.0);
         workspace.setDividerLocation(265);
         workspace.setBorder(BorderFactory.createEmptyBorder());
-        content.add(workspace, BorderLayout.CENTER);
+
+        javax.swing.JPanel waveformContainer = new javax.swing.JPanel(new BorderLayout());
+        waveformContainer.setBorder(BorderFactory.createTitledBorder("Waveforms"));
+        waveformContainer.add(waveformPanel, BorderLayout.CENTER);
+        JSplitPane editorSplit = new JSplitPane(
+                JSplitPane.VERTICAL_SPLIT, workspace, null);
+        editorSplit.setContinuousLayout(true);
+        editorSplit.setOneTouchExpandable(false);
+        editorSplit.setResizeWeight(1.0);
+        editorSplit.setBorder(BorderFactory.createEmptyBorder());
+        content.add(editorSplit, BorderLayout.CENTER);
+
         JLabel statusMessage = new JLabel(" ");
         statusMessage.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
         canvas.setStatusMessageListener(statusMessage::setText);
@@ -161,15 +184,34 @@ public final class Main {
             edit.setSelected(tool != CanvasPanel.Tool.POKE);
             poke.setSelected(tool == CanvasPanel.Tool.POKE);
         });
-        return content;
+
+        Consumer<Boolean> waveformVisibility = visible -> {
+            if (visible) {
+                editorSplit.setBottomComponent(waveformContainer);
+                editorSplit.setResizeWeight(0.75);
+                editorSplit.setDividerLocation(0.75);
+            } else {
+                editorSplit.setBottomComponent(null);
+                editorSplit.setResizeWeight(1.0);
+            }
+            editorSplit.revalidate();
+            editorSplit.repaint();
+        };
+        return new EditorContent(content, waveformVisibility);
     }
 
     static JMenuBar createMenuBar(CanvasPanel canvas) {
-        return createMenuBar(null, canvas, new DocumentState());
+        return createMenuBar(null, canvas, new DocumentState(), ignored -> { });
     }
 
     static JMenuBar createMenuBar(
             JFrame frame, CanvasPanel canvas, DocumentState document) {
+        return createMenuBar(frame, canvas, document, ignored -> { });
+    }
+
+    private static JMenuBar createMenuBar(
+            JFrame frame, CanvasPanel canvas, DocumentState document,
+            Consumer<Boolean> waveformVisibility) {
         JMenuBar menuBar = new JMenuBar();
         JMenu file = new JMenu("File");
         file.add(fileItem("New", KeyEvent.VK_N, 0,
@@ -240,7 +282,7 @@ public final class Main {
         });
         installUndoRedoBindings(frame, canvas);
         menuBar.add(edit);
-        menuBar.add(createViewMenu(canvas));
+        menuBar.add(createViewMenu(canvas, waveformVisibility));
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
         menuBar.add(createSimulateMenu(canvas, document));
         menuBar.add(menuWithDisabledItems("Window", "Reset Window Layout"));
@@ -278,6 +320,11 @@ public final class Main {
     }
 
     static JMenu createViewMenu(CanvasPanel canvas) {
+        return createViewMenu(canvas, ignored -> { });
+    }
+
+    static JMenu createViewMenu(
+            CanvasPanel canvas, Consumer<Boolean> waveformVisibility) {
         JMenu view = new JMenu("View");
         JCheckBoxMenuItem showGateNames =
                 new JCheckBoxMenuItem("Show gate names", GateNamePreferences.load());
@@ -288,6 +335,11 @@ public final class Main {
             GateNamePreferences.save(show);
         });
         view.add(showGateNames);
+
+        JCheckBoxMenuItem showWaveforms = new JCheckBoxMenuItem("Show waveforms");
+        showWaveforms.addActionListener(event ->
+                waveformVisibility.accept(showWaveforms.isSelected()));
+        view.add(showWaveforms);
         return view;
     }
 
@@ -404,6 +456,7 @@ public final class Main {
         Schematic fresh = new Schematic(GateLibrary.load().all());
         document.file = null;
         document.savedModificationCount = fresh.modificationCount();
+        canvas.clearSignalHistory();
         canvas.replaceSchematic(fresh);
     }
 
@@ -430,6 +483,7 @@ public final class Main {
         }
         document.file = selected;
         document.savedModificationCount = loaded.modificationCount();
+        canvas.clearSignalHistory();
         canvas.replaceSchematic(loaded);
     }
 
@@ -585,6 +639,10 @@ public final class Main {
     private static void showFileError(JFrame frame, String title, Exception exception) {
         JOptionPane.showMessageDialog(frame, exception.getMessage(),
                 title, JOptionPane.ERROR_MESSAGE);
+    }
+
+    private record EditorContent(
+            Container component, Consumer<Boolean> waveformVisibility) {
     }
 
     private static final class DocumentState {
