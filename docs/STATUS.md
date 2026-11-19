@@ -20,7 +20,7 @@
 - PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
 
 ## In progress
-- feature-app-icon: add the fixed LogicBench window icon, classpath PNG loading helper, and resource-loading regression tests.
+- feature-gate-names: add app-preference visibility for gate family names and optional per-gate labels with file persistence and undo support.
 
 ## Next
 1. M9a attribute table with editable labels
