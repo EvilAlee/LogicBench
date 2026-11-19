@@ -19,9 +19,10 @@
 - PR #25: named expression signals — `:=` internal signals with no output pin, later references inlined, and reused-output hint
 - PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
 - PR #29: visible gate names and editable per-gate labels, with app preferences and version-1 file persistence
+- Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
-- feature-sequential-clock: add an app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, and UI tick controls.
+- feature-waveform-wiring: editor-owned signal history, event-triggered sampling, and the View waveform panel toggle.
 
 ## Next
 1. M9a attribute table with editable labels

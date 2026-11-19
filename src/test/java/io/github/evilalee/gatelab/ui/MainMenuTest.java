@@ -7,6 +7,8 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import java.awt.Component;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -43,6 +45,30 @@ class MainMenuTest {
         assertTrue(canvas.simulationStatusText().contains("cycle 0.5"));
         reset.doClick();
         assertEquals("Step 0, cycle 0", canvas.simulationStatusText());
+    }
+
+    @Test
+    void waveformVisibilityCheckboxStartsUncheckedAndReportsVisibilityChanges() {
+        CanvasPanel canvas = new CanvasPanel();
+        List<Boolean> visibilityChanges = new ArrayList<>();
+        JMenu view = Main.createViewMenu(canvas, visibilityChanges::add);
+
+        JCheckBoxMenuItem showWaveforms = null;
+        for (Component item : view.getMenuComponents()) {
+            if (item instanceof JCheckBoxMenuItem checkbox
+                    && "Show waveforms".equals(checkbox.getText())) {
+                showWaveforms = checkbox;
+                break;
+            }
+        }
+
+        assertNotNull(showWaveforms);
+        assertEquals(false, showWaveforms.isSelected());
+        showWaveforms.doClick();
+        assertEquals(true, showWaveforms.isSelected());
+        showWaveforms.doClick();
+        assertEquals(false, showWaveforms.isSelected());
+        assertEquals(List.of(true, false), visibilityChanges);
     }
 
     @Test

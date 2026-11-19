@@ -125,6 +125,8 @@ public final class CanvasPanel extends JPanel {
     private final Runnable schematicSimulationListener = this::schematicChanged;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private final List<Consumer<Schematic>> schematicListeners = new ArrayList<>();
+    private Runnable signalHistoryClearListener = () -> { };
+    private Runnable signalSampleListener = () -> { };
     private SimulationResult simulationResult;
     private final ClockStepper clockStepper = new ClockStepper();
     private long simulationRecomputeCount;
@@ -273,9 +275,25 @@ public final class CanvasPanel extends JPanel {
         notifyHistoryStateChanged();
         recomputeSimulation();
         statusMessageListener.accept(simulationStatusText());
+        recordSignalSample();
     }
 
     public SimulationResult simulationResult() { return simulationResult; }
+
+    /** Installs editor-owned callbacks for clearing and appending waveform history. */
+    public void setSignalRecorderCallbacks(Runnable clearHistory, Runnable recordSample) {
+        signalHistoryClearListener = clearHistory == null ? () -> { } : clearHistory;
+        signalSampleListener = recordSample == null ? () -> { } : recordSample;
+    }
+
+    /** Clears transient waveform history without changing the schematic or simulation. */
+    public void clearSignalHistory() {
+        signalHistoryClearListener.run();
+    }
+
+    private void recordSignalSample() {
+        signalSampleListener.run();
+    }
 
     /** Advances every Clock once while preserving the previously settled gate outputs. */
     public void stepClock() {
@@ -291,6 +309,7 @@ public final class CanvasPanel extends JPanel {
         simulationRecomputeCount++;
         repaint();
         statusMessageListener.accept(simulationStatusText());
+        recordSignalSample();
     }
 
     /** Resets input and Clock sources, the step counter, and all prior gate state. */
@@ -298,6 +317,7 @@ public final class CanvasPanel extends JPanel {
         if (galleryMode) {
             return;
         }
+        clearSignalHistory();
         schematic.removeChangeListener(schematicSimulationListener);
         try {
             simulationResult = clockStepper.reset(schematic);
@@ -307,6 +327,7 @@ public final class CanvasPanel extends JPanel {
         simulationRecomputeCount++;
         repaint();
         statusMessageListener.accept(simulationStatusText());
+        recordSignalSample();
     }
 
     public String simulationStatusText() {
@@ -934,7 +955,10 @@ public final class CanvasPanel extends JPanel {
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
         PlacedComponent hit = schematic.componentAt(
                 (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
-        if (hit != null && "input".equals(hit.typeId())) schematic.toggleInput(hit.id());
+        if (hit != null && "input".equals(hit.typeId())) {
+            schematic.toggleInput(hit.id());
+            recordSignalSample();
+        }
     }
 
     private void beginEditGesture(MouseEvent event) {
