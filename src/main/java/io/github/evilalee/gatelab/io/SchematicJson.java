@@ -59,6 +59,8 @@ public final class SchematicJson {
             }
             if ("input".equals(component.typeId())) {
                 item.addProperty("high", schematic.inputValue(component.id()));
+            } else if ("clock".equals(component.typeId())) {
+                item.addProperty("high", schematic.clockValue(component.id()));
             }
             components.add(item);
         }
@@ -142,8 +144,9 @@ public final class SchematicJson {
 
             boolean high = false;
             if (item.has("high")) {
-                if (!"input".equals(type)) {
-                    throw new IllegalArgumentException(context + ".high is only valid for input components");
+                if (!"input".equals(type) && !"clock".equals(type)) {
+                    throw new IllegalArgumentException(
+                            context + ".high is only valid for input or clock components");
                 }
                 JsonElement highElement = item.get("high");
                 if (highElement == null || !highElement.isJsonPrimitive()
@@ -187,7 +190,11 @@ public final class SchematicJson {
                         id, type, x, y, facing, attributes, label);
                 schematic.add(component);
                 if (high) {
-                    schematic.setInputValue(id, true);
+                    if ("input".equals(type)) {
+                        schematic.setInputValue(id, true);
+                    } else if ("clock".equals(type)) {
+                        schematic.setClockValue(id, true);
+                    }
                 }
             } catch (IllegalArgumentException exception) {
                 throw new IllegalArgumentException(context + ": " + exception.getMessage(), exception);
