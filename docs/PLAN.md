@@ -4,9 +4,7 @@
 A Logisim-Evolution-style logic gate simulator. The user can place gates,
 wire them orthogonally, poke inputs, and see values update live. Nothing more.
 
-Non-goals for v1 (do not build, do not scaffold for): subcircuits, buses or
-multi-bit values, timing diagrams, memory/RAM/ROM, splitters, tunnels, HDL,
-FPGA export, themes, plugins, localization, animations.
+v1.1 (decided 2026-11-19): sequential support. Clock component, Tick Once / Ticks Enabled, simulation reset, tested sequential examples (D latch, D flip-flop, divide-by-2, 2-bit counter), and a waveform (timing diagram) panel. Supersedes the earlier non-goal on timing diagrams.
 
 ## 2. Fixed decisions
 | Topic | Decision |
