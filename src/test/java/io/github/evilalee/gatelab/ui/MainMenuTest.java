@@ -24,12 +24,12 @@ class MainMenuTest {
             if (item instanceof JCheckBoxMenuItem checkbox
                     && "Ticks Enabled".equals(checkbox.getText())) {
                 ticksEnabled = checkbox;
-            } else if (item instanceof JMenuItem menuItem
-                    && "Tick Once".equals(menuItem.getText())) {
-                tickOnce = menuItem;
-            } else if (item instanceof JMenuItem menuItem
-                    && "Reset".equals(menuItem.getText())) {
-                reset = menuItem;
+            } else if (item instanceof JMenuItem tickItem
+                    && "Tick Once".equals(tickItem.getText())) {
+                tickOnce = tickItem;
+            } else if (item instanceof JMenuItem resetItem
+                    && "Reset".equals(resetItem.getText())) {
+                reset = resetItem;
             }
         }
 
