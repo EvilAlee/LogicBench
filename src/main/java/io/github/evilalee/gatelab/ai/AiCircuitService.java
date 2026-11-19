@@ -200,9 +200,9 @@ public final class AiCircuitService {
 
                 JSON fields:
                 - summary: short plain-language description.
-                - inputs: every true primary input exactly once, in first-appearance order across
-                  output expressions. This is the truth-table order; the first input
-                  is the most-significant bit.
+                - inputs: every true primary input exactly once. The inputs array may be in
+                  any order; each truth-table row's bits follow the order of that inputs array.
+                  The first input is the most-significant bit.
                 - outputs: only the outputs the user requested, each with a unique name and
                   one Boolean expression.
                 - truthTable: independently reason from the user's description and provide
@@ -353,6 +353,7 @@ public final class AiCircuitService {
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
             feedbackLines.addAll(current.mismatchRows().stream().limit(8).toList());
+            feedbackLines.add("Rows in your table are interpreted using the order of YOUR inputs array.");
             String feedback = String.join("\n", feedbackLines);
             if (!current.mismatchRows().isEmpty()) {
                 log.add("Mismatch at rows " + String.join("; ",
@@ -631,16 +632,14 @@ public final class AiCircuitService {
         LinkedHashSet<String> usedVariables = new LinkedHashSet<>();
         parsed.forEach(named -> usedVariables.addAll(named.expression().variables()));
         Set<String> declared = new LinkedHashSet<>(answer.inputs());
-        if (!declared.containsAll(usedVariables)) {
-            Set<String> undeclared = new LinkedHashSet<>(usedVariables);
-            undeclared.removeAll(declared);
+        if (!declared.equals(usedVariables)) {
+            Set<String> missing = new LinkedHashSet<>(usedVariables);
+            missing.removeAll(declared);
+            Set<String> extra = new LinkedHashSet<>(declared);
+            extra.removeAll(usedVariables);
             return new Attempt(answer, null, null, null, List.of(),
-                    List.of("Undeclared variables used by expressions: " + String.join(", ", undeclared)));
-        }
-        if (!new ArrayList<>(usedVariables).equals(answer.inputs())) {
-            return new Attempt(answer, null, null, null, List.of(),
-                    List.of("inputs must exactly match expression variables in first-appearance order; "
-                            + "expected " + usedVariables + " but got " + answer.inputs()));
+                    List.of("inputs must contain exactly the expression variables; missing="
+                            + missing + ", extra=" + extra));
         }
 
         ExpressionCompiler.Compilation compilation;
@@ -815,16 +814,28 @@ public final class AiCircuitService {
     }
 
     private static List<String> compareClaimedTable(Answer answer, TruthTable engineTable) {
+        Map<String, Integer> engineInputPositions = new LinkedHashMap<>();
+        for (int index = 0; index < engineTable.inputNames().size(); index++) {
+            engineInputPositions.put(engineTable.inputNames().get(index), index);
+        }
+
         Map<Integer, List<String>> mismatchesByRow = new LinkedHashMap<>();
         for (int outputIndex = 0; outputIndex < engineTable.outputNames().size(); outputIndex++) {
             String outputName = engineTable.outputNames().get(outputIndex);
             String claimedBits = answer.claimedBits().get(outputName);
             for (TruthTable.Row row : engineTable.rows()) {
+                int claimedRowIndex = 0;
+                for (String inputName : answer.inputs()) {
+                    int enginePosition = engineInputPositions.get(inputName);
+                    int bit = row.inputBits().charAt(enginePosition) - '0';
+                    claimedRowIndex = (claimedRowIndex << 1) | bit;
+                }
+
                 Value actual = row.outputValues().get(outputIndex);
                 char actualBit = actual == Value.ONE ? '1' : actual == Value.ZERO ? '0' : 'X';
-                char claimedBit = claimedBits.charAt(row.index());
+                char claimedBit = claimedBits.charAt(claimedRowIndex);
                 if (actualBit != claimedBit || row.oscillating()) {
-                    String detail = "output " + outputName + ": you claimed " + claimedBit
+                    String detail = outputName + " claimed " + claimedBit
                             + ", circuit gives " + actualBit;
                     if (row.oscillating()) detail += " (oscillating)";
                     mismatchesByRow.computeIfAbsent(row.index(), ignored -> new ArrayList<>())
@@ -834,8 +845,14 @@ public final class AiCircuitService {
         }
         List<String> result = new ArrayList<>();
         for (Map.Entry<Integer, List<String>> entry : mismatchesByRow.entrySet()) {
-            String bits = engineTable.rows().get(entry.getKey()).inputBits();
-            result.add("inputs " + bits + ": " + String.join("; ", entry.getValue()));
+            TruthTable.Row row = engineTable.rows().get(entry.getKey());
+            StringBuilder assignment = new StringBuilder();
+            for (int inputIndex = 0; inputIndex < engineTable.inputNames().size(); inputIndex++) {
+                if (inputIndex > 0) assignment.append(' ');
+                assignment.append(engineTable.inputNames().get(inputIndex))
+                        .append('=').append(row.inputBits().charAt(inputIndex));
+            }
+            result.add(assignment + ": " + String.join("; ", entry.getValue()));
         }
         return List.copyOf(result);
     }

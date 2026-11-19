@@ -17,9 +17,10 @@
 - PR #22: compact expression-generated schematic layout with per-column pin-driven placement and production connectivity/overlap checks
 - PR #24: Circuit > Tidy circuit — headless extraction, verified relayout, one-step undo, preserved I/O labels and switch values
 - PR #25: named expression signals — `:=` internal signals with no output pin, later references inlined, and reused-output hint
+- PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
 
 ## In progress
-- PR #26: AI circuit generation — Gemini HTTP provider, schema-validated expression exchange, independent truth-table verification with retries, six offline demo answers, persistent user cache, cache-only mode, and Circuit > From description (AI)... dialog. Java 25 CI is green; tests use a local fake Gemini server and scripted providers. GUI not launched. Awaiting user review and merge.
+- fix-ai-input-order: make AI truth-table verification independent of the declared inputs-array order, report named mismatching assignments, and document/test the inputs-array bit-order contract.
 
 ## Next
 1. M9a attribute table with editable labels
