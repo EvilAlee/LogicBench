@@ -66,7 +66,7 @@ class ExpressionFeedbackTest {
                 Rbar := Dbar NAND EN
                 Q = Sbar NAND Qbar
                 Qbar = Rbar NAND Q
-                """);
+                """, true);
 
         assertTrue(compilation.hasFeedback());
         assertEquals(List.of("D", "EN"), compilation.netlist().inputs());
@@ -103,7 +103,7 @@ class ExpressionFeedbackTest {
                 One := 1
                 Q = One NAND Qn
                 Qn = S NAND Q
-                """);
+                """, true);
 
         assertTrue(compilation.hasFeedback());
         assertEquals(List.of("S"), compilation.netlist().inputs());
