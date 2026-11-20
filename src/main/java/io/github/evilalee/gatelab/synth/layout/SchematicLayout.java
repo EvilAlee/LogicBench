@@ -1147,10 +1147,63 @@ public final class SchematicLayout {
         return new int[]{target.x + offset.x(), target.y + offset.y()};
     }
 
+    private record FeedbackLaneInterval(int startColumn, int endColumn, int lane) {
+    }
+
     /**
-     * Routes each removed back-edge on its own perimeter lane. The ordinary
-     * channel gap remains untouched outside feedback builds; feedback builds
-     * reserve separate, grid-spaced vertical tracks on both ends of each edge.
+     * Greedy interval coloring. Edges whose [target, source] column intervals
+     * do not overlap reuse a lane; sorting and the first-free-lane choice make
+     * the assignment stable across runs.
+     */
+    static Map<FeedbackCircuitExtractor.FeedbackEdge, Integer> assignFeedbackLanes(
+            List<FeedbackCircuitExtractor.FeedbackEdge> edges,
+            Map<String, Integer> columnsByGate) {
+        List<FeedbackCircuitExtractor.FeedbackEdge> ordered = edges.stream()
+                .sorted(Comparator
+                        .comparingInt((FeedbackCircuitExtractor.FeedbackEdge edge) ->
+                                requiredColumn(columnsByGate, edge.targetGate()))
+                        .thenComparingInt(edge ->
+                                requiredColumn(columnsByGate, edge.sourceGate()))
+                        .thenComparing(FeedbackCircuitExtractor.FeedbackEdge::sourceGate)
+                        .thenComparing(FeedbackCircuitExtractor.FeedbackEdge::targetGate)
+                        .thenComparingInt(FeedbackCircuitExtractor.FeedbackEdge::targetInputIndex))
+                .toList();
+        List<Integer> lastEndByLane = new ArrayList<>();
+        Map<FeedbackCircuitExtractor.FeedbackEdge, Integer> assignments = new LinkedHashMap<>();
+        for (FeedbackCircuitExtractor.FeedbackEdge edge : ordered) {
+            int start = requiredColumn(columnsByGate, edge.targetGate());
+            int end = requiredColumn(columnsByGate, edge.sourceGate());
+            if (end < start) {
+                throw new IllegalArgumentException(
+                        "feedback interval runs forwards: " + edge.sourceGate()
+                                + " -> " + edge.targetGate());
+            }
+            int lane = 0;
+            while (lane < lastEndByLane.size() && lastEndByLane.get(lane) >= start) {
+                lane++;
+            }
+            if (lane == lastEndByLane.size()) {
+                lastEndByLane.add(end);
+            } else {
+                lastEndByLane.set(lane, end);
+            }
+            assignments.put(edge, lane);
+        }
+        return java.util.Collections.unmodifiableMap(assignments);
+    }
+
+    private static int requiredColumn(Map<String, Integer> columnsByGate, String gate) {
+        Integer column = columnsByGate.get(gate);
+        if (column == null) {
+            throw new IllegalArgumentException("missing feedback gate column: " + gate);
+        }
+        return column;
+    }
+
+    /**
+     * Routes feedback around only the gate rows covered by its source/target
+     * interval. Each interval uses the left-edge lane allocation above, so
+     * disjoint column spans share the same logical lane.
      */
     private static LinkedHashSet<WireSegment> routeFeedbackEdges(
             FeedbackCircuitExtractor.Extraction extraction,
@@ -1161,20 +1214,12 @@ public final class SchematicLayout {
             int trackPitch,
             List<Node> allNodes) {
         LinkedHashSet<WireSegment> wires = new LinkedHashSet<>();
-        int minComponentY = Integer.MAX_VALUE;
-        for (Node node : allNodes) {
-            if (!node.isDummy() && node.kind != NodeKind.FEEDBACK) {
-                GateGeometry.Bounds bounds = GateGeometry.bounds(node.definition, Facing.EAST);
-                minComponentY = Math.min(minComponentY, node.y + bounds.y());
-            }
-        }
-        if (minComponentY == Integer.MAX_VALUE) {
-            throw new IllegalStateException("feedback layout has no placed gate area");
-        }
+        Map<String, Integer> columnsByGate = new LinkedHashMap<>();
+        gateNodes.forEach((signal, node) -> columnsByGate.put(signal, node.column));
+        Map<FeedbackCircuitExtractor.FeedbackEdge, Integer> laneByEdge =
+                assignFeedbackLanes(extraction.feedbackEdges(), columnsByGate);
 
-        for (int edgeIndex = 0; edgeIndex < extraction.feedbackEdges().size(); edgeIndex++) {
-            FeedbackCircuitExtractor.FeedbackEdge edge =
-                    extraction.feedbackEdges().get(edgeIndex);
+        for (FeedbackCircuitExtractor.FeedbackEdge edge : extraction.feedbackEdges()) {
             Node source = gateNodes.get(edge.sourceGate());
             Node target = gateNodes.get(edge.targetGate());
             if (source == null || target == null) {
@@ -1205,7 +1250,29 @@ public final class SchematicLayout {
 
             int sourceY = sourcePinY(source);
             int targetY = target.y + targetInputOffset.y();
-            int laneY = minComponentY - (edgeIndex + 1) * trackPitch;
+            int startColumn = target.column;
+            int endColumn = source.column;
+            int minGateTop = Integer.MAX_VALUE;
+            int maxGateBottom = Integer.MIN_VALUE;
+            for (Node gate : gateNodes.values()) {
+                if (gate.column >= startColumn && gate.column <= endColumn) {
+                    GateGeometry.Bounds bounds = GateGeometry.bounds(
+                            gate.definition, Facing.EAST);
+                    minGateTop = Math.min(minGateTop, gate.y + bounds.y());
+                    maxGateBottom = Math.max(
+                            maxGateBottom, gate.y + bounds.y() + bounds.height());
+                }
+            }
+            if (minGateTop == Integer.MAX_VALUE) {
+                throw new IllegalStateException("feedback interval contains no gate rows");
+            }
+
+            int lane = laneByEdge.get(edge);
+            int aboveY = minGateTop - (lane + 1) * trackPitch;
+            int belowY = maxGateBottom + (lane + 1) * trackPitch;
+            int aboveLength = Math.abs(sourceY - aboveY) + Math.abs(targetY - aboveY);
+            int belowLength = Math.abs(sourceY - belowY) + Math.abs(targetY - belowY);
+            int laneY = aboveLength <= belowLength ? aboveY : belowY;
 
             if (sourceX <= targetTrackX) {
                 throw new IllegalStateException(
