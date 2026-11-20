@@ -155,8 +155,8 @@ class SequentialPartsTest {
         assertEquals(
                 List.of("00", "01", "10", "11", "00"),
                 result.steps().stream()
-                        .map(observation -> observation.observedOutputs().get("Q1").toString()
-                                + observation.observedOutputs().get("Q0").toString())
+                        .map(observation -> "" + asBit(observation.observedOutputs().get("Q1"))
+                                + asBit(observation.observedOutputs().get("Q0")))
                         .toList());
     }
 
@@ -203,9 +203,9 @@ class SequentialPartsTest {
         assertEquals(
                 List.of("000", "001", "010", "100", "000"),
                 result.steps().stream()
-                        .map(observation -> observation.observedOutputs().get("Q2").toString()
-                                + observation.observedOutputs().get("Q1").toString()
-                                + observation.observedOutputs().get("Q0").toString())
+                        .map(observation -> "" + asBit(observation.observedOutputs().get("Q2"))
+                                + asBit(observation.observedOutputs().get("Q1"))
+                                + asBit(observation.observedOutputs().get("Q0")))
                         .toList());
     }
 
@@ -310,6 +310,14 @@ class SequentialPartsTest {
                         "Q2", bit(expected.charAt(0)),
                         "Q1", bit(expected.charAt(1)),
                         "Q0", bit(expected.charAt(2))));
+    }
+
+    private static char asBit(Value value) {
+        return switch (value) {
+            case ZERO -> '0';
+            case ONE -> '1';
+            case X -> 'X';
+        };
     }
 
     private static Value bit(char value) {
