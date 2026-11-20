@@ -43,7 +43,9 @@ public record Netlist(
             Objects.requireNonNull(type, "type");
             inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
             for (String input : inputs) {
-                requireIdentifier(input, "gate input reference");
+                if (!input.equals("0") && !input.equals("1")) {
+                    requireIdentifier(input, "gate input reference");
+                }
             }
         }
     }
@@ -125,7 +127,8 @@ public record Netlist(
         for (Gate gate : gates) {
             for (int index = 0; index < gate.inputs().size(); index++) {
                 String reference = gate.inputs().get(index);
-                if (!signalNames.contains(reference)) {
+                if (!reference.equals("0") && !reference.equals("1")
+                        && !signalNames.contains(reference)) {
                     throw new IllegalArgumentException("gate " + gate.id() + " input["
                             + index + "] references unknown signal: " + reference);
                 }
