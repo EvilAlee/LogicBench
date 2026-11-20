@@ -527,11 +527,16 @@ class TidyCircuitServiceTest {
             String targetPin) {
         Connectivity.PinPosition source = pin(schematic, sourceId, sourcePin);
         Connectivity.PinPosition target = pin(schematic, targetId, targetPin);
-        if (source.x() != target.x()) {
-            schematic.addWire(source.x(), source.y(), target.x(), source.y());
+        int inputIndex = Integer.parseInt(targetPin.substring(2));
+        int entryTrackX = target.x() - (inputIndex + 1) * PlacedComponent.GRID_SPACING;
+        if (source.x() != entryTrackX) {
+            schematic.addWire(source.x(), source.y(), entryTrackX, source.y());
         }
         if (source.y() != target.y()) {
-            schematic.addWire(target.x(), source.y(), target.x(), target.y());
+            schematic.addWire(entryTrackX, source.y(), entryTrackX, target.y());
+        }
+        if (entryTrackX != target.x()) {
+            schematic.addWire(entryTrackX, target.y(), target.x(), target.y());
         }
     }
 
