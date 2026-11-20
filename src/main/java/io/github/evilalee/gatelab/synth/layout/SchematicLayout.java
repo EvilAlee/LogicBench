@@ -504,7 +504,8 @@ public final class SchematicLayout {
 
         LinkedHashSet<WireSegment> feedbackWires = routeFeedbackEdges(
                 feedback, gateNodes, feedbackSourcesByChannel, feedbackTargetsByChannel,
-                normalGapByChannel, feedbackTrackPitch, allNodes(columns));
+                normalGapByChannel, columnLeft, columnWidths,
+                feedbackTrackPitch, allNodes(columns));
         List<PlacedComponent> finalComponents = schematic.components().stream()
                 .filter(component -> !feedbackIds.containsValue(component.id()))
                 .toList();
@@ -1265,6 +1266,8 @@ public final class SchematicLayout {
             Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> sourcesByChannel,
             Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> targetsByChannel,
             Map<Integer, Integer> normalGapByChannel,
+            int[] columnLeft,
+            int[] columnWidths,
             int trackPitch,
             List<Node> allNodes) {
         LinkedHashSet<WireSegment> wires = new LinkedHashSet<>();
@@ -1293,8 +1296,8 @@ public final class SchematicLayout {
 
             int normalSourceGap = normalGapByChannel.get(source.column);
             int normalTargetGap = normalGapByChannel.get(target.column - 1);
-            int sourceX = source.x + normalSourceGap
-                    + (sourceTrackIndex + 1) * trackPitch;
+            int sourceX = columnLeft[source.column] + columnWidths[source.column]
+                    + normalSourceGap + (sourceTrackIndex + 1) * trackPitch;
             GateGeometry.Offset targetInputOffset = GateGeometry.pinOffset(
                     target.definition,
                     target.definition.inputs().get(edge.targetInputIndex()),
