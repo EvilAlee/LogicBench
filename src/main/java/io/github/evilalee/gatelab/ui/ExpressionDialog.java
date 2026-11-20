@@ -42,6 +42,8 @@ public final class ExpressionDialog extends JDialog {
     private static final int TABLE_INPUT_LIMIT = 10;
     private static final String FEEDBACK_PREVIEW_NOTE =
             "Feedback circuit: connections verified, behaviour not simulated. Truth table not shown.";
+    static final String SEQUENTIAL_STATUS =
+            "Sequential circuit: use Tick Once; start with RESET_N = 0 for one cycle.";
 
     private final CanvasPanel canvas;
     private final JTextArea expressionText = new JTextArea(5, 58);
@@ -49,6 +51,7 @@ public final class ExpressionDialog extends JDialog {
     private final JLabel tableNote = new JLabel(" ");
     private final TruthTableModel tableModel = new TruthTableModel();
     private final JTable truthTable = new JTable(tableModel);
+    private JScrollPane tableScroll;
     private final JButton generateButton = new JButton("Generate");
     private ExpressionCompiler.Compilation currentCompilation;
     private SchematicLayout.LayoutResult currentLayout;
@@ -80,7 +83,7 @@ public final class ExpressionDialog extends JDialog {
         truthTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         truthTable.setRowHeight(21);
         truthTable.getTableHeader().setReorderingAllowed(false);
-        JScrollPane tableScroll = new JScrollPane(truthTable);
+        tableScroll = new JScrollPane(truthTable);
         tableScroll.setBorder(BorderFactory.createTitledBorder("Truth table"));
         tableNote.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
 
@@ -144,20 +147,28 @@ public final class ExpressionDialog extends JDialog {
         tableModel.setTable(null);
         tableNote.setText(" ");
         truthTable.setEnabled(true);
+        tableScroll.setVisible(true);
         try {
             ExpressionCompiler.Compilation compilation =
-                    ExpressionCompiler.compile(expressionText.getText());
+                    ExpressionCompiler.compile(expressionText.getText(), true);
             currentCompilation = compilation;
             List<String> variables = compilation.netlist().inputs();
-            String reuseHint = outputReuseHint(compilation);
-            if (reuseHint != null) {
-                statusLine.setForeground(hintForeground());
-                statusLine.setText(reuseHint);
-            } else {
+            if (compilation.hasSequentialParts()) {
                 statusLine.setForeground(labelForeground());
-                statusLine.setText(variables.isEmpty()
-                        ? "Variables: none"
-                        : "Variables: " + String.join(", ", variables));
+                statusLine.setText(SEQUENTIAL_STATUS);
+                tableScroll.setVisible(false);
+                tableNote.setText(" ");
+            } else {
+                String reuseHint = outputReuseHint(compilation);
+                if (reuseHint != null) {
+                    statusLine.setForeground(hintForeground());
+                    statusLine.setText(reuseHint);
+                } else {
+                    statusLine.setForeground(labelForeground());
+                    statusLine.setText(variables.isEmpty()
+                            ? "Variables: none"
+                            : "Variables: " + String.join(", ", variables));
+                }
             }
 
             if (compilation.hasFeedback()) {
@@ -170,7 +181,9 @@ public final class ExpressionDialog extends JDialog {
                     throw new IllegalStateException("Circuit did not settle");
                 }
                 truthTable.setEnabled(false);
-                tableNote.setText(FEEDBACK_PREVIEW_NOTE);
+                if (!compilation.hasSequentialParts()) {
+                    tableNote.setText(FEEDBACK_PREVIEW_NOTE);
+                }
             } else if (variables.size() > TABLE_INPUT_LIMIT) {
                 tableNote.setText("Truth table preview is limited to 10 inputs; "
                         + variables.size() + " variables are present.");
@@ -199,6 +212,7 @@ public final class ExpressionDialog extends JDialog {
         currentLayout = null;
         generateButton.setEnabled(false);
         truthTable.setEnabled(true);
+        tableScroll.setVisible(true);
         statusLine.setForeground(new Color(190, 35, 35));
         statusLine.setText(message == null ? "Invalid expression" : message);
         tableNote.setText(" ");
@@ -212,6 +226,7 @@ public final class ExpressionDialog extends JDialog {
             SchematicLayout.LayoutResult layout;
             SchematicExpressionVerifier.VerificationResult placed = null;
             boolean feedback = currentCompilation.hasFeedback();
+            boolean sequential = currentCompilation.hasSequentialParts();
             if (feedback) {
                 layout = currentLayout;
                 if (layout == null) {
@@ -247,10 +262,15 @@ public final class ExpressionDialog extends JDialog {
                 }
             }
 
-            canvas.replaceWithGeneratedCircuit(layout.schematic());
-            canvas.setStatusMessage(feedback
-                    ? FEEDBACK_PREVIEW_NOTE
-                    : "Verified: " + placed.rowCount() + " rows match");
+            if (sequential) {
+                canvas.replaceWithSequentialCircuit(layout.schematic());
+                canvas.setStatusMessage(SEQUENTIAL_STATUS);
+            } else {
+                canvas.replaceWithGeneratedCircuit(layout.schematic());
+                canvas.setStatusMessage(feedback
+                        ? FEEDBACK_PREVIEW_NOTE
+                        : "Verified: " + placed.rowCount() + " rows match");
+            }
             dispose();
         } catch (IllegalArgumentException | IllegalStateException exception) {
             showError(exception.getMessage());

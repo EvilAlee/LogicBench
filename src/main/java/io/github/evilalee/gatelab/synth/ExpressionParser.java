@@ -5,16 +5,16 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Recursive-descent parser for Boolean expressions.
+ * Recursive-descent parser for Boolean expressions and sequential part calls.
  *
  * Precedence (highest first): prefix/postfix NOT, AND/NAND, XOR/XNOR, OR/NOR.
- * Binary operators are left-associative.
+ * Binary operators are left-associative. Part calls are primary expressions.
  */
 public final class ExpressionParser {
     private enum Kind {
         IDENTIFIER, ZERO, ONE,
         NOT, AND, NAND, XOR, XNOR, OR, NOR,
-        APOSTROPHE, LEFT_PAREN, RIGHT_PAREN, END
+        APOSTROPHE, LEFT_PAREN, RIGHT_PAREN, COMMA, END
     }
 
     private record Token(Kind kind, String text, int position) {
@@ -98,7 +98,11 @@ public final class ExpressionParser {
             return new Expression.Constant(true);
         }
         if (match(Kind.IDENTIFIER)) {
-            return new Expression.Variable(previous().text());
+            Token identifier = previous();
+            if (match(Kind.LEFT_PAREN)) {
+                return parsePartCall(identifier);
+            }
+            return new Expression.Variable(identifier.text());
         }
         if (match(Kind.LEFT_PAREN)) {
             Token opening = previous();
@@ -109,6 +113,37 @@ public final class ExpressionParser {
             return nested;
         }
         throw error(peek(), "expected an identifier, constant, or '('");
+    }
+
+    private Expression parsePartCall(Token identifier) {
+        Expression.PartKind kind;
+        try {
+            kind = Expression.PartKind.valueOf(identifier.text().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw error(identifier, "unknown part '" + identifier.text()
+                    + "'; expected DLATCH, DFF, TFF, or JKFF");
+        }
+
+        List<Expression> arguments = new ArrayList<>();
+        if (!match(Kind.RIGHT_PAREN)) {
+            do {
+                arguments.add(parseOr());
+            } while (match(Kind.COMMA));
+            if (!match(Kind.RIGHT_PAREN)) {
+                throw error(peek(), "expected ',' or ')' in " + kind + " arguments");
+            }
+        }
+
+        if (arguments.size() != kind.argumentCount()) {
+            throw error(identifier, kind + " requires " + kind.argumentCount()
+                    + " arguments, got " + arguments.size());
+        }
+        if (kind.clocked()
+                && !(arguments.getLast() instanceof Expression.Variable)) {
+            throw error(identifier, "CLK argument to " + kind
+                    + " must be a plain identifier (for example, CLK)");
+        }
+        return new Expression.PartCall(kind, arguments);
     }
 
     private boolean match(Kind... kinds) {
@@ -179,6 +214,10 @@ public final class ExpressionParser {
                 }
                 case ')' -> {
                     result.add(new Token(Kind.RIGHT_PAREN, ")", index++));
+                    continue;
+                }
+                case ',' -> {
+                    result.add(new Token(Kind.COMMA, ",", index++));
                     continue;
                 }
                 default -> {

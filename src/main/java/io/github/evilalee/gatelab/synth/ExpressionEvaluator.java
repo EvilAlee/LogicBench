@@ -29,6 +29,8 @@ public final class ExpressionEvaluator {
             case Expression.Unary unary ->
                     !evaluate(unary.operand(), assignment);
             case Expression.Binary binary -> evaluateBinary(binary, assignment);
+            case Expression.PartCall call -> throw new IllegalArgumentException(
+                    "sequential part calls cannot be evaluated as Boolean expressions: " + call.kind());
         };
     }
 

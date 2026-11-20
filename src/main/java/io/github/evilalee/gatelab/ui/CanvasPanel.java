@@ -355,15 +355,21 @@ public final class CanvasPanel extends JPanel {
      * Schematic object so document listeners and the current save path stay valid.
      */
     public void replaceWithGeneratedCircuit(Schematic generated) {
-        replaceWithCircuit(generated, false);
+        replaceWithCircuit(generated, false, false);
+    }
+
+    /** Replaces topology as one undo step and resets every source and stored gate value. */
+    public void replaceWithSequentialCircuit(Schematic generated) {
+        replaceWithCircuit(generated, false, true);
     }
 
     /** Replaces topology as one undo step while retaining the tidy result's switch values. */
     public void replaceWithTidiedCircuit(Schematic tidied) {
-        replaceWithCircuit(tidied, true);
+        replaceWithCircuit(tidied, true, false);
     }
 
-    private void replaceWithCircuit(Schematic replacement, boolean preserveInputValues) {
+    private void replaceWithCircuit(
+            Schematic replacement, boolean preserveInputValues, boolean resetSimulationState) {
         if (galleryMode) {
             throw new IllegalStateException("the gallery does not own an editable schematic");
         }
@@ -396,7 +402,11 @@ public final class CanvasPanel extends JPanel {
         notifyAttributeStateChanged();
         notifyHistoryStateChanged();
         fitToView();
-        recomputeSimulation();
+        if (resetSimulationState) {
+            resetSimulation();
+        } else {
+            recomputeSimulation();
+        }
         requestFocusInWindow();
     }
 
