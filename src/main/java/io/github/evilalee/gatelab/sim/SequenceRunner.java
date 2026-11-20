@@ -124,13 +124,15 @@ public final class SequenceRunner {
                     observed.put(name, simulator.getProbeValue(probe)));
 
             List<Mismatch> mismatches = new ArrayList<>();
-            step.expectedOutputs().forEach((name, expected) -> {
-                Value actual = observed.get(name);
+            for (Map.Entry<String, Value> expectedEntry : step.expectedOutputs().entrySet()) {
+                String outputName = expectedEntry.getKey();
+                Value expected = expectedEntry.getValue();
+                Value actual = observed.get(outputName);
                 if (actual != expected) {
                     mismatches.add(new Mismatch(
-                            index, step.name(), name, expected, actual));
+                            index, step.name(), outputName, expected, actual));
                 }
-            });
+            }
 
             observations.add(new StepObservation(
                     index,
