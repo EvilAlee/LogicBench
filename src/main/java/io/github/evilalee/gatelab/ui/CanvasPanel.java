@@ -1184,6 +1184,17 @@ public final class CanvasPanel extends JPanel {
         return List.copyOf(preview);
     }
 
+    /** Returns all segments in the Connectivity net containing the supplied wire. */
+    static Set<WireSegment> collectNetSegments(Schematic schematic, WireSegment wire) {
+        java.util.Objects.requireNonNull(schematic, "schematic");
+        java.util.Objects.requireNonNull(wire, "wire");
+        return Connectivity.analyze(schematic.pinPositions(), schematic.wires()).nets().stream()
+                .filter(net -> net.segments().contains(wire))
+                .findFirst()
+                .map(Connectivity.Net::segments)
+                .orElseGet(Set::of);
+    }
+
     private void selectWireClick(WireSegment wire) {
         Rectangle oldSelectionBounds = selectionScreenBounds();
         selectedIds.clear();
