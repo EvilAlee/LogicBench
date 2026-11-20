@@ -98,6 +98,24 @@ class ExpressionFeedbackTest {
     }
 
     @Test
+    void namedConstantDefinitionsDoNotBecomeInputsInsideFeedbackCircuits() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                One := 1
+                Q = NAND (One, Qn)
+                Qn = NAND (S, Q)
+                """);
+
+        assertTrue(compilation.hasFeedback());
+        assertEquals(List.of("S"), compilation.netlist().inputs());
+        assertTrue(compilation.netlist().gates().stream()
+                .anyMatch(gate -> gate.inputs().contains("1")));
+        SchematicLayout.LayoutResult layout = new SchematicLayout(DEFINITIONS)
+                .layoutFeedback(compilation.feedbackExtraction().orElseThrow());
+        assertTrue(layout.constantComponentIds().containsKey("1"));
+        assertEquals(List.of("S"), List.copyOf(layout.inputComponentIds().keySet()));
+    }
+
+    @Test
     void selfReferencesAreFeedbackNotPrimaryInputsAndUseBoundedSettling() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("Q = NOT Q");
