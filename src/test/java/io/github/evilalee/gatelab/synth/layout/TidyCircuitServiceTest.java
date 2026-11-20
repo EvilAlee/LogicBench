@@ -392,6 +392,7 @@ class TidyCircuitServiceTest {
 
     private static Schematic masterSlaveNandFlipFlop() {
         Schematic schematic = new Schematic(DEFINITIONS);
+        DffWiring wiring = new DffWiring(schematic);
         PlacedComponent d = add(schematic, "input-d", "input", 0, 0, "D");
         PlacedComponent clock = add(schematic, "clock-clk", "clock", 0, 100, "CLK");
         PlacedComponent dNot = add(schematic, "gate-d-not", "nand", 100, 200, "");
@@ -407,29 +408,71 @@ class TidyCircuitServiceTest {
         PlacedComponent q = add(schematic, "output-q", "output", 1200, 1000, "Q");
         PlacedComponent qBar = add(schematic, "output-qbar", "output", 1200, 1100, "Qbar");
 
-        connect(schematic, d.id(), "out", dNot.id(), "in0");
-        connect(schematic, d.id(), "out", dNot.id(), "in1");
-        connect(schematic, d.id(), "out", masterSet.id(), "in0");
-        connect(schematic, clock.id(), "out", clockNot.id(), "in0");
-        connect(schematic, clock.id(), "out", clockNot.id(), "in1");
-        connect(schematic, clock.id(), "out", masterSet.id(), "in1");
-        connect(schematic, dNot.id(), "out", masterReset.id(), "in0");
-        connect(schematic, clock.id(), "out", masterReset.id(), "in1");
-        connect(schematic, masterSet.id(), "out", masterQ.id(), "in0");
-        connect(schematic, masterQBar.id(), "out", masterQ.id(), "in1");
-        connect(schematic, masterReset.id(), "out", masterQBar.id(), "in0");
-        connect(schematic, masterQ.id(), "out", masterQBar.id(), "in1");
-        connect(schematic, masterQ.id(), "out", slaveSet.id(), "in0");
-        connect(schematic, clockNot.id(), "out", slaveSet.id(), "in1");
-        connect(schematic, masterQBar.id(), "out", slaveReset.id(), "in0");
-        connect(schematic, clockNot.id(), "out", slaveReset.id(), "in1");
-        connect(schematic, slaveSet.id(), "out", slaveQ.id(), "in0");
-        connect(schematic, slaveQBar.id(), "out", slaveQ.id(), "in1");
-        connect(schematic, slaveReset.id(), "out", slaveQBar.id(), "in0");
-        connect(schematic, slaveQ.id(), "out", slaveQBar.id(), "in1");
-        connect(schematic, slaveQ.id(), "out", q.id(), "in0");
-        connect(schematic, slaveQBar.id(), "out", qBar.id(), "in0");
+        wiring.connect( d.id(), "out", dNot.id(), "in0");
+        wiring.connect( d.id(), "out", dNot.id(), "in1");
+        wiring.connect( d.id(), "out", masterSet.id(), "in0");
+        wiring.connect( clock.id(), "out", clockNot.id(), "in0");
+        wiring.connect( clock.id(), "out", clockNot.id(), "in1");
+        wiring.connect( clock.id(), "out", masterSet.id(), "in1");
+        wiring.connect( dNot.id(), "out", masterReset.id(), "in0");
+        wiring.connect( clock.id(), "out", masterReset.id(), "in1");
+        wiring.connect( masterSet.id(), "out", masterQ.id(), "in0");
+        wiring.connect( masterQBar.id(), "out", masterQ.id(), "in1");
+        wiring.connect( masterReset.id(), "out", masterQBar.id(), "in0");
+        wiring.connect( masterQ.id(), "out", masterQBar.id(), "in1");
+        wiring.connect( masterQ.id(), "out", slaveSet.id(), "in0");
+        wiring.connect( clockNot.id(), "out", slaveSet.id(), "in1");
+        wiring.connect( masterQBar.id(), "out", slaveReset.id(), "in0");
+        wiring.connect( clockNot.id(), "out", slaveReset.id(), "in1");
+        wiring.connect( slaveSet.id(), "out", slaveQ.id(), "in0");
+        wiring.connect( slaveQBar.id(), "out", slaveQ.id(), "in1");
+        wiring.connect( slaveReset.id(), "out", slaveQBar.id(), "in0");
+        wiring.connect( slaveQ.id(), "out", slaveQBar.id(), "in1");
+        wiring.connect( slaveQ.id(), "out", q.id(), "in0");
+        wiring.connect( slaveQBar.id(), "out", qBar.id(), "in0");
         return schematic;
+    }
+
+    private static final class DffWiring {
+        private final Schematic schematic;
+        private int nextFeedbackLane;
+
+        private DffWiring(Schematic schematic) {
+            this.schematic = schematic;
+        }
+
+        private void connect(
+                String sourceId, String sourcePin, String targetId, String targetPin) {
+            Connectivity.PinPosition source = pin(schematic, sourceId, sourcePin);
+            Connectivity.PinPosition target = pin(schematic, targetId, targetPin);
+            int inputIndex = Integer.parseInt(targetPin.substring(2));
+            if (source.x() < target.x()) {
+                int entryTrackX = target.x()
+                        - (inputIndex + 1) * PlacedComponent.GRID_SPACING;
+                addSegment(source.x(), source.y(), entryTrackX, source.y());
+                addSegment(entryTrackX, source.y(), entryTrackX, target.y());
+                addSegment(entryTrackX, target.y(), target.x(), target.y());
+                return;
+            }
+
+            int lane = nextFeedbackLane++;
+            int sourceTrackX = source.x()
+                    + PlacedComponent.GRID_SPACING * (1 + lane);
+            int targetTrackX = target.x()
+                    - PlacedComponent.GRID_SPACING * (1 + lane);
+            int laneY = -100 - lane * PlacedComponent.GRID_SPACING;
+            addSegment(source.x(), source.y(), sourceTrackX, source.y());
+            addSegment(sourceTrackX, source.y(), sourceTrackX, laneY);
+            addSegment(targetTrackX, laneY, sourceTrackX, laneY);
+            addSegment(targetTrackX, laneY, targetTrackX, target.y());
+            addSegment(targetTrackX, target.y(), target.x(), target.y());
+        }
+
+        private void addSegment(int x1, int y1, int x2, int y2) {
+            if (x1 != x2 || y1 != y2) {
+                schematic.addWire(x1, y1, x2, y2);
+            }
+        }
     }
 
     private static PlacedComponent componentByLabel(Schematic schematic, String label) {
