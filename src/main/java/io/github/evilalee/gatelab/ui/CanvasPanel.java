@@ -162,6 +162,7 @@ public final class CanvasPanel extends JPanel {
     private Consumer<Tool> toolModeListener = ignored -> { };
     private Consumer<String> statusMessageListener = ignored -> { };
     private Runnable attributeStateListener = () -> { };
+    private Runnable nameEditorFocusListener = () -> { };
     private final Map<String, Map<String, String>> toolAttributesByFamily = new HashMap<>();
     private final Map<String, Facing> toolFacingByFamily = new HashMap<>();
 
@@ -526,6 +527,11 @@ public final class CanvasPanel extends JPanel {
         notifyAttributeStateChanged();
     }
 
+    /** Receives a request to focus the Name cell after a double-click on an I/O source or probe. */
+    public void setNameEditorFocusListener(Runnable listener) {
+        nameEditorFocusListener = listener == null ? () -> { } : listener;
+    }
+
     public AttributePanelState attributePanelState() {
         if (activeTool == Tool.ADD && previewTypeId != null) {
             return attributeStateForTool(previewTypeId);
@@ -551,6 +557,29 @@ public final class CanvasPanel extends JPanel {
         String id = selectedIds.iterator().next();
         try {
             beginHistoryGesture();
+            if (key.equals("name")) {
+                PlacedComponent selected = selectedComponents().getFirst();
+                if (!isNameEditableType(selected.typeId())) {
+                    history.cancelPending();
+                    return false;
+                }
+                schematic.setLabel(id, value);
+                commitHistoryGesture();
+                String normalized = schematic.components().stream()
+                        .filter(component -> component.id().equals(id))
+                        .map(PlacedComponent::label)
+                        .findFirst().orElse("");
+                boolean duplicate = !normalized.isEmpty()
+                        && schematic.components().stream().anyMatch(component ->
+                                !component.id().equals(id)
+                                        && isNameEditableType(component.typeId())
+                                        && normalized.equals(component.label()));
+                statusMessageListener.accept(
+                        duplicate ? "Duplicate name: " + normalized : "");
+                notifySelectionChanged();
+                repaint();
+                return true;
+            }
             boolean linksFollowed = schematic.setAttribute(id, key, value);
             commitHistoryGesture();
             statusMessageListener.accept(linksFollowed ? "" : "Some wires could not follow");
@@ -609,15 +638,17 @@ public final class CanvasPanel extends JPanel {
     private AttributePanelState attributeStateForTool(String family) {
         Facing facing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         Map<String, String> attributes = toolAttributesByFamily.getOrDefault(family, Map.of());
-        return buildAttributeState(family, facing, attributes);
+        return buildAttributeState(family, facing, attributes, "", false);
     }
 
     private AttributePanelState attributeStateForComponent(PlacedComponent component) {
-        return buildAttributeState(component.typeId(), component.facing(), component.attributes());
+        return buildAttributeState(
+                component.typeId(), component.facing(), component.attributes(), component.label(), true);
     }
 
     private AttributePanelState buildAttributeState(
-            String family, Facing facing, Map<String, String> attributes) {
+            String family, Facing facing, Map<String, String> attributes,
+            String label, boolean includeName) {
         List<AttributeRow> rows = new ArrayList<>();
         for (ComponentAttributeRegistry.AttributeSpec spec
                 : ComponentAttributeRegistry.forFamily(family)) {
@@ -634,8 +665,16 @@ public final class CanvasPanel extends JPanel {
                             ComponentAttributeRegistry.displayValue(spec.key(), selectedValue)));
             rows.add(new AttributeRow(spec.key(), spec.label(), selected, options));
         }
+        if (includeName && isNameEditableType(family)) {
+            rows.add(new AttributeRow(
+                    "name", "Name", new AttributeOption(label, label), List.of()));
+        }
         String title = family.isEmpty() ? "" : family.toUpperCase(Locale.ROOT);
         return new AttributePanelState(title, rows);
+    }
+
+    private static boolean isNameEditableType(String typeId) {
+        return typeId.equals("input") || typeId.equals("output") || typeId.equals("clock");
     }
 
     private void notifyAttributeStateChanged() {
@@ -814,7 +853,14 @@ public final class CanvasPanel extends JPanel {
             public void mouseClicked(MouseEvent event) {
                 if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)
                         && !galleryMode && activeTool == Tool.EDIT) {
-                    editGateLabelAt(event.getPoint());
+                    Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
+                    PlacedComponent hit = schematic.componentAt(
+                            (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
+                    if (hit != null && isNameEditableType(hit.typeId())) {
+                        nameEditorFocusListener.run();
+                    } else {
+                        editGateLabelAt(event.getPoint());
+                    }
                 }
             }
 

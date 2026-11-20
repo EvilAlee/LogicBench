@@ -53,20 +53,26 @@ class SchematicJsonTest {
                 "input-A", "input", 0, 0, Facing.EAST, java.util.Map.of(), "A"));
         original.add(new PlacedComponent(
                 "output-F", "output", 100, 0, Facing.EAST, java.util.Map.of(), "F"));
-        original.add(new PlacedComponent("input-empty", "input", 200, 0, Facing.EAST));
+        original.add(new PlacedComponent(
+                "clock-C", "clock", 200, 0, Facing.EAST, java.util.Map.of(), "CLK"));
+        original.add(new PlacedComponent("input-empty", "input", 300, 0, Facing.EAST));
         original.add(new PlacedComponent(
                 "gate-and", "and", 300, 0, Facing.EAST, java.util.Map.of(), "stage one"));
 
         String json = SchematicJson.toJson(original);
         assertTrue(json.contains("\"label\": \"A\""));
         assertTrue(json.contains("\"label\": \"F\""));
+        assertTrue(json.contains("\"label\": \"CLK\""));
         assertTrue(json.contains("\"label\": \"stage one\""));
-        assertEquals(3, occurrences(json, "\"label\""));
+        assertEquals(4, occurrences(json, "\"label\""));
 
         Schematic loaded = SchematicJson.fromJson(json, DEFINITIONS);
         assertEquals(original.components(), loaded.components());
-        assertEquals("", loaded.components().get(2).label());
+        assertEquals("CLK", loaded.components().get(2).label());
+        assertEquals("", loaded.components().get(3).label());
         assertEquals("stage one", loaded.components().getLast().label());
+        assertEquals(json, SchematicJson.toJson(loaded),
+                "labels remain in the existing version-1 label field");
     }
 
     @Test
@@ -80,6 +86,8 @@ class SchematicJsonTest {
         assertEquals("", loaded.components().getFirst().label());
         assertEquals("", loaded.components().getLast().label(),
                 "version-1 gate entries without labels remain valid");
+        assertFalse(SchematicJson.toJson(loaded).contains("\"label\""),
+                "legacy components without names remain unnamed when saved");
     }
 
     @Test
