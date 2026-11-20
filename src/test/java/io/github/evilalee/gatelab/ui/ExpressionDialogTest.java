@@ -1,6 +1,8 @@
 package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
+
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,7 +25,7 @@ class ExpressionDialogTest {
     @Test
     void outputDefinedLaterStillShowsTheReuseHintWithoutBecomingAnInput() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
-                "F = S0C | C\\nS0C = A & B");
+                "F = S0C | C\nS0C = A & B");
 
         assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
         assertEquals(
