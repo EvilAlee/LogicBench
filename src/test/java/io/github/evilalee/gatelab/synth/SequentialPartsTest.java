@@ -8,7 +8,7 @@ import io.github.evilalee.gatelab.model.OutputProbe;
 import io.github.evilalee.gatelab.model.Pin;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SequenceRunner;
-import io.github. evilalee.gatelab.sim.Simulator;
+import io.github.evilalee.gatelab.sim.Simulator;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
