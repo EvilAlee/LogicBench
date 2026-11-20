@@ -14,23 +14,26 @@ import java.security.MessageDigest;
 import java.util.Comparator;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeedbackLayoutBaselineMetricsTest {
     private record Metrics(int width, int height, long area, long wireLength) {}
 
     @Test
     void reportBaselineFeedbackLayoutMetrics() {
-        report("NOR SR latch", """
+        StringBuilder report = new StringBuilder();
+        report.append(measure("NOR SR latch", """
                 Q = R NOR Qbar
                 Qbar = S NOR Q
-                """, true);
-        report("4-NAND D latch", "Q = DLATCH(D, EN)", false);
-        report("master-slave D flip-flop", "Q = DFF(D, CLK)", false);
-        report("divide-by-2", "Q = DFF(NOT(Q), CLK)", false);
-        report("2-bit counter", """
+                """, true)).append('\\n');
+        report.append(measure("4-NAND D latch", "Q = DLATCH(D, EN)", false)).append('\\n');
+        report.append(measure("master-slave D flip-flop", "Q = DFF(D, CLK)", false)).append('\\n');
+        report.append(measure("divide-by-2", "Q = DFF(NOT(Q), CLK)", false)).append('\\n');
+        report.append(measure("2-bit counter", """
                 Q0 = DFF(RESET_N & NOT(Q0), CLK)
                 Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
-                """, false);
+                """, false)).append('\\n');
+        assertTrue(false, report.toString());
     }
 
     @Test
@@ -61,7 +64,7 @@ class FeedbackLayoutBaselineMetricsTest {
                 + java.util.HexFormat.of().formatHex(digest));
     }
 
-    private static void report(String name, String expression, boolean rawFeedback) {
+    private static String measure(String name, String expression, boolean rawFeedback) {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile(expression, rawFeedback);
         FeedbackCircuitExtractor.Extraction extraction =
@@ -71,9 +74,9 @@ class FeedbackLayoutBaselineMetricsTest {
                 .layoutFeedback(extraction).schematic();
         Metrics metrics = metrics(schematic);
         assertNotNull(metrics);
-        System.out.println("BASELINE_LAYOUT " + name + " width=" + metrics.width()
+        return name + " width=" + metrics.width()
                 + " height=" + metrics.height() + " area=" + metrics.area()
-                + " wireLength=" + metrics.wireLength());
+                + " wireLength=" + metrics.wireLength();
     }
 
     private static Metrics metrics(Schematic schematic) {
