@@ -484,6 +484,10 @@ public final class SchematicLayout {
         feedbackSchematic.restoreSnapshot(new SchematicSnapshot(
                 finalComponents, List.copyOf(finalWires)));
         checkNoComponentOverlaps(feedbackSchematic);
+        Map<String, String> primaryInputIds = new LinkedHashMap<>(inputIds);
+        primaryInputIds.putAll(clockIds);
+        checkConnectivity(feedback.sourceNetlist(), feedbackSchematic,
+                primaryInputIds, constantIds, gateNodes, outputIds);
 
         Map<String, String> gateIds = new LinkedHashMap<>();
         gateNodes.forEach((signal, node) -> gateIds.put(signal, node.componentId));
