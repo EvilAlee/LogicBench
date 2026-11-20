@@ -1458,6 +1458,8 @@ public final class SchematicLayout {
         Map<PinKey, Integer> netByPin = new HashMap<>();
         Map<String, Integer> netBySignal = new HashMap<>();
         Set<String> involved = new TreeSet<>();
+        List<String> joinedNetDetails = new ArrayList<>();
+        List<String> splitSignalDetails = new ArrayList<>();
 
         for (int netIndex = 0; netIndex < topology.nets().size(); netIndex++) {
             Connectivity.Net net = topology.nets().get(netIndex);
@@ -1479,17 +1481,26 @@ public final class SchematicLayout {
                 Integer previousNet = netBySignal.putIfAbsent(signal, netIndex);
                 if (previousNet != null && previousNet != netIndex) {
                     involved.add(signal);
+                    splitSignalDetails.add(signal + " occurs in net " + previousNet
+                            + " and net " + netIndex);
                 }
             }
             if (expectedSignals.size() > 1) {
                 involved.addAll(expectedSignals);
+                String pins = net.pins().stream()
+                        .map(pin -> pin.componentId() + "." + pin.pinId())
+                        .sorted().collect(java.util.stream.Collectors.joining(","));
+                joinedNetDetails.add("net " + netIndex + " signals=" + expectedSignals
+                        + " pins=[" + pins + "]");
             }
         }
 
         if (!involved.isEmpty()) {
             throw new LayoutCheckException(
                     "different netlist signals were joined or one signal was split: "
-                            + String.join(", ", involved),
+                            + String.join(", ", involved)
+                            + "; joined=" + joinedNetDetails
+                            + "; split=" + splitSignalDetails,
                     involved);
         }
 
