@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.ParseException;
 import io.github.evilalee.gatelab.synth.TruthTable;
@@ -39,6 +40,8 @@ import java.util.Objects;
 /** Live expression editor and engine-backed truth-table preview. */
 public final class ExpressionDialog extends JDialog {
     private static final int TABLE_INPUT_LIMIT = 10;
+    private static final String FEEDBACK_PREVIEW_NOTE =
+            "Feedback circuit: connections verified, behaviour not simulated. Truth table not shown.";
 
     private final CanvasPanel canvas;
     private final JTextArea expressionText = new JTextArea(5, 58);
@@ -48,6 +51,7 @@ public final class ExpressionDialog extends JDialog {
     private final JTable truthTable = new JTable(tableModel);
     private final JButton generateButton = new JButton("Generate");
     private ExpressionCompiler.Compilation currentCompilation;
+    private SchematicLayout.LayoutResult currentLayout;
 
     private ExpressionDialog(JFrame owner, CanvasPanel canvas) {
         super(owner, "From expression", ModalityType.APPLICATION_MODAL);
@@ -135,9 +139,11 @@ public final class ExpressionDialog extends JDialog {
 
     private void updatePreview() {
         currentCompilation = null;
+        currentLayout = null;
         generateButton.setEnabled(false);
         tableModel.setTable(null);
         tableNote.setText(" ");
+        truthTable.setEnabled(true);
         try {
             ExpressionCompiler.Compilation compilation =
                     ExpressionCompiler.compile(expressionText.getText());
@@ -154,7 +160,18 @@ public final class ExpressionDialog extends JDialog {
                         : "Variables: " + String.join(", ", variables));
             }
 
-            if (variables.size() > TABLE_INPUT_LIMIT) {
+            if (compilation.hasFeedback()) {
+                SchematicLayout layoutEngine = new SchematicLayout(GateLibrary.load().all());
+                currentLayout = layoutEngine.layoutFeedback(
+                        compilation.feedbackExtraction().orElseThrow());
+                SchematicCompiler.SimulationResult initial =
+                        SchematicCompiler.compileAndSettle(currentLayout.schematic());
+                if (initial.oscillating()) {
+                    throw new IllegalStateException("Circuit did not settle");
+                }
+                truthTable.setEnabled(false);
+                tableNote.setText(FEEDBACK_PREVIEW_NOTE);
+            } else if (variables.size() > TABLE_INPUT_LIMIT) {
                 tableNote.setText("Truth table preview is limited to 10 inputs; "
                         + variables.size() + " variables are present.");
             } else {
@@ -179,7 +196,9 @@ public final class ExpressionDialog extends JDialog {
 
     private void showError(String message) {
         currentCompilation = null;
+        currentLayout = null;
         generateButton.setEnabled(false);
+        truthTable.setEnabled(true);
         statusLine.setForeground(new Color(190, 35, 35));
         statusLine.setText(message == null ? "Invalid expression" : message);
         tableNote.setText(" ");
@@ -190,16 +209,28 @@ public final class ExpressionDialog extends JDialog {
             return;
         }
         try {
-            // The preview core verifies the expression netlist; this second pass
-            // verifies the actual placed geometry through SchematicCompiler.
-            SchematicLayout layoutEngine = new SchematicLayout(GateLibrary.load().all());
-            SchematicLayout.LayoutResult layout =
-                    layoutEngine.layout(currentCompilation.netlist());
-            SchematicExpressionVerifier.VerificationResult placed =
-                    SchematicExpressionVerifier.verify(currentCompilation, layout);
-            if (!placed.verified()) {
-                showError("Placed circuit verification failed: " + placed.mismatches());
-                return;
+            SchematicLayout.LayoutResult layout;
+            SchematicExpressionVerifier.VerificationResult placed = null;
+            boolean feedback = currentCompilation.hasFeedback();
+            if (feedback) {
+                layout = currentLayout;
+                if (layout == null) {
+                    SchematicLayout layoutEngine =
+                            new SchematicLayout(GateLibrary.load().all());
+                    layout = layoutEngine.layoutFeedback(
+                            currentCompilation.feedbackExtraction().orElseThrow());
+                }
+            } else {
+                // The preview core verifies the expression netlist; this second pass
+                // verifies the actual placed geometry through SchematicCompiler.
+                SchematicLayout layoutEngine =
+                        new SchematicLayout(GateLibrary.load().all());
+                layout = layoutEngine.layout(currentCompilation.netlist());
+                placed = SchematicExpressionVerifier.verify(currentCompilation, layout);
+                if (!placed.verified()) {
+                    showError("Placed circuit verification failed: " + placed.mismatches());
+                    return;
+                }
             }
 
             boolean hasContent = !canvas.schematic().components().isEmpty()
@@ -217,7 +248,9 @@ public final class ExpressionDialog extends JDialog {
             }
 
             canvas.replaceWithGeneratedCircuit(layout.schematic());
-            canvas.setStatusMessage("Verified: " + placed.rowCount() + " rows match");
+            canvas.setStatusMessage(feedback
+                    ? FEEDBACK_PREVIEW_NOTE
+                    : "Verified: " + placed.rowCount() + " rows match");
             dispose();
         } catch (IllegalArgumentException | IllegalStateException exception) {
             showError(exception.getMessage());
@@ -230,7 +263,7 @@ public final class ExpressionDialog extends JDialog {
             return null;
         }
         return compilation.reusedOutputNames().getFirst()
-                + " is both an output and used by later lines. "
+                + " is both an output and used by another line. "
                 + "Use := for an internal signal with no pin.";
     }
 

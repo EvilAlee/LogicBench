@@ -1,6 +1,8 @@
 package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
+
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,12 +14,24 @@ class ExpressionDialogTest {
                 "S0C = A & B\nF = S0C | C");
 
         assertEquals(
-                "S0C is both an output and used by later lines. "
+                "S0C is both an output and used by another line. "
                         + "Use := for an internal signal with no pin.",
                 ExpressionDialog.outputReuseHint(compilation));
         assertTrue(compilation.netlist().outputs().stream()
                 .anyMatch(output -> output.name().equals("S0C")),
                 "the hint must not remove the output pin");
+    }
+
+    @Test
+    void outputDefinedLaterStillShowsTheReuseHintWithoutBecomingAnInput() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
+                "F = S0C | C\nS0C = A & B");
+
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertEquals(
+                "S0C is both an output and used by another line. "
+                        + "Use := for an internal signal with no pin.",
+                ExpressionDialog.outputReuseHint(compilation));
     }
 
     @Test

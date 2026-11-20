@@ -37,6 +37,19 @@ public final class TruthTableGenerator {
             signalOutputs.put(inputName, input.output());
         }
 
+        Map<String, InputPin> constantComponents = new LinkedHashMap<>();
+        for (Netlist.Gate gate : netlist.gates()) {
+            for (String input : gate.inputs()) {
+                if ((input.equals("0") || input.equals("1"))
+                        && !constantComponents.containsKey(input)) {
+                    InputPin constant = new InputPin("_synth_constant_" + input);
+                    circuit.addComponent(constant);
+                    constantComponents.put(input, constant);
+                    signalOutputs.put(input, constant.output());
+                }
+            }
+        }
+
         for (Netlist.Gate definition : netlist.topologicalGates()) {
             Gate gate = new Gate(
                     definition.id(),
@@ -75,6 +88,11 @@ public final class TruthTableGenerator {
                 bits.append(high ? '1' : '0');
                 simulator.setInputValue(inputComponents.get(netlist.inputs().get(inputIndex)),
                         high ? Value.ONE : Value.ZERO);
+            }
+
+            for (Map.Entry<String, InputPin> constant : constantComponents.entrySet()) {
+                simulator.setInputValue(constant.getValue(),
+                        constant.getKey().equals("1") ? Value.ONE : Value.ZERO);
             }
 
             simulator.settle();

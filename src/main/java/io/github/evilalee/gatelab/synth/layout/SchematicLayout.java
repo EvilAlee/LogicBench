@@ -229,6 +229,14 @@ public final class SchematicLayout {
                 depthBySignal.putIfAbsent(output.source(), 0);
             }
         }
+        for (Netlist.Gate gate : netlist.gates()) {
+            for (String input : gate.inputs()) {
+                if (input.equals("0") || input.equals("1")) {
+                    constantsUsed.add(input);
+                    depthBySignal.putIfAbsent(input, 0);
+                }
+            }
+        }
 
         List<Netlist.Gate> topological = netlist.topologicalGates();
         int lastGateDepth = 0;
@@ -377,9 +385,9 @@ public final class SchematicLayout {
             for (FeedbackCircuitExtractor.FeedbackEdge edge : feedback.feedbackEdges()) {
                 Node source = gateNodes.get(edge.sourceGate());
                 Node target = gateNodes.get(edge.targetGate());
-                if (source == null || target == null || source.column <= target.column) {
+                if (source == null || target == null || source.column < target.column) {
                     throw new IllegalArgumentException(
-                            "feedback edge does not return to an earlier layout column: "
+                            "feedback edge does not return to the same or an earlier layout column: "
                                     + edge.sourceGate() + " -> " + edge.targetGate());
                 }
                 feedbackSourcesByChannel.computeIfAbsent(
@@ -484,6 +492,10 @@ public final class SchematicLayout {
         feedbackSchematic.restoreSnapshot(new SchematicSnapshot(
                 finalComponents, List.copyOf(finalWires)));
         checkNoComponentOverlaps(feedbackSchematic);
+        Map<String, String> primaryInputIds = new LinkedHashMap<>(inputIds);
+        primaryInputIds.putAll(clockIds);
+        checkConnectivity(feedback.sourceNetlist(), feedbackSchematic,
+                primaryInputIds, constantIds, gateNodes, outputIds);
 
         Map<String, String> gateIds = new LinkedHashMap<>();
         gateNodes.forEach((signal, node) -> gateIds.put(signal, node.componentId));

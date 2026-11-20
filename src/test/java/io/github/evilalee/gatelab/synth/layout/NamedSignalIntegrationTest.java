@@ -13,13 +13,13 @@ class NamedSignalIntegrationTest {
     private final SchematicLayout layout = new SchematicLayout(GateLibrary.load().all());
 
     @Test
-    void reusedOutputNameRemainsAnInputWhileInternalSignalHasNoOutputPin() {
+    void reusedOutputNameResolvesItsDefinitionWhileInternalSignalHasNoOutputPin() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
                 "S0 = A^B; C := A&B; S1 = S0 ^ C");
 
-        // Observed main-branch behavior: a later reference to an '=' output name
-        // is treated as a primary input, not as a reference to that output's AST.
-        assertEquals(List.of("A", "B", "S0"), compilation.netlist().inputs());
+        // S0 remains an output pin, while its later reference resolves to its
+        // definition instead of introducing a second primary input.
+        assertEquals(List.of("A", "B"), compilation.netlist().inputs());
         assertEquals(List.of("S0", "S1"), compilation.netlist().outputs().stream()
                 .map(output -> output.name()).toList());
         assertFalse(compilation.netlist().outputs().stream()

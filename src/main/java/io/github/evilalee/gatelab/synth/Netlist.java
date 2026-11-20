@@ -16,12 +16,18 @@ import java.util.Set;
  * namespace because an output may legitimately be named after an input signal.
  * Output sources may be the literal "0" or "1" for constant-only expressions.
  */
-public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gates) {
+public record Netlist(
+        List<String> inputs, List<Output> outputs, List<Gate> gates,
+        boolean feedbackAllowed) {
+    public Netlist(List<String> inputs, List<Output> outputs, List<Gate> gates) {
+        this(inputs, outputs, gates, false);
+    }
+
     public Netlist {
         inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
         outputs = List.copyOf(Objects.requireNonNull(outputs, "outputs"));
         gates = List.copyOf(Objects.requireNonNull(gates, "gates"));
-        validate(inputs, outputs, gates);
+        validate(inputs, outputs, gates, feedbackAllowed);
     }
 
     public record Output(String name, String source) {
@@ -37,7 +43,9 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
             Objects.requireNonNull(type, "type");
             inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
             for (String input : inputs) {
-                requireIdentifier(input, "gate input reference");
+                if (!input.equals("0") && !input.equals("1")) {
+                    requireIdentifier(input, "gate input reference");
+                }
             }
         }
     }
@@ -86,7 +94,9 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
         ordered.add(gate);
     }
 
-    private static void validate(List<String> inputs, List<Output> outputs, List<Gate> gates) {
+    private static void validate(
+            List<String> inputs, List<Output> outputs, List<Gate> gates,
+            boolean feedbackAllowed) {
         if (outputs.isEmpty()) {
             throw new IllegalArgumentException("netlist must define at least one output");
         }
@@ -117,7 +127,8 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
         for (Gate gate : gates) {
             for (int index = 0; index < gate.inputs().size(); index++) {
                 String reference = gate.inputs().get(index);
-                if (!signalNames.contains(reference)) {
+                if (!reference.equals("0") && !reference.equals("1")
+                        && !signalNames.contains(reference)) {
                     throw new IllegalArgumentException("gate " + gate.id() + " input["
                             + index + "] references unknown signal: " + reference);
                 }
@@ -137,8 +148,11 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
             }
         }
 
-        // The DFS also guarantees that references between gates form a DAG.
-        Netlist.validateAcyclic(gates, gatesById);
+        // The ordinary constructor remains DAG-only. Feedback compilation opts
+        // in explicitly; topologicalGates() still rejects cycles for DAG-only consumers.
+        if (!feedbackAllowed) {
+            Netlist.validateAcyclic(gates, gatesById);
+        }
     }
 
     private static void validateAcyclic(List<Gate> gates, Map<String, Gate> gatesById) {

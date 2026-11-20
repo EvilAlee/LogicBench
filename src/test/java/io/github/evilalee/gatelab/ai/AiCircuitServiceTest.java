@@ -441,7 +441,7 @@ class AiCircuitServiceTest {
 
     @Test
     void parsableExpressionBeyondCompilerInputLimitStillSkipsTheProvider() throws Exception {
-        String description = "F = A & B & C & D & E & F & G & H & I & J & K & L & M";
+        String description = "Result = A & B & C & D & E & F & G & H & I & J & K & L & M";
         ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate(description);
 
@@ -544,6 +544,25 @@ class AiCircuitServiceTest {
         }
     }
 
+
+    @Test
+    void modelAnswerWithFeedbackCycleIsStillRejectedAsCombinationalAiOutput() throws Exception {
+        String cyclic = answer(List.of("Qn", "Q"), List.of(
+                new Output("Q", "NOT Qn"),
+                new Output("Qn", "NOT Q")), "0000", "0000");
+        ScriptedProvider provider = new ScriptedProvider(cyclic);
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Build a cross-coupled latch with outputs Q and Qn.");
+
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(provider.calls > 0);
+        assertTrue(result.attemptLog().stream()
+                .anyMatch(line -> line.contains("Schematic layout failed")
+                        && line.contains("combinational cycle detected")));
+        assertNull(result.layout());
+        assertNull(result.truthTable());
+    }
 
     @Test
     void permutedTwoBitAdderWrongBitProducesNamedAssignmentFeedback() throws Exception {

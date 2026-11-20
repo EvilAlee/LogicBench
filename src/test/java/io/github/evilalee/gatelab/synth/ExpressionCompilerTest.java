@@ -28,8 +28,24 @@ class ExpressionCompilerTest {
 
         assertEquals(List.of("S0C", "F"), compilation.netlist().outputs().stream()
                 .map(Netlist.Output::name).toList());
-        assertEquals(List.of("A", "B", "S0C", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("g1", "g2"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::source).toList());
         assertEquals(List.of("S0C"), compilation.reusedOutputNames());
+    }
+
+    @Test
+    void forwardOutputReferencesResolveWithoutCreatingExtraInputs() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
+                "F = S0C | C\nS0C = A & B");
+
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("F", "S0C"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::name).toList());
+        assertEquals(List.of("g2", "g1"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::source).toList());
+        assertEquals(List.of("S0C"), compilation.reusedOutputNames());
+        assertTrue(TruthTableVerifier.verify(compilation).verified());
     }
 
     @Test
@@ -95,7 +111,7 @@ class ExpressionCompilerTest {
     void rejectsDuplicateDefaultOutputNamesAndTooManyVariables() {
         assertThrows(IllegalArgumentException.class,
                 () -> ExpressionCompiler.compile("A & B\nA | B"));
-        String manyInputs = "F = A & B & C & D & E & F & G & H & I & J & K & L & M";
+        String manyInputs = "Result = A & B & C & D & E & F & G & H & I & J & K & L & M";
         assertTrue(assertThrows(IllegalArgumentException.class,
                 () -> ExpressionCompiler.compile(manyInputs)).getMessage().contains("maximum is 12"));
     }
