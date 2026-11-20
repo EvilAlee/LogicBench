@@ -213,10 +213,8 @@ public final class FeedbackCircuitExtractor {
                         signalByNet,
                         gate.typeId() + " " + gate.id() + " input " + index);
                 sources.add(source);
-                if (gateIds.containsKey(source)) {
-                    gateEdges.add(new GateInputEdge(
-                            source, gateSignals.get(gate.id()), index));
-                }
+                gateEdges.add(new GateInputEdge(
+                        source, gateSignals.get(gate.id()), index));
             }
             gateInputs.put(gateSignals.get(gate.id()), List.copyOf(sources));
         }
