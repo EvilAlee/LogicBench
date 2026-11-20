@@ -122,6 +122,20 @@ class FeedbackCircuitLayoutMetricsTest {
         assertFalse(simulation.oscillating());
     }
 
+    @TestFactory
+    List<DynamicTest> reportCurrentCombinationalLayoutFingerprints() throws Exception {
+        return List.of(
+                DynamicTest.dynamicTest(
+                        "CURRENT_COMBINATIONAL full adder sha256=" + fingerprint("""
+                                Sum = A ^ B ^ Cin
+                                Cout = (A & B) | (Cin & (A ^ B))
+                                """), () -> {}),
+                DynamicTest.dynamicTest(
+                        "CURRENT_COMBINATIONAL majority sha256=" + fingerprint("""
+                                M = (A & B) | (A & C) | (B & C)
+                                """), () -> {}));
+    }
+
     @Test
     void fullAdderAndMajorityCombinationalCoordinatesRemainByteForByteStable()
             throws Exception {
