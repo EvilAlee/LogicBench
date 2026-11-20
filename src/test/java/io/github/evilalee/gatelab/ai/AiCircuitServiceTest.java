@@ -546,7 +546,7 @@ class AiCircuitServiceTest {
 
 
     @Test
-    void modelAnswerWithFeedbackCycleIsStillRejectedAsCombinationalAiOutput() {
+    void modelAnswerWithFeedbackCycleIsStillRejectedAsCombinationalAiOutput() throws Exception {
         String cyclic = answer(List.of("Qn", "Q"), List.of(
                 new Output("Q", "NOT Qn"),
                 new Output("Qn", "NOT Q")), "0000", "0000");
