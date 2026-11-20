@@ -249,7 +249,7 @@ public final class AiCircuitService {
 
         ExpressionCompiler.Compilation local = null;
         try {
-            local = ExpressionCompiler.compile(description);
+            local = ExpressionCompiler.compile(description, false);
         } catch (RuntimeException notExpressionText) {
             if (isExpressionSource(description)) {
                 log.add("Description parses as expression text but cannot be compiled: "
@@ -644,7 +644,7 @@ public final class AiCircuitService {
 
         ExpressionCompiler.Compilation compilation;
         try {
-            compilation = ExpressionCompiler.compile(source.toString());
+            compilation = ExpressionCompiler.compile(source.toString(, false));
         } catch (RuntimeException exception) {
             return new Attempt(answer, null, null, null, List.of(),
                     List.of("Expression compilation failed: " + safeParseMessage(exception)));
