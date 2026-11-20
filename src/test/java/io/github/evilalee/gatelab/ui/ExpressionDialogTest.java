@@ -12,7 +12,7 @@ class ExpressionDialogTest {
                 "S0C = A & B\nF = S0C | C");
 
         assertEquals(
-                "S0C is both an output and used by later lines. "
+                "S0C is both an output and used by another line. "
                         + "Use := for an internal signal with no pin.",
                 ExpressionDialog.outputReuseHint(compilation));
         assertTrue(compilation.netlist().outputs().stream()
