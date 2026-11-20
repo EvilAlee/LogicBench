@@ -137,8 +137,8 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
             }
         }
 
-        // The DFS also guarantees that references between gates form a DAG.
-        Netlist.validateAcyclic(gates, gatesById);
+        // Cycles are representable for expression feedback. Combinational consumers
+        // still call topologicalGates(), which rejects them before DAG-only work.
     }
 
     private static void validateAcyclic(List<Gate> gates, Map<String, Gate> gatesById) {
