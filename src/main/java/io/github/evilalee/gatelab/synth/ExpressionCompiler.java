@@ -1,7 +1,18 @@
 package io.github.evilalee.gatelab.synth;
 
+import io.github.evilalee.gatelab.model.Circuit;
+import io.github.evilalee.gatelab.model.Component;
+import io.github.evilalee.gatelab.model.Gate;
+import io.github.evilalee.gatelab.model.GateType;
+import io.github.evilalee.gatelab.model.InputPin;
+import io.github.evilalee.gatelab.model.OutputProbe;
+import io.github.evilalee.gatelab.model.Pin;
+import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.model.Wire;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -30,20 +41,50 @@ public final class ExpressionCompiler {
         }
     }
 
+    /** Named pins for a compiled gate-level sequential circuit. */
+    public record SequentialCircuit(
+            Circuit circuit,
+            Map<String, InputPin> inputs,
+            Map<String, OutputProbe> outputs,
+            Map<InputPin, Value> fixedInputs) {
+        public SequentialCircuit {
+            Objects.requireNonNull(circuit, "circuit");
+            inputs = Collections.unmodifiableMap(new LinkedHashMap<>(
+                    Objects.requireNonNull(inputs, "inputs")));
+            outputs = Collections.unmodifiableMap(new LinkedHashMap<>(
+                    Objects.requireNonNull(outputs, "outputs")));
+            fixedInputs = Collections.unmodifiableMap(new IdentityHashMap<>(
+                    Objects.requireNonNull(fixedInputs, "fixedInputs")));
+        }
+    }
+
     /** Parsed ASTs are retained so the engine truth table can be checked independently. */
     public record Compilation(
             Netlist netlist,
             List<NamedExpression> expressions,
             List<String> reusedOutputNames,
-            Optional<FeedbackCircuitExtractor.Extraction> feedbackExtraction) {
+            Optional<FeedbackCircuitExtractor.Extraction> feedbackExtraction,
+            boolean hasSequentialParts,
+            Optional<String> clockName,
+            Optional<SequentialCircuit> sequentialCircuit) {
         public Compilation(Netlist netlist, List<NamedExpression> expressions) {
-            this(netlist, expressions, List.of(), Optional.empty());
+            this(netlist, expressions, List.of(), Optional.empty(),
+                    false, Optional.empty(), Optional.empty());
         }
 
         public Compilation(
                 Netlist netlist, List<NamedExpression> expressions,
                 List<String> reusedOutputNames) {
-            this(netlist, expressions, reusedOutputNames, Optional.empty());
+            this(netlist, expressions, reusedOutputNames, Optional.empty(),
+                    false, Optional.empty(), Optional.empty());
+        }
+
+        public Compilation(
+                Netlist netlist, List<NamedExpression> expressions,
+                List<String> reusedOutputNames,
+                Optional<FeedbackCircuitExtractor.Extraction> feedbackExtraction) {
+            this(netlist, expressions, reusedOutputNames, feedbackExtraction,
+                    false, Optional.empty(), Optional.empty());
         }
 
         public Compilation {
@@ -52,6 +93,12 @@ public final class ExpressionCompiler {
             reusedOutputNames = List.copyOf(
                     Objects.requireNonNull(reusedOutputNames, "reusedOutputNames"));
             feedbackExtraction = Objects.requireNonNull(feedbackExtraction, "feedbackExtraction");
+            clockName = Objects.requireNonNull(clockName, "clockName");
+            sequentialCircuit = Objects.requireNonNull(sequentialCircuit, "sequentialCircuit");
+            if (hasSequentialParts != sequentialCircuit.isPresent()) {
+                throw new IllegalArgumentException(
+                        "sequential circuit data must be present exactly when parts are used");
+            }
             if (expressions.size() != netlist.outputs().size()) {
                 throw new IllegalArgumentException(
                         "expression count must match the netlist output count");
@@ -78,7 +125,16 @@ public final class ExpressionCompiler {
      * internal signal that can be referenced by later statements without a pin.
      * An unnamed statement receives the default output name "F".
      */
+    /** Defaults to rejecting raw feedback; sequential part feedback remains supported. */
     public static Compilation compile(String source) {
+        return compile(source, false);
+    }
+
+    /**
+     * Compiles named Boolean expressions. Raw expression-level feedback is
+     * opt-in; cycles contained by a DLATCH/DFF/TFF/JKFF call are always valid.
+     */
+    public static Compilation compile(String source, boolean allowRawFeedback) {
         Objects.requireNonNull(source, "source");
         List<Statement> statements = splitStatements(source);
         if (statements.isEmpty()) {
@@ -98,19 +154,83 @@ public final class ExpressionCompiler {
             assignments.add(assignment);
         }
 
-        List<String> reusedOutputNames = findReusedOutputNames(assignments);
-        boolean hasFeedback = hasReachableFeedback(assignments, assignmentsByName);
-        Map<String, Expression> expandedAssignments = new HashMap<>();
-        List<NamedExpression> expressions = new ArrayList<>();
         List<Assignment> outputAssignments = assignments.stream()
                 .filter(assignment -> assignment.kind() == AssignmentKind.OUTPUT)
                 .toList();
+        LinkedHashSet<String> reachableAssignments = reachableAssignments(
+                outputAssignments, assignmentsByName);
+        LinkedHashSet<String> clockNames = new LinkedHashSet<>();
+        for (String name : reachableAssignments) {
+            collectClockNames(assignmentsByName.get(name).expression(), clockNames);
+        }
+        if (clockNames.size() > 1) {
+            throw new IllegalArgumentException(
+                    "sequential expressions must use one clock; found "
+                            + String.join(", ", clockNames));
+        }
+        for (String clock : clockNames) {
+            if (assignmentsByName.containsKey(clock)) {
+                throw new IllegalArgumentException(
+                        "clock identifier '" + clock
+                                + "' cannot be defined by an expression line");
+            }
+        }
+
+        List<String> reusedOutputNames = findReusedOutputNames(assignments);
+        List<String> rawCycle = findRawFeedbackCycle(outputAssignments, assignmentsByName);
+        if (!allowRawFeedback && !rawCycle.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "raw feedback is disabled; cycle bypasses sequential parts: "
+                            + String.join(" -> ", rawCycle));
+        }
+
+        boolean hasSequentialParts = reachableAssignments.stream()
+                .map(assignmentsByName::get)
+                .anyMatch(assignment -> containsPartCall(assignment.expression()));
+        Map<String, Expression> expandedAssignments = new HashMap<>();
+        List<NamedExpression> expressions = new ArrayList<>();
         for (Assignment assignment : outputAssignments) {
             Expression expanded = expandAssignment(
                     assignment.name(), assignmentsByName, expandedAssignments, new HashSet<>());
             expressions.add(new NamedExpression(assignment.name(), expanded));
         }
 
+        if (hasSequentialParts) {
+            SequentialBuilder builder = new SequentialBuilder(assignmentsByName);
+            List<Netlist.Output> outputs = new ArrayList<>();
+            for (Assignment assignment : outputAssignments) {
+                String signal = builder.buildOutput(assignment.name());
+                outputs.add(new Netlist.Output(assignment.name(), signal));
+            }
+            SequentialBuild build = builder.finish(outputs);
+            if (build.netlist().inputs().size() > 12) {
+                throw new IllegalArgumentException(
+                        "netlist has " + build.netlist().inputs().size()
+                                + " inputs; maximum is 12");
+            }
+            if (build.netlist().gates().size() > 500) {
+                throw new IllegalArgumentException("sequential circuit has too many gates");
+            }
+            FeedbackCircuitExtractor.Extraction rawExtraction =
+                    FeedbackCircuitExtractor.extract(build.netlist()).orElseThrow(() ->
+                            new IllegalArgumentException(
+                                    "sequential part expansion did not produce a feedback circuit"));
+            Map<String, String> clocks = new LinkedHashMap<>();
+            clockNames.forEach(name -> clocks.put(name, "expr-clock-" + name));
+            FeedbackCircuitExtractor.Extraction extraction =
+                    new FeedbackCircuitExtractor.Extraction(
+                            rawExtraction.dagNetlist(),
+                            rawExtraction.feedbackEdges(),
+                            rawExtraction.inputComponentIds(),
+                            clocks,
+                            rawExtraction.outputComponentIds(),
+                            rawExtraction.gateComponentIds());
+            return new Compilation(
+                    build.netlist(), expressions, reusedOutputNames, Optional.of(extraction),
+                    true, clockNames.stream().findFirst(), Optional.of(build.sequentialCircuit()));
+        }
+
+        boolean hasFeedback = hasReachableFeedback(assignments, assignmentsByName);
         if (hasFeedback) {
             FeedbackBuilder builder = new FeedbackBuilder(assignmentsByName);
             List<Netlist.Output> outputs = new ArrayList<>();
