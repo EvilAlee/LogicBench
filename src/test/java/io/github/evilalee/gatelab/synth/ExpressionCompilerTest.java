@@ -35,6 +35,20 @@ class ExpressionCompilerTest {
     }
 
     @Test
+    void forwardOutputReferencesResolveWithoutCreatingExtraInputs() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
+                "F = S0C | C\\nS0C = A & B");
+
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("F", "S0C"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::name).toList());
+        assertEquals(List.of("g2", "g1"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::source).toList());
+        assertEquals(List.of("S0C"), compilation.reusedOutputNames());
+        assertTrue(TruthTableVerifier.verify(compilation).verified());
+    }
+
+    @Test
     void identicalSubexpressionsAreSharedAcrossOutputs() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("F = A & B\nG = (A & B) | C");
