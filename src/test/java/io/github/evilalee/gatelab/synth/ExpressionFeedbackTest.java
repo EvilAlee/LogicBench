@@ -131,8 +131,10 @@ class ExpressionFeedbackTest {
                 .layoutFeedback(compilation.feedbackExtraction().orElseThrow());
         SchematicCompiler.SimulationResult result =
                 SchematicCompiler.compileAndSettle(layout.schematic());
-        assertTrue(result.oscillating(),
-                "the NOT feedback loop must stop at the simulator tick budget");
+        assertEquals(Value.X, result.outputValues().get(
+                layout.outputComponentIds().get("Q")));
+        assertFalse(result.oscillating(),
+                "an unknown-state self-loop settles to X under three-valued semantics");
     }
 
     @Test
