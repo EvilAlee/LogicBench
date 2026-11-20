@@ -21,21 +21,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FeedbackLayoutBaselineMetricsTest {
     private record Metrics(int width, int height, long area, long wireLength) {}
 
-    @Test
-    void reportBaselineFeedbackLayoutMetrics() {
-        StringBuilder report = new StringBuilder();
-        report.append(measure("NOR SR latch", """
-                Q = R NOR Qbar
-                Qbar = S NOR Q
-                """, true)).append('\n');
-        report.append(measure("4-NAND D latch", "Q = DLATCH(D, EN)", false)).append('\n');
-        report.append(measure("master-slave D flip-flop", "Q = DFF(D, CLK)", false)).append('\n');
-        report.append(measure("divide-by-2", "Q = DFF(NOT(Q), CLK)", false)).append('\n');
-        report.append(measure("2-bit counter", """
-                Q0 = DFF(RESET_N & NOT(Q0), CLK)
-                Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
-                """, false)).append('\n');
-        assertTrue(false, report.toString());
+    @TestFactory
+    List<DynamicTest> reportBaselineFeedbackLayoutMetrics() {
+        return List.of(
+                measureTest("NOR SR latch", """
+                        Q = R NOR Qbar
+                        Qbar = S NOR Q
+                        """, true),
+                measureTest("4-NAND D latch", "Q = DLATCH(D, EN)", false),
+                measureTest("master-slave D flip-flop", "Q = DFF(D, CLK)", false),
+                measureTest("divide-by-2", "Q = DFF(NOT(Q), CLK)", false),
+                measureTest("2-bit counter", """
+                        Q0 = DFF(RESET_N & NOT(Q0), CLK)
+                        Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
+                        """, false));
+    }
+
+    private static DynamicTest measureTest(
+            String name, String expression, boolean rawFeedback) {
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile(expression, rawFeedback);
+        FeedbackCircuitExtractor.Extraction extraction =
+                compilation.feedbackExtraction().orElseGet(() ->
+                        FeedbackCircuitExtractor.extract(compilation.netlist()).orElseThrow());
+        Schematic schematic = new SchematicLayout(GateLibrary.load().all())
+                .layoutFeedback(extraction).schematic();
+        Metrics metrics = metrics(schematic);
+        String details = "BASELINE_LAYOUT " + name + " width=" + metrics.width()
+                + " height=" + metrics.height() + " area=" + metrics.area()
+                + " wireLength=" + metrics.wireLength();
+        return DynamicTest.dynamicTest(details, () -> assertNotNull(schematic));
     }
 
     @TestFactory
