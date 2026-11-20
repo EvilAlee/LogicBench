@@ -176,10 +176,10 @@ public final class SchematicLayout {
     public LayoutResult layout(Netlist netlist) {
         Objects.requireNonNull(netlist, "netlist");
         try {
-            return build(netlist, 1, null);
+            return build(netlist, 1, null, false);
         } catch (LayoutCheckException firstFailure) {
             try {
-                return build(netlist, 2, null);
+                return build(netlist, 2, null, false);
             } catch (LayoutCheckException retryFailure) {
                 Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
                 involved.addAll(retryFailure.involvedNets);
@@ -198,27 +198,38 @@ public final class SchematicLayout {
     public LayoutResult layoutFeedback(FeedbackCircuitExtractor.Extraction extraction) {
         Objects.requireNonNull(extraction, "extraction");
         try {
-            return build(extraction.dagNetlist(), 1, extraction);
-        } catch (LayoutCheckException firstFailure) {
+            return build(extraction.dagNetlist(), 1, extraction, true);
+        } catch (LayoutCheckException compactFailure) {
+            // The final row sweep is opportunistic: retain it when the full
+            // placed-schematic self-check accepts it, otherwise restore the
+            // pre-sweep layout and retry at the same spacing before expanding.
             try {
-                return build(extraction.dagNetlist(), 2, extraction);
-            } catch (LayoutCheckException retryFailure) {
-                Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
-                involved.addAll(retryFailure.involvedNets);
-                String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
-                throw new IllegalStateException(
-                        "Feedback layout failed its connectivity self-check after one "
-                                + "doubled-spacing retry. Involved nets: " + names
-                                + ". First failure: " + firstFailure.getMessage()
-                                + "; retry failure: " + retryFailure.getMessage(),
-                        retryFailure);
+                return build(extraction.dagNetlist(), 1, extraction, false);
+            } catch (LayoutCheckException uncompressedFailure) {
+                try {
+                    return build(extraction.dagNetlist(), 2, extraction, false);
+                } catch (LayoutCheckException retryFailure) {
+                    Set<String> involved = new TreeSet<>(compactFailure.involvedNets);
+                    involved.addAll(uncompressedFailure.involvedNets);
+                    involved.addAll(retryFailure.involvedNets);
+                    String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
+                    throw new IllegalStateException(
+                            "Feedback layout failed its connectivity self-check after "
+                                    + "the compact and uncompressed candidates and one "
+                                    + "doubled-spacing retry. Involved nets: " + names
+                                    + ". Compact failure: " + compactFailure.getMessage()
+                                    + "; uncompressed failure: " + uncompressedFailure.getMessage()
+                                    + "; retry failure: " + retryFailure.getMessage(),
+                            retryFailure);
+                }
             }
         }
     }
 
     private LayoutResult build(
             Netlist netlist, int spacingFactor,
-            FeedbackCircuitExtractor.Extraction feedback) {
+            FeedbackCircuitExtractor.Extraction feedback,
+            boolean compactFeedback) {
         Map<String, Integer> depthBySignal = new LinkedHashMap<>();
         netlist.inputs().forEach(name -> depthBySignal.put(name, 0));
 
@@ -367,7 +378,8 @@ public final class SchematicLayout {
         }
         optimizeVerticalPositions(
                 columns, outputNodes, routeSteps, rowGap, feedback != null,
-                feedback == null ? List.of() : feedback.feedbackEdges(), gateNodes);
+                feedback == null ? List.of() : feedback.feedbackEdges(), gateNodes,
+                compactFeedback);
 
         int laneStart = TRUNK_START_MARGIN * spacingFactor;
         int lanePitch = TRUNK_PITCH * spacingFactor;
@@ -756,7 +768,8 @@ public final class SchematicLayout {
             int rowGap,
             boolean feedbackPacking,
             List<FeedbackCircuitExtractor.FeedbackEdge> feedbackEdges,
-            Map<String, Node> gateNodes) {
+            Map<String, Node> gateNodes,
+            boolean compactFeedback) {
         int outputColumn = columns.size() - 1;
         int[] bestPositions = null;
         long bestLength = Long.MAX_VALUE;
@@ -794,7 +807,7 @@ public final class SchematicLayout {
             throw new IllegalStateException("no vertical layout candidate was produced");
         }
         restoreVerticalPositions(columns, bestPositions);
-        if (feedbackPacking) {
+        if (feedbackPacking && compactFeedback) {
             compactFeedbackRows(columns, routeSteps, rowGap, feedbackEdges, gateNodes);
         }
     }
