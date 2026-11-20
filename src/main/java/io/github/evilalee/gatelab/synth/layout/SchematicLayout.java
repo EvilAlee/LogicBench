@@ -229,6 +229,14 @@ public final class SchematicLayout {
                 depthBySignal.putIfAbsent(output.source(), 0);
             }
         }
+        for (Netlist.Gate gate : netlist.gates()) {
+            for (String input : gate.inputs()) {
+                if (input.equals("0") || input.equals("1")) {
+                    constantsUsed.add(input);
+                    depthBySignal.putIfAbsent(input, 0);
+                }
+            }
+        }
 
         List<Netlist.Gate> topological = netlist.topologicalGates();
         int lastGateDepth = 0;
