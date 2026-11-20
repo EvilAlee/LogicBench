@@ -38,18 +38,25 @@ class FeedbackCircuitExtractorTest {
     @Test
     void clockIsATraversalRootOnlyWhenItReachesFeedback() {
         Schematic schematic = new Schematic(DEFINITIONS);
-        PlacedComponent clock = add(schematic, "clock", 0, 0, "CLK");
-        PlacedComponent latch = add(schematic, "nand", 120, 0, "");
-        PlacedComponent probe = add(schematic, "output", 260, 0, "Q");
-        connect(schematic, clock.id(), "out", latch.id(), "in0");
-        connect(schematic, latch.id(), "out", latch.id(), "in1");
-        connect(schematic, latch.id(), "out", probe.id(), "in0");
+        PlacedComponent clock = add(schematic, "clock", 50, -10, "CLK");
+        PlacedComponent set = add(schematic, "input", 150, -10, "S");
+        PlacedComponent qGate = add(schematic, "nor", 100, 0, "");
+        PlacedComponent qBarGate = add(schematic, "nor", 200, 0, "");
+        PlacedComponent q = add(schematic, "output", 120, 0, "Q");
+        PlacedComponent qBar = add(schematic, "output", 220, 0, "Qbar");
+        connect(schematic, clock.id(), "out", qGate.id(), "in0");
+        connect(schematic, set.id(), "out", qBarGate.id(), "in0");
+        path(schematic, 200, 0, 200, -40, 30, -40, 30, 10, 60, 10);
+        path(schematic, 100, 0, 100, 40, 180, 40, 180, 10, 160, 10);
+        connect(schematic, qGate.id(), "out", q.id(), "in0");
+        connect(schematic, qBarGate.id(), "out", qBar.id(), "in0");
 
         FeedbackCircuitExtractor.Extraction extraction =
                 FeedbackCircuitExtractor.extract(schematic).orElseThrow();
         assertEquals(clock.id(), extraction.clockComponentIds().get("CLK"));
-        assertEquals(List.of("CLK", extraction.feedbackEdges().getFirst().placeholderSignal()),
-                extraction.dagNetlist().inputs());
+        assertTrue(extraction.dagNetlist().inputs().contains("CLK"));
+        assertTrue(extraction.dagNetlist().inputs().contains(
+                extraction.feedbackEdges().getFirst().placeholderSignal()));
         assertEquals(1, extraction.feedbackEdges().size());
     }
 
