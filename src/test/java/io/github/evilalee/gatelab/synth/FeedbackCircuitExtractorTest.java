@@ -98,8 +98,12 @@ class FeedbackCircuitExtractorTest {
             String targetId, String targetPin) {
         Connectivity.PinPosition source = pin(schematic, sourceId, sourcePin);
         Connectivity.PinPosition target = pin(schematic, targetId, targetPin);
-        schematic.addWire(source.x(), source.y(), target.x(), source.y());
-        schematic.addWire(target.x(), source.y(), target.x(), target.y());
+        if (source.x() != target.x()) {
+            schematic.addWire(source.x(), source.y(), target.x(), source.y());
+        }
+        if (source.y() != target.y()) {
+            schematic.addWire(target.x(), source.y(), target.x(), target.y());
+        }
     }
 
     private static void path(Schematic schematic, int... points) {
