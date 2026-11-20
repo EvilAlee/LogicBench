@@ -401,14 +401,17 @@ public final class SchematicLayout {
         Map<Integer, Integer> feedbackGapByChannel = new LinkedHashMap<>();
         for (int channel = 0; channel < columns.size() - 1; channel++) {
             int count = signalsByChannel.getOrDefault(channel, Set.of()).size();
-            int normalGap = laneStart + laneEnd
-                    + (count > 0 ? (count - 1) * lanePitch : 0);
             int sourceTracks = feedbackSourcesByChannel.getOrDefault(
                     channel, List.of()).size();
             int targetTracks = feedbackTargetsByChannel.getOrDefault(
                     channel, List.of()).size();
+            // Size each feedback-layout gap from the tracks crossing this gap.
+            // The established DAG formula remains unchanged.
+            int normalGap = feedback == null
+                    ? laneStart + laneEnd + (count > 0 ? (count - 1) * lanePitch : 0)
+                    : laneEnd + lanePitch * count;
             int feedbackGap = feedback == null ? 0
-                    : (sourceTracks + targetTracks + 2) * feedbackTrackPitch;
+                    : feedbackTrackPitch * (sourceTracks + targetTracks + 2);
             normalGapByChannel.put(channel, normalGap);
             feedbackGapByChannel.put(channel, feedbackGap);
             columnLeft[channel + 1] = columnLeft[channel]
