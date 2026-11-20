@@ -57,12 +57,7 @@ class SequentialPartsTest {
 
         SequenceRunner unsetRunner = runner(
                 unsetCircuit, unsetClock, Map.of("D", unsetData), Map.of("Q", unsetQ));
-        SequenceRunner.SequenceResult unsetResult = unsetRunner.run(List.of(
-                new SequenceRunner.Step(
-                        "unset data",
-                        Map.of(),
-                        4,
-                        Map.of("Q", Value.X))));
+        SequenceRunner.SequenceResult unsetResult = unsetRunner.run(unknownSteps("unset data", 4));
         assertTrue(unsetResult.passed(), unsetResult.toString());
 
         Circuit divider = new Circuit();
@@ -75,12 +70,7 @@ class SequentialPartsTest {
 
         SequenceRunner dividerRunner = runner(
                 divider, clock, Map.of(), Map.of("Q", q));
-        SequenceRunner.SequenceResult dividerResult = dividerRunner.run(List.of(
-                new SequenceRunner.Step(
-                        "no reset",
-                        Map.of(),
-                        6,
-                        Map.of("Q", Value.X))));
+        SequenceRunner.SequenceResult dividerResult = dividerRunner.run(unknownSteps("no reset", 6));
         assertTrue(dividerResult.passed(), dividerResult.toString());
     }
 
@@ -220,12 +210,15 @@ class SequentialPartsTest {
         SequenceRunner toggleRunner = runner(
                 toggleCircuit, toggleClock, Map.of("T", toggle), Map.of("Q", toggleQ));
 
-        SequenceRunner.SequenceResult toggleResult = toggleRunner.run(List.of(
-                new SequenceRunner.Step(
-                        "TFF without reset",
-                        Map.of("T", Value.ONE),
-                        5,
-                        Map.of("Q", Value.X))));
+        List<SequenceRunner.Step> toggleSteps = new ArrayList<>();
+        for (int cycle = 1; cycle <= 5; cycle++) {
+            toggleSteps.add(new SequenceRunner.Step(
+                    "TFF without reset " + cycle,
+                    Map.of("T", Value.ONE),
+                    1,
+                    Map.of("Q", Value.X)));
+        }
+        SequenceRunner.SequenceResult toggleResult = toggleRunner.run(toggleSteps);
         assertTrue(toggleResult.passed(), toggleResult.toString());
 
         Circuit jkCircuit = new Circuit();
@@ -285,6 +278,15 @@ class SequentialPartsTest {
         simulator.settle();
         assertEquals(Value.ZERO, q.value());
         assertEquals(Value.ONE, qn.value());
+    }
+
+    private static List<SequenceRunner.Step> unknownSteps(String name, int count) {
+        List<SequenceRunner.Step> steps = new ArrayList<>();
+        for (int cycle = 1; cycle <= count; cycle++) {
+            steps.add(new SequenceRunner.Step(
+                    name + " " + cycle, Map.of(), 1, Map.of("Q", Value.X)));
+        }
+        return steps;
     }
 
     private static SequenceRunner.Step step(String name, Map<String, Value> inputs, Value q) {
