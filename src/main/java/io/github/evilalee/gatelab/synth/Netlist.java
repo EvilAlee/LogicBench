@@ -16,12 +16,18 @@ import java.util.Set;
  * namespace because an output may legitimately be named after an input signal.
  * Output sources may be the literal "0" or "1" for constant-only expressions.
  */
-public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gates) {
+public record Netlist(
+        List<String> inputs, List<Output> outputs, List<Gate> gates,
+        boolean feedbackAllowed) {
+    public Netlist(List<String> inputs, List<Output> outputs, List<Gate> gates) {
+        this(inputs, outputs, gates, false);
+    }
+
     public Netlist {
         inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
         outputs = List.copyOf(Objects.requireNonNull(outputs, "outputs"));
         gates = List.copyOf(Objects.requireNonNull(gates, "gates"));
-        validate(inputs, outputs, gates);
+        validate(inputs, outputs, gates, feedbackAllowed);
     }
 
     public record Output(String name, String source) {
@@ -86,7 +92,9 @@ public record Netlist(List<String> inputs, List<Output> outputs, List<Gate> gate
         ordered.add(gate);
     }
 
-    private static void validate(List<String> inputs, List<Output> outputs, List<Gate> gates) {
+    private static void validate(
+            List<String> inputs, List<Output> outputs, List<Gate> gates,
+            boolean feedbackAllowed) {
         if (outputs.isEmpty()) {
             throw new IllegalArgumentException("netlist must define at least one output");
         }
