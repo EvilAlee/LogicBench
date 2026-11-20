@@ -32,6 +32,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JLabel;
 import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.JToolBar;
 import javax.swing.JTree;
@@ -143,16 +144,32 @@ public final class Main {
             @Override
             public TableCellEditor getCellEditor(int row, int column) {
                 if (column == 1 && row >= 0 && row < attributesModel.getRowCount()) {
-                    return new AttributeComboEditor(attributesModel);
+                    return attributesModel.row(row).key().equals("name")
+                            ? new AttributeTextEditor()
+                            : new AttributeComboEditor(attributesModel);
                 }
                 return super.getCellEditor(row, column);
             }
         };
         attributes.setFillsViewportHeight(true);
         attributes.setRowHeight(22);
+        attributes.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
         attributes.getTableHeader().setReorderingAllowed(false);
         canvas.setAttributeStateListener(
                 () -> attributesModel.setState(canvas.attributePanelState()));
+        canvas.setNameEditorFocusListener(() -> SwingUtilities.invokeLater(() -> {
+            int nameRow = attributesModel.rowForKey("name");
+            if (nameRow < 0) {
+                return;
+            }
+            attributes.changeSelection(nameRow, 1, false, false);
+            if (attributes.editCellAt(nameRow, 1)) {
+                java.awt.Component editor = attributes.getEditorComponent();
+                if (editor != null) {
+                    editor.requestFocusInWindow();
+                }
+            }
+        }));
 
         JSplitPane leftColumn = createLeftColumn(canvas, attributes);
         JSplitPane workspace = new JSplitPane(
@@ -801,6 +818,15 @@ public final class Main {
             return rows.get(index);
         }
 
+        int rowForKey(String key) {
+            for (int index = 0; index < rows.size(); index++) {
+                if (rows.get(index).key().equals(key)) {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
         @Override
         public int getRowCount() {
             return rows.size();
@@ -819,22 +845,59 @@ public final class Main {
         @Override
         public Object getValueAt(int rowIndex, int columnIndex) {
             CanvasPanel.AttributeRow row = rows.get(rowIndex);
-            return columnIndex == 0 ? row.label() : row.selected();
+            if (columnIndex == 0) {
+                return row.label();
+            }
+            return row.key().equals("name") ? row.selected().value() : row.selected();
         }
 
         @Override
         public boolean isCellEditable(int rowIndex, int columnIndex) {
-            return columnIndex == 1 && !rows.get(rowIndex).options().isEmpty();
+            CanvasPanel.AttributeRow row = rows.get(rowIndex);
+            return columnIndex == 1
+                    && (row.key().equals("name") || !row.options().isEmpty());
         }
 
         @Override
         public void setValueAt(Object value, int rowIndex, int columnIndex) {
-            if (columnIndex != 1 || !(value instanceof CanvasPanel.AttributeOption option)) {
+            if (columnIndex != 1) {
                 return;
             }
             CanvasPanel.AttributeRow row = rows.get(rowIndex);
-            canvas.setSelectedAttribute(row.key(), option.value());
+            if (row.key().equals("name") && value instanceof String name) {
+                canvas.setSelectedAttribute(row.key(), name);
+            } else if (value instanceof CanvasPanel.AttributeOption option) {
+                canvas.setSelectedAttribute(row.key(), option.value());
+            } else {
+                return;
+            }
             SwingUtilities.invokeLater(canvas::requestFocusInWindow);
+        }
+    }
+
+    private static final class AttributeTextEditor extends AbstractCellEditor
+            implements TableCellEditor {
+        private JTextField field = new JTextField();
+
+        @Override
+        public java.awt.Component getTableCellEditorComponent(
+                JTable table, Object value, boolean selected, int row, int column) {
+            field = new JTextField(value == null ? "" : value.toString());
+            field.addActionListener(event -> stopCellEditing());
+            field.getInputMap(JComponent.WHEN_FOCUSED).put(
+                    KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancel-name-edit");
+            field.getActionMap().put("cancel-name-edit", new AbstractAction() {
+                @Override
+                public void actionPerformed(java.awt.event.ActionEvent event) {
+                    cancelCellEditing();
+                }
+            });
+            return field;
+        }
+
+        @Override
+        public Object getCellEditorValue() {
+            return field.getText();
         }
     }
 
