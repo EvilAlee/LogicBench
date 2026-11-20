@@ -6,7 +6,7 @@ import java.util.Objects;
 
 /** Immutable Boolean expression abstract syntax tree. */
 public sealed interface Expression
-        permits Expression.Constant, Expression.Variable, Expression.Unary, Expression.Binary {
+        permits Expression.Constant, Expression.Variable, Expression.Unary, Expression.Binary, Expression.PartCall {
 
     /** Distinct variable names in left-to-right source order. */
     default List<String> variables() {
@@ -25,6 +25,8 @@ public sealed interface Expression
                 collectVariables(binary.left(), names);
                 collectVariables(binary.right(), names);
             }
+            case PartCall call -> call.arguments().forEach(argument ->
+                    collectVariables(argument, names));
         }
     }
 
@@ -63,6 +65,46 @@ public sealed interface Expression
             Objects.requireNonNull(operator, "operator");
             Objects.requireNonNull(left, "left");
             Objects.requireNonNull(right, "right");
+        }
+    }
+
+    enum PartKind {
+        DLATCH(2, false),
+        DFF(2, true),
+        TFF(2, true),
+        JKFF(3, true);
+
+        private final int argumentCount;
+        private final boolean clocked;
+
+        PartKind(int argumentCount, boolean clocked) {
+            this.argumentCount = argumentCount;
+            this.clocked = clocked;
+        }
+
+        public int argumentCount() {
+            return argumentCount;
+        }
+
+        public boolean clocked() {
+            return clocked;
+        }
+    }
+
+    record PartCall(PartKind kind, List<Expression> arguments) implements Expression {
+        public PartCall {
+            Objects.requireNonNull(kind, "kind");
+            arguments = List.copyOf(Objects.requireNonNull(arguments, "arguments"));
+            if (arguments.size() != kind.argumentCount()) {
+                throw new IllegalArgumentException(
+                        kind + " requires " + kind.argumentCount()
+                                + " arguments, got " + arguments.size());
+            }
+            if (kind.clocked()
+                    && !(arguments.get(arguments.size() - 1) instanceof Variable)) {
+                throw new IllegalArgumentException(
+                        "CLK argument to " + kind + " must be a plain identifier");
+            }
         }
     }
 
