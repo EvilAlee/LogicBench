@@ -48,8 +48,6 @@ class TidyCircuitServiceTest {
     void norSrLatchTidiesAndStillSetsHoldsAndResets() {
         Schematic original = norSrLatch();
         SchematicSnapshot before = SchematicSnapshot.capture(original);
-        original.setInputValue(componentByLabel(original, "S").id(), true);
-
         TidyCircuitService.TidyResult result =
                 TidyCircuitService.tidy(original, DEFINITIONS);
 
@@ -60,7 +58,7 @@ class TidyCircuitServiceTest {
                 "Tidied. Feedback circuit: connections verified, behaviour not simulated. "
                         + "Gate output state restarted at X.",
                 result.verificationMessage());
-        assertEquals(1, result.schematic().components().stream()
+        assertEquals(2, result.schematic().components().stream()
                 .filter(component -> component.typeId().equals("nor")).count());
         PlacedComponent reset = componentByLabel(result.schematic(), "R");
         PlacedComponent set = componentByLabel(result.schematic(), "S");
