@@ -148,8 +148,11 @@ public record Netlist(
             }
         }
 
-        // Cycles are representable for expression feedback. Combinational consumers
-        // still call topologicalGates(), which rejects them before DAG-only work.
+        // The ordinary constructor remains DAG-only. Feedback compilation opts
+        // in explicitly; topologicalGates() still rejects cycles for DAG-only consumers.
+        if (!feedbackAllowed) {
+            Netlist.validateAcyclic(gates, gatesById);
+        }
     }
 
     private static void validateAcyclic(List<Gate> gates, Map<String, Gate> gatesById) {
