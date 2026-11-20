@@ -7,14 +7,15 @@ import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Comparator;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeedbackLayoutBaselineMetricsTest {
@@ -37,18 +38,19 @@ class FeedbackLayoutBaselineMetricsTest {
         assertTrue(false, report.toString());
     }
 
-    @Test
-    void reportCombinationalLayoutFingerprints() throws Exception {
-        reportFingerprint("full adder", """
-                Sum = A ^ B ^ Cin
-                Cout = (A & B) | (Cin & (A ^ B))
-                """);
-        reportFingerprint("majority", """
-                M = (A & B) | (A & C) | (B & C)
-                """);
+    @TestFactory
+    List<DynamicTest> reportCombinationalLayoutFingerprints() throws Exception {
+        return List.of(
+                fingerprint("full adder", """
+                        Sum = A ^ B ^ Cin
+                        Cout = (A & B) | (Cin & (A ^ B))
+                        """),
+                fingerprint("majority", """
+                        M = (A & B) | (A & C) | (B & C)
+                        """));
     }
 
-    private static void reportFingerprint(String name, String expression) throws Exception {
+    private static DynamicTest fingerprint(String name, String expression) throws Exception {
         Schematic schematic = new SchematicLayout(GateLibrary.load().all())
                 .layout(ExpressionCompiler.compile(expression).netlist()).schematic();
         String components = schematic.components().stream()
@@ -61,8 +63,9 @@ class FeedbackLayoutBaselineMetricsTest {
                 .sorted().collect(java.util.stream.Collectors.joining("\\n"));
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(
                 (components + "\\n--WIRES--\\n" + wires).getBytes(StandardCharsets.UTF_8));
-        System.out.println("BASELINE_COMBINATIONAL " + name + " sha256="
-                + java.util.HexFormat.of().formatHex(digest));
+        String value = "BASELINE_COMBINATIONAL " + name + " sha256="
+                + java.util.HexFormat.of().formatHex(digest);
+        return DynamicTest.dynamicTest(value, () -> {});
     }
 
     private static String measure(String name, String expression, boolean rawFeedback) {
