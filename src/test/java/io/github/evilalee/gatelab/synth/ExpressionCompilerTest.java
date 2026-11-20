@@ -28,7 +28,9 @@ class ExpressionCompilerTest {
 
         assertEquals(List.of("S0C", "F"), compilation.netlist().outputs().stream()
                 .map(Netlist.Output::name).toList());
-        assertEquals(List.of("A", "B", "S0C", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertEquals(List.of("g1", "g2"), compilation.netlist().outputs().stream()
+                .map(Netlist.Output::source).toList());
         assertEquals(List.of("S0C"), compilation.reusedOutputNames());
     }
 
