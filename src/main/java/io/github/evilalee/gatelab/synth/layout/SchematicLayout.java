@@ -1314,14 +1314,16 @@ public final class SchematicLayout {
             int endColumn = source.column;
             int minGateTop = Integer.MAX_VALUE;
             int maxGateBottom = Integer.MIN_VALUE;
-            for (Node gate : gateNodes.values()) {
-                if (gate.column >= startColumn && gate.column <= endColumn) {
-                    GateGeometry.Bounds bounds = GateGeometry.bounds(
-                            gate.definition, Facing.EAST);
-                    minGateTop = Math.min(minGateTop, gate.y + bounds.y());
-                    maxGateBottom = Math.max(
-                            maxGateBottom, gate.y + bounds.y() + bounds.height());
+            for (Node node : allNodes) {
+                if (node.isDummy() || node.kind == NodeKind.FEEDBACK
+                        || node.column < startColumn || node.column > endColumn) {
+                    continue;
                 }
+                GateGeometry.Bounds bounds = GateGeometry.bounds(
+                        node.definition, Facing.EAST);
+                minGateTop = Math.min(minGateTop, node.y + bounds.y());
+                maxGateBottom = Math.max(
+                        maxGateBottom, node.y + bounds.y() + bounds.height());
             }
             if (minGateTop == Integer.MAX_VALUE) {
                 throw new IllegalStateException("feedback interval contains no gate rows");
