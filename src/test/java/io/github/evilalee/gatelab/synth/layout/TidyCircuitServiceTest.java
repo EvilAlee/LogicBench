@@ -413,18 +413,18 @@ class TidyCircuitServiceTest {
         DffWiring wiring = new DffWiring(schematic);
         PlacedComponent d = add(schematic, "input-d", "input", 0, 0, "D");
         PlacedComponent clock = add(schematic, "clock-clk", "clock", 0, 100, "CLK");
-        PlacedComponent dNot = add(schematic, "gate-d-not", "nand", 100, 200, "");
-        PlacedComponent clockNot = add(schematic, "gate-clock-not", "nand", 100, 300, "");
-        PlacedComponent masterSet = add(schematic, "gate-master-set", "nand", 300, 400, "");
-        PlacedComponent masterReset = add(schematic, "gate-master-reset", "nand", 300, 500, "");
-        PlacedComponent masterQ = add(schematic, "gate-master-q", "nand", 500, 600, "");
-        PlacedComponent masterQBar = add(schematic, "gate-master-qbar", "nand", 500, 700, "");
-        PlacedComponent slaveSet = add(schematic, "gate-slave-set", "nand", 700, 800, "");
-        PlacedComponent slaveReset = add(schematic, "gate-slave-reset", "nand", 700, 900, "");
-        PlacedComponent slaveQ = add(schematic, "gate-slave-q", "nand", 900, 1000, "");
-        PlacedComponent slaveQBar = add(schematic, "gate-slave-qbar", "nand", 900, 1100, "");
-        PlacedComponent q = add(schematic, "output-q", "output", 1200, 1000, "Q");
-        PlacedComponent qBar = add(schematic, "output-qbar", "output", 1200, 1100, "Qbar");
+        PlacedComponent dNot = add(schematic, "gate-d-not", "nand", 1000, 200, "");
+        PlacedComponent clockNot = add(schematic, "gate-clock-not", "nand", 1000, 300, "");
+        PlacedComponent masterSet = add(schematic, "gate-master-set", "nand", 2000, 400, "");
+        PlacedComponent masterReset = add(schematic, "gate-master-reset", "nand", 2000, 500, "");
+        PlacedComponent masterQ = add(schematic, "gate-master-q", "nand", 3000, 600, "");
+        PlacedComponent masterQBar = add(schematic, "gate-master-qbar", "nand", 3000, 700, "");
+        PlacedComponent slaveSet = add(schematic, "gate-slave-set", "nand", 4000, 800, "");
+        PlacedComponent slaveReset = add(schematic, "gate-slave-reset", "nand", 4000, 900, "");
+        PlacedComponent slaveQ = add(schematic, "gate-slave-q", "nand", 5000, 1000, "");
+        PlacedComponent slaveQBar = add(schematic, "gate-slave-qbar", "nand", 5000, 1100, "");
+        PlacedComponent q = add(schematic, "output-q", "output", 6000, 1000, "Q");
+        PlacedComponent qBar = add(schematic, "output-qbar", "output", 6000, 1100, "Qbar");
 
         wiring.connect( d.id(), "out", dNot.id(), "in0");
         wiring.connect( d.id(), "out", dNot.id(), "in1");
@@ -453,7 +453,7 @@ class TidyCircuitServiceTest {
 
     private static final class DffWiring {
         private final Schematic schematic;
-        private int nextFeedbackLane;
+        private int nextLane;
 
         private DffWiring(Schematic schematic) {
             this.schematic = schematic;
@@ -463,22 +463,12 @@ class TidyCircuitServiceTest {
                 String sourceId, String sourcePin, String targetId, String targetPin) {
             Connectivity.PinPosition source = pin(schematic, sourceId, sourcePin);
             Connectivity.PinPosition target = pin(schematic, targetId, targetPin);
-            int inputIndex = Integer.parseInt(targetPin.substring(2));
-            if (source.x() < target.x()) {
-                int entryTrackX = target.x()
-                        - (inputIndex + 1) * PlacedComponent.GRID_SPACING;
-                addSegment(source.x(), source.y(), entryTrackX, source.y());
-                addSegment(entryTrackX, source.y(), entryTrackX, target.y());
-                addSegment(entryTrackX, target.y(), target.x(), target.y());
-                return;
-            }
-
-            int lane = nextFeedbackLane++;
+            int lane = nextLane++;
             int sourceTrackX = source.x()
                     + PlacedComponent.GRID_SPACING * (1 + lane);
             int targetTrackX = target.x()
-                    - PlacedComponent.GRID_SPACING * (inputIndex + 2 + lane);
-            int laneY = -100 - lane * PlacedComponent.GRID_SPACING;
+                    - PlacedComponent.GRID_SPACING * (1 + lane);
+            int laneY = -100 - lane * PlacedComponent.GRID_SPACING * 2;
             addSegment(source.x(), source.y(), sourceTrackX, source.y());
             addSegment(sourceTrackX, source.y(), sourceTrackX, laneY);
             addSegment(targetTrackX, laneY, sourceTrackX, laneY);
