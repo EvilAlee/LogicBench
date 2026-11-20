@@ -22,6 +22,7 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
+- feature-select-net: double-click wire selection expands to the full Connectivity net; net collection tests cover junction branches and separate nets.
 - feature-tidy-feedback: route reachable feedback edges on dedicated lanes and verify the rebuilt pin-to-net partition without running combinational equivalence.
 - feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
 

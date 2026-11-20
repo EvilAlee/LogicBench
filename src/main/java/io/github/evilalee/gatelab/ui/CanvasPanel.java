@@ -856,6 +856,12 @@ public final class CanvasPanel extends JPanel {
                 if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)
                         && !galleryMode && activeTool == Tool.EDIT) {
                     Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
+                    WireSegment wireHit = schematic.wireAt(
+                            world.x, world.y, 6.0 / transform.scale()).orElse(null);
+                    if (wireHit != null) {
+                        selectWireNet(wireHit);
+                        return;
+                    }
                     PlacedComponent hit = schematic.componentAt(
                             (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
                     if (hit != null && isNameEditableType(hit.typeId())) {
@@ -1184,11 +1190,31 @@ public final class CanvasPanel extends JPanel {
         return List.copyOf(preview);
     }
 
+    /** Returns all segments in the Connectivity net containing the supplied wire. */
+    static Set<WireSegment> collectNetSegments(Schematic schematic, WireSegment wire) {
+        java.util.Objects.requireNonNull(schematic, "schematic");
+        java.util.Objects.requireNonNull(wire, "wire");
+        return Connectivity.analyze(schematic.pinPositions(), schematic.wires()).nets().stream()
+                .filter(net -> net.segments().contains(wire))
+                .findFirst()
+                .map(Connectivity.Net::segments)
+                .orElseGet(Set::of);
+    }
+
     private void selectWireClick(WireSegment wire) {
         Rectangle oldSelectionBounds = selectionScreenBounds();
         selectedIds.clear();
         selectedWires.clear();
         selectedWires.add(wire);
+        notifySelectionChanged();
+        repaintUnion(oldSelectionBounds, selectionScreenBounds());
+    }
+
+    private void selectWireNet(WireSegment wire) {
+        Rectangle oldSelectionBounds = selectionScreenBounds();
+        selectedIds.clear();
+        selectedWires.clear();
+        selectedWires.addAll(collectNetSegments(schematic, wire));
         notifySelectionChanged();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());
     }
