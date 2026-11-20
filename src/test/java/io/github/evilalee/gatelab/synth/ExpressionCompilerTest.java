@@ -37,7 +37,7 @@ class ExpressionCompilerTest {
     @Test
     void forwardOutputReferencesResolveWithoutCreatingExtraInputs() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
-                "F = S0C | C\\nS0C = A & B");
+                "F = S0C | C\nS0C = A & B");
 
         assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
         assertEquals(List.of("F", "S0C"), compilation.netlist().outputs().stream()
