@@ -459,7 +459,7 @@ class TidyCircuitServiceTest {
             int sourceTrackX = source.x()
                     + PlacedComponent.GRID_SPACING * (1 + lane);
             int targetTrackX = target.x()
-                    - PlacedComponent.GRID_SPACING * (1 + lane);
+                    - PlacedComponent.GRID_SPACING * (inputIndex + 2 + lane);
             int laneY = -100 - lane * PlacedComponent.GRID_SPACING;
             addSegment(source.x(), source.y(), sourceTrackX, source.y());
             addSegment(sourceTrackX, source.y(), sourceTrackX, laneY);
