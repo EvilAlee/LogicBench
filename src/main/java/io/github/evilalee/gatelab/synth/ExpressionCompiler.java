@@ -122,7 +122,8 @@ public final class ExpressionCompiler {
                 throw new IllegalArgumentException(
                         "netlist has " + builder.inputs().size() + " inputs; maximum is 12");
             }
-            Netlist netlist = new Netlist(builder.inputs(), outputs, builder.gates());
+            Netlist netlist = new Netlist(
+                    builder.inputs(), outputs, builder.gates(), true);
             FeedbackCircuitExtractor.Extraction extraction =
                     FeedbackCircuitExtractor.extract(netlist).orElseThrow(() ->
                             new IllegalArgumentException(
