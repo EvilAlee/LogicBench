@@ -301,6 +301,9 @@ public final class AiCircuitDialog extends JDialog {
             case Expression.Variable variable -> variable.name();
             case Expression.Unary unary ->
                     "NOT (" + formatExpression(unary.operand()) + ")";
+            case Expression.PartCall call -> call.kind() + "("
+                    + String.join(", ", call.arguments().stream()
+                            .map(AiCircuitDialog::formatExpression).toList()) + ")";
             case Expression.Binary binary -> {
                 String operator = switch (binary.operator()) {
                     case AND -> "&";
