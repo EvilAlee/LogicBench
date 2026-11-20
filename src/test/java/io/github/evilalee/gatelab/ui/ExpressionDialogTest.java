@@ -21,6 +21,18 @@ class ExpressionDialogTest {
     }
 
     @Test
+    void outputDefinedLaterStillShowsTheReuseHintWithoutBecomingAnInput() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
+                "F = S0C | C\\nS0C = A & B");
+
+        assertEquals(List.of("A", "B", "C"), compilation.netlist().inputs());
+        assertEquals(
+                "S0C is both an output and used by another line. "
+                        + "Use := for an internal signal with no pin.",
+                ExpressionDialog.outputReuseHint(compilation));
+    }
+
+    @Test
     void internalAssignmentsAndPlainOutputsDoNotShowTheHint() {
         ExpressionCompiler.Compilation internal = ExpressionCompiler.compile(
                 "S0C := A & B\nF = S0C | C");
