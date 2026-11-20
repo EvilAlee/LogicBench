@@ -744,6 +744,7 @@ public final class SchematicLayout {
         int outputColumn = columns.size() - 1;
         int[] bestPositions = null;
         long bestLength = Long.MAX_VALUE;
+        int bestComponentHeight = Integer.MAX_VALUE;
 
         for (int sweep = 0; sweep < 3; sweep++) {
             if (sweep == 1) {
@@ -767,7 +768,14 @@ public final class SchematicLayout {
                 continue;
             }
             long length = totalVerticalWireLength(routeSteps);
-            if (length < bestLength) {
+            int componentHeight = feedbackPacking
+                    ? verticalComponentHeight(columns) : Integer.MAX_VALUE;
+            boolean better = feedbackPacking
+                    ? componentHeight < bestComponentHeight
+                            || (componentHeight == bestComponentHeight && length < bestLength)
+                    : length < bestLength;
+            if (better) {
+                bestComponentHeight = componentHeight;
                 bestLength = length;
                 bestPositions = captureVerticalPositions(columns);
             }
@@ -1027,6 +1035,20 @@ public final class SchematicLayout {
             total += (long) range[1] - range[0];
         }
         return total;
+    }
+
+    private static int verticalComponentHeight(List<List<Node>> columns) {
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        for (Node node : allNodes(columns)) {
+            if (node.isDummy()) {
+                continue;
+            }
+            GateGeometry.Bounds bounds = GateGeometry.bounds(node.definition, Facing.EAST);
+            minY = Math.min(minY, node.y + bounds.y());
+            maxY = Math.max(maxY, node.y + bounds.y() + bounds.height());
+        }
+        return minY == Integer.MAX_VALUE ? 0 : maxY - minY;
     }
 
     private static int[] captureVerticalPositions(List<List<Node>> columns) {
