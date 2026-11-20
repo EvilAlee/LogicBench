@@ -727,8 +727,7 @@ public final class SchematicLayout {
                 .comparingDouble((Node node) -> barycenter(
                         usePrevious ? node.previous : node.next,
                         positions, currentPositions.get(node)))
-                .thenComparing(node -> node.componentId == null
-                        ? node.key : node.componentId));
+                .thenComparing(node -> node.key));
     }
 
     private static void assignInputColumn(List<Node> inputNodes, int rowGap) {
