@@ -15,6 +15,7 @@ import java.util.Comparator;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeedbackLayoutBaselineMetricsTest {
     private record Metrics(int width, int height, long area, long wireLength) {}
