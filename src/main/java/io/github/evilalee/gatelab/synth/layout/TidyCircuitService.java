@@ -75,10 +75,10 @@ public final class TidyCircuitService {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
-        java.util.Optional<FeedbackCircuitExtractor.Extraction> feedback =
-                FeedbackCircuitExtractor.extract(original);
-        if (feedback.isPresent()) {
-            return tidyFeedback(original, library, feedback.get());
+        if (FeedbackCircuitExtractor.hasFeedback(original)) {
+            FeedbackCircuitExtractor.Extraction feedback =
+                    FeedbackCircuitExtractor.extract(original).orElseThrow();
+            return tidyFeedback(original, library, feedback);
         }
 
         SchematicNetlistExtractor.Extraction extraction =

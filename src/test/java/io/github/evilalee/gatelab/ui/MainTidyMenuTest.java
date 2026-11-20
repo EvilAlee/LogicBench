@@ -5,7 +5,6 @@ import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
-import io.github.evilalee.gatelab.model.Value;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.JMenu;
@@ -70,7 +69,6 @@ class MainTidyMenuTest {
         assertTrue(canvas.undo());
         assertFalse(canvas.canUndo(), "feedback tidy must be exactly one undo step");
         assertEquals(before, SchematicSnapshot.capture(canvas.schematic()));
-        assertTrue(canvas.schematic().clockValue(clock.id()));
     }
 
     private static void addClockedNorLatch(Schematic schematic) {

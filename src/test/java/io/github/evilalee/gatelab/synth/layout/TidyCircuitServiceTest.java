@@ -125,8 +125,13 @@ class TidyCircuitServiceTest {
                 FeedbackCircuitExtractor.extract(original).orElseThrow();
         Schematic tidied = TidyCircuitService.tidy(original, DEFINITIONS).schematic();
         Map<String, String> newToOld = feedbackIdentityMap(extraction);
+        Connectivity.Net netToCorrupt = Connectivity.analyze(
+                        tidied.pinPositions(), tidied.wires()).nets().stream()
+                .filter(net -> net.pins().size() > 1 && !net.segments().isEmpty())
+                .min(java.util.Comparator.comparingInt(net -> net.segments().size()))
+                .orElseThrow();
         List<WireSegment> corruptedWires = new ArrayList<>(tidied.wires());
-        corruptedWires.remove(corruptedWires.size() / 2);
+        corruptedWires.removeAll(netToCorrupt.segments());
         Schematic corrupted = new Schematic(DEFINITIONS);
         corrupted.restoreSnapshot(new SchematicSnapshot(
                 tidied.components(), corruptedWires));
