@@ -730,6 +730,11 @@ public final class ExpressionCompiler {
                             expandedAssignments, expanding),
                     expandReferences(binary.right(), assignmentsByName,
                             expandedAssignments, expanding));
+            case Expression.PartCall call -> new Expression.PartCall(
+                    call.kind(), call.arguments().stream()
+                            .map(argument -> expandReferences(argument, assignmentsByName,
+                                    expandedAssignments, expanding))
+                            .toList());
         };
     }
 
@@ -1006,6 +1011,9 @@ public final class ExpressionCompiler {
                 case Expression.Binary binary ->
                         simplifyBinary(binary.operator(),
                                 simplify(binary.left()), simplify(binary.right()));
+                case Expression.PartCall call -> new Expression.PartCall(
+                        call.kind(), call.arguments().stream()
+                                .map(Builder::simplify).toList());
             };
         }
 
