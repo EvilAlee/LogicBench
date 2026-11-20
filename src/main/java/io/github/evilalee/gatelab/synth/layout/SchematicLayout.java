@@ -1296,8 +1296,10 @@ public final class SchematicLayout {
 
             int normalSourceGap = normalGapByChannel.get(source.column);
             int normalTargetGap = normalGapByChannel.get(target.column - 1);
-            int sourceX = columnLeft[source.column] + columnWidths[source.column]
-                    + normalSourceGap + (sourceTrackIndex + 1) * trackPitch;
+            // GateDef.origin() is the output pin, so the source node
+            // coordinate is already the right edge of the column's gate body.
+            int sourceX = source.x + normalSourceGap
+                    + (sourceTrackIndex + 1) * trackPitch;
             GateGeometry.Offset targetInputOffset = GateGeometry.pinOffset(
                     target.definition,
                     target.definition.inputs().get(edge.targetInputIndex()),
