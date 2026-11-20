@@ -38,17 +38,17 @@ class FeedbackCircuitLayoutMetricsTest {
                 feedbackMetrics("NOR SR latch", """
                         Q = R NOR Qbar
                         Qbar = S NOR Q
-                        """, true, new Metrics(0, 0, 0, 0), false),
+                        """, true, new Metrics(480, 140, 67200, 1590), false),
                 feedbackMetrics("4-NAND D latch", "Q = DLATCH(D, EN)", false,
-                        new Metrics(0, 0, 0, 0), false),
+                        new Metrics(900, 260, 234000, 2920), false),
                 feedbackMetrics("master-slave D flip-flop", "Q = DFF(D, CLK)", false,
-                        new Metrics(0, 0, 0, 0), true),
+                        new Metrics(1550, 440, 682000, 8300), true),
                 feedbackMetrics("divide-by-2", "Q = DFF(NOT(Q), CLK)", false,
-                        new Metrics(0, 0, 0, 0), false),
+                        new Metrics(3980, 1060, 4218800, 34380), false),
                 feedbackMetrics("2-bit counter", """
                         Q0 = DFF(RESET_N & NOT(Q0), CLK)
                         Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
-                        """, false, new Metrics(0, 0, 0, 0), true));
+                        """, false, new Metrics(3420, 1030, 3522600, 54580), true));
     }
 
     private static DynamicTest feedbackMetrics(
@@ -57,32 +57,39 @@ class FeedbackCircuitLayoutMetricsTest {
             boolean allowRawFeedback,
             Metrics baseline,
             boolean requireSmallerArea) {
-        ExpressionCompiler.Compilation compilation =
-                ExpressionCompiler.compile(source, allowRawFeedback);
-        FeedbackCircuitExtractor.Extraction extraction =
-                compilation.feedbackExtraction().orElseGet(() ->
-                        FeedbackCircuitExtractor.extract(compilation.netlist()).orElseThrow());
-        SchematicLayout layout = new SchematicLayout(DEFINITIONS);
-        Schematic first = layout.layoutFeedback(extraction).schematic();
-        Metrics actual = measure(first);
-        String description = name + " before=" + baseline.display()
-                + " after=" + actual.display();
+        try {
+            ExpressionCompiler.Compilation compilation =
+                    ExpressionCompiler.compile(source, allowRawFeedback);
+            FeedbackCircuitExtractor.Extraction extraction =
+                    compilation.feedbackExtraction().orElseGet(() ->
+                            FeedbackCircuitExtractor.extract(compilation.netlist()).orElseThrow());
+            SchematicLayout layout = new SchematicLayout(DEFINITIONS);
+            Schematic first = layout.layoutFeedback(extraction).schematic();
+            Metrics actual = measure(first);
+            String description = name + " before=" + baseline.display()
+                    + " after=" + actual.display();
 
-        return DynamicTest.dynamicTest(description, () -> {
-            Schematic second = layout.layoutFeedback(extraction).schematic();
-            assertEquals(SchematicSnapshot.capture(first), SchematicSnapshot.capture(second),
-                    "feedback layout must be identical across two runs");
-            assertNoOverlaps(first);
-            Connectivity.Result topology = Connectivity.analyze(
-                    first.pinPositions(), first.wires());
-            assertFalse(topology.nets().isEmpty(), "connectivity self-check must produce nets");
-            assertTrue(first.components().stream()
-                    .anyMatch(component -> component.typeId().equals("output")));
-            if (requireSmallerArea) {
-                assertTrue(actual.area() < baseline.area(),
-                        name + " must be strictly smaller; " + description);
-            }
-        });
+            return DynamicTest.dynamicTest(description, () -> {
+                Schematic second = layout.layoutFeedback(extraction).schematic();
+                assertEquals(SchematicSnapshot.capture(first), SchematicSnapshot.capture(second),
+                        "feedback layout must be identical across two runs");
+                assertNoOverlaps(first);
+                Connectivity.Result topology = Connectivity.analyze(
+                        first.pinPositions(), first.wires());
+                assertFalse(topology.nets().isEmpty(),
+                        "connectivity self-check must produce nets");
+                assertTrue(first.components().stream()
+                        .anyMatch(component -> component.typeId().equals("output")));
+                if (requireSmallerArea) {
+                    assertTrue(actual.area() < baseline.area(),
+                            name + " must be strictly smaller; " + description);
+                }
+            });
+        } catch (RuntimeException exception) {
+            return DynamicTest.dynamicTest(
+                    name + " feedback routing failed: " + exception.getMessage(),
+                    () -> { throw exception; });
+        }
     }
 
     @Test
@@ -139,12 +146,12 @@ class FeedbackCircuitLayoutMetricsTest {
     @Test
     void fullAdderAndMajorityCombinationalCoordinatesRemainByteForByteStable()
             throws Exception {
-        assertEquals("BASELINE_FULL_ADDER_HASH",
+        assertEquals("40aaa6bcdaa0e1a991e83bc8e136c97928423055cf6e36e11d0eb8390ebbf756",
                 fingerprint("""
                         Sum = A ^ B ^ Cin
                         Cout = (A & B) | (Cin & (A ^ B))
                         """));
-        assertEquals("BASELINE_MAJORITY_HASH",
+        assertEquals("0ae7d7814b070b84f5da7fe05ac94eb5278433736dffe707aac506ea9cbfc8b9",
                 fingerprint("""
                         M = (A & B) | (A & C) | (B & C)
                         """));
