@@ -98,6 +98,26 @@ class ExpressionFeedbackTest {
     }
 
     @Test
+    void selfReferencesAreFeedbackNotPrimaryInputsAndUseBoundedSettling() {
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile("Q = NOT Q");
+
+        assertTrue(compilation.hasFeedback());
+        assertTrue(compilation.netlist().inputs().isEmpty());
+        assertEquals("Q", compilation.netlist().outputs().getFirst().source());
+        assertThrows(IllegalArgumentException.class, () -> new Netlist(
+                List.of(), List.of(new Netlist.Output("Q", "Q")),
+                List.of(new Netlist.Gate("Q", GateOperator.NOT, List.of("Q")))));
+
+        SchematicLayout.LayoutResult layout = new SchematicLayout(DEFINITIONS)
+                .layoutFeedback(compilation.feedbackExtraction().orElseThrow());
+        SchematicCompiler.SimulationResult result =
+                SchematicCompiler.compileAndSettle(layout.schematic());
+        assertTrue(result.oscillating(),
+                "the NOT feedback loop must stop at the simulator tick budget");
+    }
+
+    @Test
     void ordinaryCombinationalExpressionsStillUseTheDagPath() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("F = A & B");
