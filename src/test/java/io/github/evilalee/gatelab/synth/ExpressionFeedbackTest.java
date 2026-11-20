@@ -62,10 +62,10 @@ class ExpressionFeedbackTest {
     void expressionLinesBuildAndSimulateFourNandOneNotDLatch() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 Dbar := NOT D
-                Sbar := NAND (D, EN)
-                Rbar := NAND (Dbar, EN)
-                Q = NAND (Sbar, Qbar)
-                Qbar = NAND (Rbar, Q)
+                Sbar := D NAND EN
+                Rbar := Dbar NAND EN
+                Q = Sbar NAND Qbar
+                Qbar = Rbar NAND Q
                 """);
 
         assertTrue(compilation.hasFeedback());
@@ -101,8 +101,8 @@ class ExpressionFeedbackTest {
     void namedConstantDefinitionsDoNotBecomeInputsInsideFeedbackCircuits() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 One := 1
-                Q = NAND (One, Qn)
-                Qn = NAND (S, Q)
+                Q = One NAND Qn
+                Qn = S NAND Q
                 """);
 
         assertTrue(compilation.hasFeedback());
