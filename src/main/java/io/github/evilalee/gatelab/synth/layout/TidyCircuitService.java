@@ -8,6 +8,7 @@ import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.synth.SchematicNetlistExtractor;
+import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -24,18 +25,35 @@ public final class TidyCircuitService {
             Schematic schematic,
             int inputCount,
             int verificationRows,
-            boolean equivalenceSkipped) {
+            boolean equivalenceSkipped,
+            boolean feedbackCircuit) {
         public TidyResult {
             Objects.requireNonNull(schematic, "schematic");
             if (inputCount < 0 || verificationRows < 0) {
                 throw new IllegalArgumentException("verification counts must not be negative");
             }
-            if (equivalenceSkipped != (verificationRows == 0 && inputCount > MAX_EXHAUSTIVE_INPUTS)) {
+            if (feedbackCircuit) {
+                if (verificationRows != 0 || equivalenceSkipped) {
+                    throw new IllegalArgumentException(
+                            "feedback circuits do not run combinational equivalence");
+                }
+            } else if (equivalenceSkipped
+                    != (verificationRows == 0 && inputCount > MAX_EXHAUSTIVE_INPUTS)) {
                 throw new IllegalArgumentException("inconsistent equivalence status");
             }
         }
 
+        public TidyResult(
+                Schematic schematic, int inputCount,
+                int verificationRows, boolean equivalenceSkipped) {
+            this(schematic, inputCount, verificationRows, equivalenceSkipped, false);
+        }
+
         public String verificationMessage() {
+            if (feedbackCircuit) {
+                return "Tidied. Feedback circuit: connections verified, behaviour not simulated. "
+                        + "Gate output state restarted at X.";
+            }
             return equivalenceSkipped
                     ? "Equivalence check skipped (" + inputCount
                             + " inputs exceeds the limit of " + MAX_EXHAUSTIVE_INPUTS + ")."
@@ -54,6 +72,12 @@ public final class TidyCircuitService {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
+        java.util.Optional<FeedbackCircuitExtractor.Extraction> feedback =
+                FeedbackCircuitExtractor.extract(original);
+        if (feedback.isPresent()) {
+            return tidyFeedback(original, library, feedback.get());
+        }
+
         SchematicNetlistExtractor.Extraction extraction =
                 SchematicNetlistExtractor.extract(original);
         SchematicLayout.LayoutResult layout =
@@ -68,6 +92,63 @@ public final class TidyCircuitService {
 
         verifyEquivalent(original, tidied, extraction, layout, library);
         return new TidyResult(tidied, inputCount, 1 << inputCount, false);
+    }
+
+    private static TidyResult tidyFeedback(
+            Schematic original,
+            List<GateDef> definitions,
+            FeedbackCircuitExtractor.Extraction extraction) {
+        SchematicLayout.LayoutResult layout =
+                new SchematicLayout(definitions).layoutFeedback(extraction);
+        Map<String, PlacedComponent> oldById = new HashMap<>();
+        for (PlacedComponent component : original.components()) {
+            oldById.put(component.id(), component);
+        }
+
+        Map<String, String> newToOldIds = new LinkedHashMap<>();
+        Map<String, String> labelsByNewId = new HashMap<>();
+        extraction.inputComponentIds().forEach((signal, oldId) -> {
+            String newId = layout.inputComponentIds().get(signal);
+            newToOldIds.put(newId, oldId);
+            labelsByNewId.put(newId, oldById.get(oldId).label());
+        });
+        extraction.clockComponentIds().forEach((signal, oldId) -> {
+            String newId = layout.clockComponentIds().get(signal);
+            newToOldIds.put(newId, oldId);
+            labelsByNewId.put(newId, oldById.get(oldId).label());
+        });
+        extraction.outputComponentIds().forEach((signal, oldId) -> {
+            String newId = layout.outputComponentIds().get(signal);
+            newToOldIds.put(newId, oldId);
+            labelsByNewId.put(newId, oldById.get(oldId).label());
+        });
+        extraction.gateComponentIds().forEach((signal, oldId) -> {
+            String newId = layout.gateComponentIds().get(signal);
+            newToOldIds.put(newId, oldId);
+        });
+
+        List<PlacedComponent> components = new ArrayList<>();
+        for (PlacedComponent component : layout.schematic().components()) {
+            components.add(new PlacedComponent(
+                    component.id(), component.typeId(), component.x(), component.y(),
+                    Facing.EAST, component.attributes(),
+                    labelsByNewId.getOrDefault(component.id(), "")));
+        }
+
+        Schematic replacement = new Schematic(definitions);
+        replacement.restoreSnapshot(new SchematicSnapshot(components, layout.schematic().wires()));
+        replacement.setUndefinedInputMode(original.undefinedInputMode());
+        extraction.inputComponentIds().forEach((signal, oldId) ->
+                replacement.setInputValue(
+                        layout.inputComponentIds().get(signal), original.inputValue(oldId)));
+        extraction.clockComponentIds().forEach((signal, oldId) ->
+                replacement.setClockValue(
+                        layout.clockComponentIds().get(signal), original.clockValue(oldId)));
+
+        FeedbackConnectivityVerifier.verify(original, replacement, newToOldIds);
+        int primarySourceCount = extraction.inputComponentIds().size()
+                + extraction.clockComponentIds().size();
+        return new TidyResult(replacement, primarySourceCount, 0, false, true);
     }
 
     private static Schematic preserveLabelsAndInputValues(
