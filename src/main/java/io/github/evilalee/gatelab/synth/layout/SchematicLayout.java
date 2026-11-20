@@ -366,7 +366,8 @@ public final class SchematicLayout {
             orderFeedbackColumns(columns);
         }
         optimizeVerticalPositions(
-                columns, outputNodes, routeSteps, rowGap, feedback != null);
+                columns, outputNodes, routeSteps, rowGap, feedback != null,
+                feedback == null ? List.of() : feedback.feedbackEdges(), gateNodes);
 
         int laneStart = TRUNK_START_MARGIN * spacingFactor;
         int lanePitch = TRUNK_PITCH * spacingFactor;
@@ -753,7 +754,9 @@ public final class SchematicLayout {
             Map<String, Node> outputNodes,
             List<RouteStep> routeSteps,
             int rowGap,
-            boolean feedbackPacking) {
+            boolean feedbackPacking,
+            List<FeedbackCircuitExtractor.FeedbackEdge> feedbackEdges,
+            Map<String, Node> gateNodes) {
         int outputColumn = columns.size() - 1;
         int[] bestPositions = null;
         long bestLength = Long.MAX_VALUE;
@@ -776,7 +779,8 @@ public final class SchematicLayout {
                 }
             }
 
-            if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+            if (!allChannelsHaveConflictFreePinRows(
+                    routeSteps, columns.size(), feedbackEdges, gateNodes)) {
                 continue;
             }
             long length = totalVerticalWireLength(routeSteps);
@@ -791,7 +795,7 @@ public final class SchematicLayout {
         }
         restoreVerticalPositions(columns, bestPositions);
         if (feedbackPacking) {
-            compactFeedbackRows(columns, routeSteps, rowGap);
+            compactFeedbackRows(columns, routeSteps, rowGap, feedbackEdges, gateNodes);
         }
     }
 
@@ -801,7 +805,11 @@ public final class SchematicLayout {
      * pin-row collision, the complete pre-sweep positions are restored.
      */
     private static void compactFeedbackRows(
-            List<List<Node>> columns, List<RouteStep> routeSteps, int rowGap) {
+            List<List<Node>> columns,
+            List<RouteStep> routeSteps,
+            int rowGap,
+            List<FeedbackCircuitExtractor.FeedbackEdge> feedbackEdges,
+            Map<String, Node> gateNodes) {
         int[] before = captureVerticalPositions(columns);
         for (List<Node> column : columns) {
             for (int index = 1; index < column.size(); index++) {
@@ -814,7 +822,8 @@ public final class SchematicLayout {
                 }
             }
         }
-        if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+        if (!allChannelsHaveConflictFreePinRows(
+                routeSteps, columns.size(), feedbackEdges, gateNodes)) {
             restoreVerticalPositions(columns, before);
         }
     }
@@ -897,7 +906,10 @@ public final class SchematicLayout {
      * whose every adjacent-column interface remains cross-signal conflict-free.
      */
     private static boolean allChannelsHaveConflictFreePinRows(
-            List<RouteStep> routeSteps, int columnCount) {
+            List<RouteStep> routeSteps,
+            int columnCount,
+            List<FeedbackCircuitExtractor.FeedbackEdge> feedbackEdges,
+            Map<String, Node> gateNodes) {
         for (int channel = 0; channel < columnCount - 1; channel++) {
             List<PinRow> sourceRows = new ArrayList<>();
             List<PinRow> targetRows = new ArrayList<>();
@@ -907,6 +919,28 @@ public final class SchematicLayout {
                             step.signal(), sourcePinY(step.source())));
                     targetRows.add(new PinRow(
                             step.signal(), targetPinY(step)));
+                }
+            }
+            // Feedback uses a dedicated vertical endpoint track in the source
+            // and target gaps. Include those actual pin rows when selecting and
+            // compacting candidates so a feedback endpoint cannot be joined
+            // to a different signal at a shared row.
+            for (FeedbackCircuitExtractor.FeedbackEdge edge : feedbackEdges) {
+                Node source = gateNodes.get(edge.sourceGate());
+                Node target = gateNodes.get(edge.targetGate());
+                if (source == null || target == null) {
+                    return false;
+                }
+                if (source.column == channel) {
+                    sourceRows.add(new PinRow(edge.sourceGate(), sourcePinY(source)));
+                }
+                if (target.column - 1 == channel) {
+                    GateGeometry.Offset targetOffset = GateGeometry.pinOffset(
+                            target.definition,
+                            target.definition.inputs().get(edge.targetInputIndex()),
+                            Facing.EAST);
+                    targetRows.add(new PinRow(
+                            edge.sourceGate(), target.y + targetOffset.y()));
                 }
             }
             if (hasForeignRowCollision(targetRows, sourceRows, 0)) {
