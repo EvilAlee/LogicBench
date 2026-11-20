@@ -270,6 +270,387 @@ public final class ExpressionCompiler {
         return new Compilation(netlist, expressions, reusedOutputNames);
     }
 
+    private record SequentialBuild(Netlist netlist, SequentialCircuit sequentialCircuit) {
+    }
+
+    private static LinkedHashSet<String> reachableAssignments(
+            List<Assignment> outputs, Map<String, Assignment> assignmentsByName) {
+        LinkedHashSet<String> reachable = new LinkedHashSet<>();
+        List<String> pending = new ArrayList<>();
+        outputs.forEach(output -> pending.add(output.name()));
+        for (int index = 0; index < pending.size(); index++) {
+            String name = pending.get(index);
+            if (!reachable.add(name)) {
+                continue;
+            }
+            Assignment assignment = assignmentsByName.get(name);
+            if (assignment == null) {
+                continue;
+            }
+            for (String reference : assignment.expression().variables()) {
+                if (assignmentsByName.containsKey(reference) && !reachable.contains(reference)) {
+                    pending.add(reference);
+                }
+            }
+        }
+        return reachable;
+    }
+
+    private static boolean containsPartCall(Expression expression) {
+        return switch (expression) {
+            case Expression.Constant ignored -> false;
+            case Expression.Variable ignored -> false;
+            case Expression.Unary unary -> containsPartCall(unary.operand());
+            case Expression.Binary binary ->
+                    containsPartCall(binary.left()) || containsPartCall(binary.right());
+            case Expression.PartCall ignored -> true;
+        };
+    }
+
+    private static void collectClockNames(Expression expression, Set<String> names) {
+        switch (expression) {
+            case Expression.Constant ignored -> {
+            }
+            case Expression.Variable ignored -> {
+            }
+            case Expression.Unary unary -> collectClockNames(unary.operand(), names);
+            case Expression.Binary binary -> {
+                collectClockNames(binary.left(), names);
+                collectClockNames(binary.right(), names);
+            }
+            case Expression.PartCall call -> {
+                int argumentLimit = call.arguments().size();
+                if (call.kind().clocked()) {
+                    Expression clock = call.arguments().getLast();
+                    if (!(clock instanceof Expression.Variable variable)) {
+                        throw new IllegalArgumentException(
+                                "CLK argument to " + call.kind()
+                                        + " must be a plain identifier");
+                    }
+                    names.add(variable.name());
+                    argumentLimit--;
+                }
+                for (int index = 0; index < argumentLimit; index++) {
+                    collectClockNames(call.arguments().get(index), names);
+                }
+            }
+        }
+    }
+
+    private static List<String> findRawFeedbackCycle(
+            List<Assignment> outputs, Map<String, Assignment> assignmentsByName) {
+        Map<String, Integer> state = new HashMap<>();
+        List<String> path = new ArrayList<>();
+        for (Assignment output : outputs) {
+            List<String> cycle = visitRawDefinition(
+                    output.name(), assignmentsByName, state, path);
+            if (!cycle.isEmpty()) {
+                return cycle;
+            }
+        }
+        return List.of();
+    }
+
+    private static List<String> visitRawDefinition(
+            String name,
+            Map<String, Assignment> assignmentsByName,
+            Map<String, Integer> state,
+            List<String> path) {
+        int current = state.getOrDefault(name, 0);
+        if (current == 2) {
+            return List.of();
+        }
+        if (current == 1) {
+            int start = path.indexOf(name);
+            List<String> cycle = new ArrayList<>(path.subList(start, path.size()));
+            cycle.add(name);
+            return List.copyOf(cycle);
+        }
+
+        Assignment assignment = assignmentsByName.get(name);
+        if (assignment == null) {
+            return List.of();
+        }
+        state.put(name, 1);
+        path.add(name);
+        List<String> rawReferences = new ArrayList<>();
+        collectRawReferences(assignment.expression(), false, rawReferences);
+        for (String reference : rawReferences) {
+            if (!assignmentsByName.containsKey(reference)) {
+                continue;
+            }
+            List<String> cycle = visitRawDefinition(
+                    reference, assignmentsByName, state, path);
+            if (!cycle.isEmpty()) {
+                return cycle;
+            }
+        }
+        path.removeLast();
+        state.put(name, 2);
+        return List.of();
+    }
+
+    /**
+     * References nested anywhere inside a part argument cross a sequential
+     * boundary and therefore do not form a raw-feedback dependency edge.
+     */
+    private static void collectRawReferences(
+            Expression expression, boolean insidePart, List<String> references) {
+        switch (expression) {
+            case Expression.Constant ignored -> {
+            }
+            case Expression.Variable variable -> {
+                if (!insidePart) {
+                    references.add(variable.name());
+                }
+            }
+            case Expression.Unary unary ->
+                    collectRawReferences(unary.operand(), insidePart, references);
+            case Expression.Binary binary -> {
+                collectRawReferences(binary.left(), insidePart, references);
+                collectRawReferences(binary.right(), insidePart, references);
+            }
+            case Expression.PartCall call -> call.arguments().forEach(argument ->
+                    collectRawReferences(argument, true, references));
+        }
+    }
+
+    private static final class SequentialBuilder {
+        private final Map<String, Assignment> assignments;
+        private final io.github.evilalee.gatelab.model.Circuit circuit =
+                new io.github.evilalee.gatelab.model.Circuit();
+        private final Map<String, io.github.evilalee.gatelab.model.InputPin> inputs =
+                new LinkedHashMap<>();
+        private final Map<String, io.github.evilalee.gatelab.model.OutputProbe> outputs =
+                new LinkedHashMap<>();
+        private final Map<io.github.evilalee.gatelab.model.InputPin, Value> fixedInputs =
+                new IdentityHashMap<>();
+        private final Map<String, Gate> assignmentGates = new LinkedHashMap<>();
+        private final Map<Gate, String> assignmentSignals = new IdentityHashMap<>();
+        private final Map<String, Integer> assignmentState = new HashMap<>();
+        private int nextExpressionGate = 1;
+        private int nextPart = 1;
+        private int nextConstant = 1;
+
+        private SequentialBuilder(Map<String, Assignment> assignments) {
+            this.assignments = assignments;
+        }
+
+        private String buildOutput(String name) {
+            Pin source = signalForAssignment(name);
+            io.github.evilalee.gatelab.model.OutputProbe probe =
+                    new io.github.evilalee.gatelab.model.OutputProbe("expr-output-" + name);
+            circuit.addComponent(probe);
+            circuit.connect(source, probe.input());
+            outputs.put(name, probe);
+            return name;
+        }
+
+        private SequentialBuild finish(List<Netlist.Output> netlistOutputs) {
+            Netlist netlist = toNetlist(netlistOutputs);
+            SequentialCircuit sequentialCircuit =
+                    new SequentialCircuit(circuit, inputs, outputs, fixedInputs);
+            return new SequentialBuild(netlist, sequentialCircuit);
+        }
+
+        private Pin signalForAssignment(String name) {
+            Gate alias = assignmentGates.computeIfAbsent(name, this::createAssignmentGate);
+            int state = assignmentState.getOrDefault(name, 0);
+            if (state == 1 || state == 2) {
+                return alias.output();
+            }
+
+            Assignment assignment = assignments.get(name);
+            if (assignment == null) {
+                throw new IllegalArgumentException("unknown signal definition: " + name);
+            }
+            assignmentState.put(name, 1);
+            Pin expression = signalForExpression(assignment.expression());
+            circuit.connect(expression, alias.input(0));
+            assignmentState.put(name, 2);
+            return alias.output();
+        }
+
+        private Gate createAssignmentGate(String name) {
+            Gate gate = new Gate("expr-assignment-" + name, GateType.BUFFER, 1);
+            circuit.addComponent(gate);
+            assignmentSignals.put(gate, name);
+            return gate;
+        }
+
+        private Pin signalForExpression(Expression expression) {
+            return switch (expression) {
+                case Expression.Constant constant -> constantPin(constant.value());
+                case Expression.Variable variable -> assignments.containsKey(variable.name())
+                        ? signalForAssignment(variable.name())
+                        : inputPin(variable.name()).output();
+                case Expression.Unary unary -> {
+                    Gate gate = expressionGate(GateType.NOT, 1);
+                    circuit.connect(signalForExpression(unary.operand()), gate.input(0));
+                    yield gate.output();
+                }
+                case Expression.Binary binary -> {
+                    Gate gate = expressionGate(
+                            GateType.valueOf(binary.operator().name()), 2);
+                    circuit.connect(signalForExpression(binary.left()), gate.input(0));
+                    circuit.connect(signalForExpression(binary.right()), gate.input(1));
+                    yield gate.output();
+                }
+                case Expression.PartCall call -> expandPart(call);
+            };
+        }
+
+        private Pin expandPart(Expression.PartCall call) {
+            List<Expression> arguments = call.arguments();
+            String prefix = "expr-part-" + nextPart++;
+            return switch (call.kind()) {
+                case DLATCH -> SequentialParts.dLatch(
+                        circuit, prefix,
+                        signalForExpression(arguments.get(0)),
+                        signalForExpression(arguments.get(1))).q();
+                case DFF -> SequentialParts.dff(
+                        circuit, prefix,
+                        signalForExpression(arguments.get(0)),
+                        clockPin(arguments.getLast())).q();
+                case TFF -> SequentialParts.tff(
+                        circuit, prefix,
+                        signalForExpression(arguments.get(0)),
+                        clockPin(arguments.getLast())).q();
+                case JKFF -> SequentialParts.jkff(
+                        circuit, prefix,
+                        signalForExpression(arguments.get(0)),
+                        signalForExpression(arguments.get(1)),
+                        clockPin(arguments.getLast())).q();
+            };
+        }
+
+        private Pin clockPin(Expression expression) {
+            if (!(expression instanceof Expression.Variable variable)) {
+                throw new IllegalArgumentException("CLK argument must be a plain identifier");
+            }
+            if (assignments.containsKey(variable.name())) {
+                throw new IllegalArgumentException(
+                        "clock identifier '" + variable.name()
+                                + "' cannot be defined by an expression line");
+            }
+            return inputPin(variable.name()).output();
+        }
+
+        private io.github.evilalee.gatelab.model.InputPin inputPin(String name) {
+            io.github.evilalee.gatelab.model.InputPin existing = inputs.get(name);
+            if (existing != null) {
+                return existing;
+            }
+            io.github.evilalee.gatelab.model.InputPin input =
+                    new io.github.evilalee.gatelab.model.InputPin("expr-input-" + name);
+            circuit.addComponent(input);
+            inputs.put(name, input);
+            return input;
+        }
+
+        private Pin constantPin(boolean value) {
+            io.github.evilalee.gatelab.model.InputPin constant =
+                    new io.github.evilalee.gatelab.model.InputPin(
+                            "expr-constant-" + nextConstant++);
+            Value fixedValue = value ? Value.ONE : Value.ZERO;
+            constant.setValue(fixedValue);
+            circuit.addComponent(constant);
+            fixedInputs.put(constant, fixedValue);
+            return constant.output();
+        }
+
+        private Gate expressionGate(GateType type, int inputCount) {
+            Gate gate = new Gate(
+                    "expr-gate-" + nextExpressionGate++, type, inputCount);
+            circuit.addComponent(gate);
+            return gate;
+        }
+
+        private Netlist toNetlist(List<Netlist.Output> netlistOutputs) {
+            Map<Pin, Pin> parents = new IdentityHashMap<>();
+            circuit.pins().forEach(pin -> parents.put(pin, pin));
+            for (Wire wire : circuit.wires()) {
+                union(parents, wire.first(), wire.second());
+            }
+
+            Map<Pin, String> signalByDriver = new IdentityHashMap<>();
+            inputs.forEach((name, input) -> signalByDriver.put(input.output(), name));
+            fixedInputs.forEach((input, value) ->
+                    signalByDriver.put(input.output(), value == Value.ONE ? "1" : "0"));
+
+            Set<String> reserved = new HashSet<>(inputs.keySet());
+            reserved.addAll(assignments.keySet());
+            int generatedSignal = 1;
+            Map<Gate, String> signalByGate = new IdentityHashMap<>();
+            for (Component component : circuit.components()) {
+                if (!(component instanceof Gate gate)) {
+                    continue;
+                }
+                String signal = assignmentSignals.get(gate);
+                if (signal == null) {
+                    do {
+                        signal = "g" + generatedSignal++;
+                    } while (!reserved.add(signal));
+                }
+                signalByGate.put(gate, signal);
+                signalByDriver.put(gate.output(), signal);
+            }
+
+            Map<Pin, String> signalByNet = new IdentityHashMap<>();
+            for (Map.Entry<Pin, String> driver : signalByDriver.entrySet()) {
+                Pin root = find(parents, driver.getKey());
+                String previous = signalByNet.putIfAbsent(root, driver.getValue());
+                if (previous != null && !previous.equals(driver.getValue())) {
+                    throw new IllegalArgumentException(
+                            "sequential expansion joined distinct drivers: "
+                                    + previous + " and " + driver.getValue());
+                }
+            }
+
+            List<Netlist.Gate> netlistGates = new ArrayList<>();
+            for (Component component : circuit.components()) {
+                if (!(component instanceof Gate gate)) {
+                    continue;
+                }
+                List<String> gateInputs = new ArrayList<>();
+                for (Pin input : gate.inputs()) {
+                    String source = signalByNet.get(find(parents, input));
+                    if (source == null) {
+                        throw new IllegalStateException(
+                                "sequential part left an unconnected gate input: " + input.id());
+                    }
+                    gateInputs.add(source);
+                }
+                netlistGates.add(new Netlist.Gate(
+                        signalByGate.get(gate),
+                        GateOperator.valueOf(gate.type().name()),
+                        gateInputs));
+            }
+            return new Netlist(
+                    List.copyOf(inputs.keySet()), netlistOutputs, netlistGates, true);
+        }
+
+        private static void union(Map<Pin, Pin> parents, Pin first, Pin second) {
+            Pin a = find(parents, first);
+            Pin b = find(parents, second);
+            if (a != b) {
+                parents.put(a, b);
+            }
+        }
+
+        private static Pin find(Map<Pin, Pin> parents, Pin pin) {
+            Pin parent = parents.get(pin);
+            if (parent == null) {
+                throw new IllegalArgumentException("pin is not part of the compiled circuit: " + pin);
+            }
+            if (parent != pin) {
+                parent = find(parents, parent);
+                parents.put(pin, parent);
+            }
+            return parent;
+        }
+    }
+
     private static boolean hasReachableFeedback(
             List<Assignment> assignments,
             Map<String, Assignment> assignmentsByName) {
