@@ -754,7 +754,7 @@ public final class SchematicLayout {
                 }
             } else {
                 for (int column = 1; column <= outputColumn; column++) {
-                    List<Node> ordered = column == outputColumn
+                    List<Node> ordered = column == outputColumn && !feedbackPacking
                             ? new ArrayList<>(outputNodes.values())
                             : columns.get(column);
                     assignColumn(
@@ -777,6 +777,33 @@ public final class SchematicLayout {
             throw new IllegalStateException("no vertical layout candidate was produced");
         }
         restoreVerticalPositions(columns, bestPositions);
+        if (feedbackPacking) {
+            compactFeedbackRows(columns, routeSteps, rowGap);
+        }
+    }
+
+    /**
+     * Removes unused vertical row space after the barycentric ordering pass.
+     * This only packs feedback layouts; if the tighter rows create a foreign
+     * pin-row collision, the complete pre-sweep positions are restored.
+     */
+    private static void compactFeedbackRows(
+            List<List<Node>> columns, List<RouteStep> routeSteps, int rowGap) {
+        int[] before = captureVerticalPositions(columns);
+        for (List<Node> column : columns) {
+            for (int index = 1; index < column.size(); index++) {
+                Node previous = column.get(index - 1);
+                Node current = column.get(index);
+                int packedY = previous.y + minimumVerticalSeparation(
+                        previous, current, rowGap, true);
+                if (current.y > packedY) {
+                    current.y = packedY;
+                }
+            }
+        }
+        if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+            restoreVerticalPositions(columns, before);
+        }
     }
 
     /**
@@ -1145,9 +1172,6 @@ public final class SchematicLayout {
         GateGeometry.Offset offset = GateGeometry.pinOffset(
                 definition, definition.inputs().get(inputIndex), Facing.EAST);
         return new int[]{target.x + offset.x(), target.y + offset.y()};
-    }
-
-    private record FeedbackLaneInterval(int startColumn, int endColumn, int lane) {
     }
 
     /**
