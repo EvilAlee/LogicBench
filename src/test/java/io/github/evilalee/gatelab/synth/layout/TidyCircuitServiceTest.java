@@ -9,7 +9,11 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.WireSegment;
+import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
+import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -22,6 +26,119 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TidyCircuitServiceTest {
     private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
+
+    @Test
+    void tidyPreservesTheExistingDagLayoutAndRunsItsUsualEquivalenceCheck() {
+        Schematic original = simpleCombinationalCircuit();
+        Netlist netlist = SchematicNetlistExtractor.extract(original).netlist();
+        Schematic expected = new SchematicLayout(DEFINITIONS).layout(netlist).schematic();
+
+        TidyCircuitService.TidyResult result =
+                TidyCircuitService.tidy(original, DEFINITIONS);
+
+        assertFalse(result.feedbackCircuit());
+        assertEquals(4, result.verificationRows());
+        assertFalse(result.equivalenceSkipped());
+        assertEquals(
+                SchematicSnapshot.capture(expected),
+                SchematicSnapshot.capture(result.schematic()));
+    }
+
+    @Test
+    void norSrLatchTidiesAndStillSetsHoldsAndResets() {
+        Schematic original = norSrLatch();
+        SchematicSnapshot before = SchematicSnapshot.capture(original);
+        original.setInputValue(componentByLabel(original, "S").id(), true);
+
+        TidyCircuitService.TidyResult result =
+                TidyCircuitService.tidy(original, DEFINITIONS);
+
+        assertTrue(result.feedbackCircuit());
+        assertEquals(0, result.verificationRows());
+        assertFalse(result.equivalenceSkipped());
+        assertEquals(
+                "Tidied. Feedback circuit: connections verified, behaviour not simulated. "
+                        + "Gate output state restarted at X.",
+                result.verificationMessage());
+        assertEquals(1, result.schematic().components().stream()
+                .filter(component -> component.typeId().equals("nor")).count());
+        PlacedComponent reset = componentByLabel(result.schematic(), "R");
+        PlacedComponent set = componentByLabel(result.schematic(), "S");
+        PlacedComponent q = componentByLabel(result.schematic(), "Q");
+        PlacedComponent qBar = componentByLabel(result.schematic(), "Qbar");
+        assertEquals("", result.schematic().components().stream()
+                .filter(component -> component.typeId().equals("nor"))
+                .findFirst().orElseThrow().label());
+
+        SimulationResult simulation = SchematicCompiler.compileAndSettle(result.schematic());
+        assertEquals(Value.X, simulation.outputValues().get(q.id()));
+        assertEquals(Value.X, simulation.outputValues().get(qBar.id()));
+        assertFalse(simulation.oscillating());
+
+        result.schematic().setInputValue(set.id(), true);
+        simulation = SchematicCompiler.compileAndSettle(result.schematic(), simulation);
+        assertEquals(Value.ONE, simulation.outputValues().get(q.id()));
+        assertEquals(Value.ZERO, simulation.outputValues().get(qBar.id()));
+
+        result.schematic().setInputValue(set.id(), false);
+        simulation = SchematicCompiler.compileAndSettle(result.schematic(), simulation);
+        assertEquals(Value.ONE, simulation.outputValues().get(q.id()), "released set must hold");
+        assertEquals(Value.ZERO, simulation.outputValues().get(qBar.id()));
+
+        result.schematic().setInputValue(reset.id(), true);
+        simulation = SchematicCompiler.compileAndSettle(result.schematic(), simulation);
+        assertEquals(Value.ZERO, simulation.outputValues().get(q.id()));
+        assertEquals(Value.ONE, simulation.outputValues().get(qBar.id()));
+        assertFalse(simulation.oscillating());
+        assertEquals(before.components().size(), original.components().size());
+        assertEquals(before, SchematicSnapshot.capture(original));
+    }
+
+    @Test
+    void masterSlaveNandFlipFlopTidiesAndPreservesInputAndClockLevels() {
+        Schematic original = masterSlaveNandFlipFlop();
+        original.setInputValue(componentByLabel(original, "D").id(), true);
+        original.setClockValue(componentByLabel(original, "CLK").id(), true);
+
+        TidyCircuitService.TidyResult result =
+                TidyCircuitService.tidy(original, DEFINITIONS);
+
+        assertTrue(result.feedbackCircuit());
+        assertEquals(10, result.schematic().components().stream()
+                .filter(component -> component.typeId().equals("nand")).count());
+        assertTrue(result.schematic().inputValue(
+                componentByLabel(result.schematic(), "D").id()));
+        assertTrue(result.schematic().clockValue(
+                componentByLabel(result.schematic(), "CLK").id()));
+        assertEquals("Q", componentByLabel(result.schematic(), "Q").label());
+        assertEquals("Qbar", componentByLabel(result.schematic(), "Qbar").label());
+        assertEquals(
+                "Tidied. Feedback circuit: connections verified, behaviour not simulated. "
+                        + "Gate output state restarted at X.",
+                result.verificationMessage());
+    }
+
+    @Test
+    void corruptedFeedbackLayoutFailsConnectivityVerificationWithoutChangingOriginal() {
+        Schematic original = norSrLatch();
+        FeedbackCircuitExtractor.Extraction extraction =
+                FeedbackCircuitExtractor.extract(original).orElseThrow();
+        Schematic tidied = TidyCircuitService.tidy(original, DEFINITIONS).schematic();
+        Map<String, String> newToOld = feedbackIdentityMap(extraction);
+        List<WireSegment> corruptedWires = new ArrayList<>(tidied.wires());
+        corruptedWires.remove(corruptedWires.size() / 2);
+        Schematic corrupted = new Schematic(DEFINITIONS);
+        corrupted.restoreSnapshot(new SchematicSnapshot(
+                tidied.components(), corruptedWires));
+        SchematicSnapshot before = SchematicSnapshot.capture(original);
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> FeedbackConnectivityVerifier.verify(original, corrupted, newToOld));
+
+        assertTrue(failure.getMessage().contains("Feedback connectivity verification failed"));
+        assertEquals(before, SchematicSnapshot.capture(original));
+    }
 
     @Test
     void tidiesScrambledExpressionSchematicAndPreservesLabelsAndInputValues() {
@@ -239,6 +356,105 @@ class TidyCircuitServiceTest {
         assertRefusal(unsupportedArity, threeInputDefinitions, "Unsupported input count");
     }
 
+    private static Schematic simpleCombinationalCircuit() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent inputA = add(schematic, "input-a", "input", 0, 0, "A");
+        PlacedComponent inputB = add(schematic, "input-b", "input", 0, 200, "B");
+        PlacedComponent gate = add(schematic, "gate-and", "and", 300, 100, "");
+        PlacedComponent output = add(schematic, "output-f", "output", 500, 100, "F");
+        connect(schematic, inputA.id(), "out", gate.id(), "in0");
+        connect(schematic, inputB.id(), "out", gate.id(), "in1");
+        connect(schematic, gate.id(), "out", output.id(), "in0");
+        return schematic;
+    }
+
+    private static Schematic norSrLatch() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent reset = add(schematic, "input-reset", "input", 50, -10, "R");
+        PlacedComponent set = add(schematic, "input-set", "input", 150, -10, "S");
+        PlacedComponent qGate = add(schematic, "gate-q", "nor", 100, 0, "");
+        PlacedComponent qBarGate = add(schematic, "gate-qbar", "nor", 200, 0, "");
+        PlacedComponent q = add(schematic, "output-q", "output", 120, 0, "Q");
+        PlacedComponent qBar = add(schematic, "output-qbar", "output", 220, 0, "Qbar");
+        connect(schematic, reset.id(), "out", qGate.id(), "in0");
+        connect(schematic, set.id(), "out", qBarGate.id(), "in0");
+        path(schematic, 200, 0, 200, -40, 30, -40, 30, 10, 60, 10);
+        path(schematic, 100, 0, 100, 40, 180, 40, 180, 10, 160, 10);
+        connect(schematic, qGate.id(), "out", q.id(), "in0");
+        connect(schematic, qBarGate.id(), "out", qBar.id(), "in0");
+        return schematic;
+    }
+
+    private static Schematic masterSlaveNandFlipFlop() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent d = add(schematic, "input-d", "input", 0, 0, "D");
+        PlacedComponent clock = add(schematic, "clock-clk", "clock", 0, 100, "CLK");
+        PlacedComponent dNot = add(schematic, "gate-d-not", "nand", 100, 200, "");
+        PlacedComponent clockNot = add(schematic, "gate-clock-not", "nand", 100, 300, "");
+        PlacedComponent masterSet = add(schematic, "gate-master-set", "nand", 300, 400, "");
+        PlacedComponent masterReset = add(schematic, "gate-master-reset", "nand", 300, 500, "");
+        PlacedComponent masterQ = add(schematic, "gate-master-q", "nand", 500, 600, "");
+        PlacedComponent masterQBar = add(schematic, "gate-master-qbar", "nand", 500, 700, "");
+        PlacedComponent slaveSet = add(schematic, "gate-slave-set", "nand", 700, 800, "");
+        PlacedComponent slaveReset = add(schematic, "gate-slave-reset", "nand", 700, 900, "");
+        PlacedComponent slaveQ = add(schematic, "gate-slave-q", "nand", 900, 1000, "");
+        PlacedComponent slaveQBar = add(schematic, "gate-slave-qbar", "nand", 900, 1100, "");
+        PlacedComponent q = add(schematic, "output-q", "output", 1200, 1000, "Q");
+        PlacedComponent qBar = add(schematic, "output-qbar", "output", 1200, 1100, "Qbar");
+
+        connect(schematic, d.id(), "out", dNot.id(), "in0");
+        connect(schematic, d.id(), "out", dNot.id(), "in1");
+        connect(schematic, d.id(), "out", masterSet.id(), "in0");
+        connect(schematic, clock.id(), "out", clockNot.id(), "in0");
+        connect(schematic, clock.id(), "out", clockNot.id(), "in1");
+        connect(schematic, clock.id(), "out", masterSet.id(), "in1");
+        connect(schematic, dNot.id(), "out", masterReset.id(), "in0");
+        connect(schematic, clock.id(), "out", masterReset.id(), "in1");
+        connect(schematic, masterSet.id(), "out", masterQ.id(), "in0");
+        connect(schematic, masterQBar.id(), "out", masterQ.id(), "in1");
+        connect(schematic, masterReset.id(), "out", masterQBar.id(), "in0");
+        connect(schematic, masterQ.id(), "out", masterQBar.id(), "in1");
+        connect(schematic, masterQ.id(), "out", slaveSet.id(), "in0");
+        connect(schematic, clockNot.id(), "out", slaveSet.id(), "in1");
+        connect(schematic, masterQBar.id(), "out", slaveReset.id(), "in0");
+        connect(schematic, clockNot.id(), "out", slaveReset.id(), "in1");
+        connect(schematic, slaveSet.id(), "out", slaveQ.id(), "in0");
+        connect(schematic, slaveQBar.id(), "out", slaveQ.id(), "in1");
+        connect(schematic, slaveReset.id(), "out", slaveQBar.id(), "in0");
+        connect(schematic, slaveQ.id(), "out", slaveQBar.id(), "in1");
+        connect(schematic, slaveQ.id(), "out", q.id(), "in0");
+        connect(schematic, slaveQBar.id(), "out", qBar.id(), "in0");
+        return schematic;
+    }
+
+    private static PlacedComponent componentByLabel(Schematic schematic, String label) {
+        return schematic.components().stream()
+                .filter(component -> component.label().equals(label))
+                .findFirst().orElseThrow();
+    }
+
+    private static Map<String, String> feedbackIdentityMap(
+            FeedbackCircuitExtractor.Extraction extraction) {
+        Map<String, String> result = new java.util.LinkedHashMap<>();
+        extraction.inputComponentIds().forEach((signal, oldId) ->
+                result.put("expr-input-" + signal, oldId));
+        extraction.clockComponentIds().forEach((signal, oldId) ->
+                result.put("expr-clock-" + signal, oldId));
+        extraction.outputComponentIds().forEach((signal, oldId) ->
+                result.put("expr-output-" + signal, oldId));
+        extraction.gateComponentIds().forEach((signal, oldId) ->
+                result.put("expr-gate-" + signal, oldId));
+        return result;
+    }
+
+    private static void path(Schematic schematic, int... points) {
+        for (int index = 0; index + 3 < points.length; index += 2) {
+            schematic.addWire(
+                    points[index], points[index + 1],
+                    points[index + 2], points[index + 3]);
+        }
+    }
+
     private static Schematic crossingCircuit() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent inputA = add(schematic, "input-a", "input", 0, 0, "A");
@@ -311,8 +527,12 @@ class TidyCircuitServiceTest {
             String targetPin) {
         Connectivity.PinPosition source = pin(schematic, sourceId, sourcePin);
         Connectivity.PinPosition target = pin(schematic, targetId, targetPin);
-        schematic.addWire(source.x(), source.y(), target.x(), source.y());
-        schematic.addWire(target.x(), source.y(), target.x(), target.y());
+        if (source.x() != target.x()) {
+            schematic.addWire(source.x(), source.y(), target.x(), source.y());
+        }
+        if (source.y() != target.y()) {
+            schematic.addWire(target.x(), source.y(), target.x(), target.y());
+        }
     }
 
     private static Connectivity.PinPosition pin(
