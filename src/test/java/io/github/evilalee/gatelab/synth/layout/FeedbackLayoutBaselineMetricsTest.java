@@ -27,14 +27,14 @@ class FeedbackLayoutBaselineMetricsTest {
         report.append(measure("NOR SR latch", """
                 Q = R NOR Qbar
                 Qbar = S NOR Q
-                """, true)).append('\\n');
-        report.append(measure("4-NAND D latch", "Q = DLATCH(D, EN)", false)).append('\\n');
-        report.append(measure("master-slave D flip-flop", "Q = DFF(D, CLK)", false)).append('\\n');
-        report.append(measure("divide-by-2", "Q = DFF(NOT(Q), CLK)", false)).append('\\n');
+                """, true)).append('\n');
+        report.append(measure("4-NAND D latch", "Q = DLATCH(D, EN)", false)).append('\n');
+        report.append(measure("master-slave D flip-flop", "Q = DFF(D, CLK)", false)).append('\n');
+        report.append(measure("divide-by-2", "Q = DFF(NOT(Q), CLK)", false)).append('\n');
         report.append(measure("2-bit counter", """
                 Q0 = DFF(RESET_N & NOT(Q0), CLK)
                 Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
-                """, false)).append('\\n');
+                """, false)).append('\n');
         assertTrue(false, report.toString());
     }
 
