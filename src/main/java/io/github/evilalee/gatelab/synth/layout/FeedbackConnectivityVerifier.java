@@ -67,9 +67,9 @@ public final class FeedbackConnectivityVerifier {
                     "Feedback connectivity verification failed: original components are missing.");
         }
 
-        Set<Set<String>> originalNets = pinNetPartition(original, Map.of());
+        Set<Set<String>> originalNets = pinNetPartition(original, Map.of(), false);
         Set<Set<String>> rebuiltNets = pinNetPartition(
-                rebuilt, newToOriginalComponentIds);
+                rebuilt, newToOriginalComponentIds, true);
         if (!originalNets.equals(rebuiltNets)) {
             throw new IllegalStateException(
                     "Feedback connectivity verification failed: pin-to-net grouping changed.");
@@ -94,7 +94,8 @@ public final class FeedbackConnectivityVerifier {
 
     private static Set<Set<String>> pinNetPartition(
             Schematic schematic,
-            Map<String, String> componentIdMapping) {
+            Map<String, String> componentIdMapping,
+            boolean rejectOrphanWires) {
         List<Connectivity.PinPosition> pins = schematic.pinPositions();
         Set<PinKey> expectedPins = pins.stream()
                 .map(pin -> new PinKey(pin.componentId(), pin.pinId()))
@@ -105,8 +106,11 @@ public final class FeedbackConnectivityVerifier {
 
         for (Connectivity.Net net : topology.nets()) {
             if (net.pins().isEmpty()) {
-                throw new IllegalStateException(
-                        "Feedback connectivity verification failed: layout contains an orphan wire net.");
+                if (rejectOrphanWires) {
+                    throw new IllegalStateException(
+                            "Feedback connectivity verification failed: layout contains an orphan wire net.");
+                }
+                continue;
             }
             Set<String> members = new TreeSet<>();
             for (Connectivity.PinPosition pin : net.pins()) {

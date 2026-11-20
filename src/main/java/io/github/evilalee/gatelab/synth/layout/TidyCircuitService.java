@@ -69,9 +69,7 @@ public final class TidyCircuitService {
         Objects.requireNonNull(original, "original");
         List<GateDef> library = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
         if (original.components().stream().noneMatch(component ->
-                !component.typeId().equals("input")
-                        && !component.typeId().equals("output")
-                        && !component.typeId().equals("clock"))) {
+                !component.typeId().equals("input") && !component.typeId().equals("output"))) {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 

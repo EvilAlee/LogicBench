@@ -30,6 +30,22 @@ class TidyCircuitServiceTest {
     private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
 
     @Test
+    void clockWithoutFeedbackKeepsTheOriginalUnsupportedComponentFailure() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent clock = add(schematic, "clock-clk", "clock", 0, 0, "CLK");
+        PlacedComponent output = add(schematic, "output-q", "output", 100, 0, "Q");
+        connect(schematic, clock.id(), "out", output.id(), "in0");
+        SchematicSnapshot before = SchematicSnapshot.capture(schematic);
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> TidyCircuitService.tidy(schematic, DEFINITIONS));
+
+        assertEquals("Unsupported component: clock", failure.getMessage());
+        assertEquals(before, SchematicSnapshot.capture(schematic));
+    }
+
+    @Test
     void tidyPreservesTheExistingDagLayoutAndRunsItsUsualEquivalenceCheck() {
         Schematic original = simpleCombinationalCircuit();
         Netlist netlist = SchematicNetlistExtractor.extract(original).netlist();
