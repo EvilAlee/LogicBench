@@ -9,6 +9,10 @@ import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Comparator;
+
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class FeedbackLayoutBaselineMetricsTest {
@@ -27,6 +31,34 @@ class FeedbackLayoutBaselineMetricsTest {
                 Q0 = DFF(RESET_N & NOT(Q0), CLK)
                 Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
                 """, false);
+    }
+
+    @Test
+    void reportCombinationalLayoutFingerprints() throws Exception {
+        reportFingerprint("full adder", """
+                Sum = A ^ B ^ Cin
+                Cout = (A & B) | (Cin & (A ^ B))
+                """);
+        reportFingerprint("majority", """
+                M = (A & B) | (A & C) | (B & C)
+                """);
+    }
+
+    private static void reportFingerprint(String name, String expression) throws Exception {
+        Schematic schematic = new SchematicLayout(GateLibrary.load().all())
+                .layout(ExpressionCompiler.compile(expression).netlist()).schematic();
+        String components = schematic.components().stream()
+                .map(component -> component.id() + ":" + component.typeId() + ":"
+                        + component.x() + ":" + component.y() + ":" + component.facing()
+                        + ":" + component.attributes() + ":" + component.label())
+                .sorted().collect(java.util.stream.Collectors.joining("\\n"));
+        String wires = schematic.wires().stream()
+                .map(wire -> wire.x1() + "," + wire.y1() + "," + wire.x2() + "," + wire.y2())
+                .sorted().collect(java.util.stream.Collectors.joining("\\n"));
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+                (components + "\\n--WIRES--\\n" + wires).getBytes(StandardCharsets.UTF_8));
+        System.out.println("BASELINE_COMBINATIONAL " + name + " sha256="
+                + java.util.HexFormat.of().formatHex(digest));
     }
 
     private static void report(String name, String expression, boolean rawFeedback) {
