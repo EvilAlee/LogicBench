@@ -8,6 +8,7 @@ import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.sim.SignalRecorder;
 import io.github.evilalee.gatelab.synth.layout.TidyCircuitService;
+import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
 import javax.swing.AbstractAction;
 import javax.swing.AbstractCellEditor;
@@ -308,11 +309,13 @@ public final class Main {
     }
 
     private static boolean hasTidyableGate(Schematic schematic) {
-        return schematic.components().stream().noneMatch(component ->
-                component.typeId().equals("clock"))
-                && schematic.components().stream().anyMatch(component ->
-                        !component.typeId().equals("input")
-                                && !component.typeId().equals("output"));
+        boolean hasGate = schematic.components().stream().anyMatch(component ->
+                !component.typeId().equals("input")
+                        && !component.typeId().equals("output")
+                        && !component.typeId().equals("clock"));
+        boolean hasClock = schematic.components().stream()
+                .anyMatch(component -> component.typeId().equals("clock"));
+        return hasGate && (!hasClock || FeedbackCircuitExtractor.hasFeedback(schematic));
     }
 
     private static void tidyCircuit(JFrame frame, CanvasPanel canvas) {
@@ -320,8 +323,10 @@ public final class Main {
             TidyCircuitService.TidyResult result = TidyCircuitService.tidy(
                     canvas.schematic(), GateLibrary.load().all());
             canvas.replaceWithTidiedCircuit(result.schematic());
-            String message = "Tidy complete. " + result.verificationMessage()
-                    + " Gate facings reset to EAST.";
+            String message = result.feedbackCircuit()
+                    ? result.verificationMessage()
+                    : "Tidy complete. " + result.verificationMessage()
+                            + " Gate facings reset to EAST.";
             canvas.setStatusMessage(message);
             if (!GraphicsEnvironment.isHeadless()) {
                 JOptionPane.showMessageDialog(
