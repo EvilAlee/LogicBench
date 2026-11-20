@@ -638,16 +638,17 @@ public final class CanvasPanel extends JPanel {
     private AttributePanelState attributeStateForTool(String family) {
         Facing facing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         Map<String, String> attributes = toolAttributesByFamily.getOrDefault(family, Map.of());
-        return buildAttributeState(family, facing, attributes, "");
+        return buildAttributeState(family, facing, attributes, "", false);
     }
 
     private AttributePanelState attributeStateForComponent(PlacedComponent component) {
         return buildAttributeState(
-                component.typeId(), component.facing(), component.attributes(), component.label());
+                component.typeId(), component.facing(), component.attributes(), component.label(), true);
     }
 
     private AttributePanelState buildAttributeState(
-            String family, Facing facing, Map<String, String> attributes, String label) {
+            String family, Facing facing, Map<String, String> attributes,
+            String label, boolean includeName) {
         List<AttributeRow> rows = new ArrayList<>();
         for (ComponentAttributeRegistry.AttributeSpec spec
                 : ComponentAttributeRegistry.forFamily(family)) {
@@ -664,7 +665,7 @@ public final class CanvasPanel extends JPanel {
                             ComponentAttributeRegistry.displayValue(spec.key(), selectedValue)));
             rows.add(new AttributeRow(spec.key(), spec.label(), selected, options));
         }
-        if (isNameEditableType(family)) {
+        if (includeName && isNameEditableType(family)) {
             rows.add(new AttributeRow(
                     "name", "Name", new AttributeOption(label, label), List.of()));
         }
