@@ -230,7 +230,7 @@ public final class ExpressionDialog extends JDialog {
             return null;
         }
         return compilation.reusedOutputNames().getFirst()
-                + " is both an output and used by later lines. "
+                + " is both an output and used by another line. "
                 + "Use := for an internal signal with no pin.";
     }
 
