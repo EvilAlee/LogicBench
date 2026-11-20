@@ -28,7 +28,8 @@ An unassigned expression receives output name `F`. Consequently, multiple unname
 
 - `Name = expression` defines an output pin named `Name`.
 - `Name := expression` defines an internal signal. It creates **no output pin**.
-- An internal signal may be referenced by later statements; it is resolved to its expression AST before netlist construction. Forward references are not supported.
+- Every name defined by either assignment form is a signal throughout the complete statement list. Definitions are collected before resolution, so references may appear before or after the defining line; only names with no definition become primary inputs.
+- A self-reference or multi-line cycle is preserved as a feedback graph for the expression dialog. Acyclic definitions are expanded into the ordinary shared DAG path.
 - Identical expression subtrees are interned by the compiler, so repeated logic is represented by shared gates.
 
 Example:
@@ -39,7 +40,7 @@ Carry0 := A & B
 S1 = A1 ^ B1 ^ Carry0
 ```
 
-Important distinction: referencing a previous `=` output name does **not** refer back to that output's expression. The name is treated as a primary input in the later expression (and the compiler records the reused-output warning). For example, `S0 = A^B; S1 = S0^C` has primary inputs `A`, `B`, and `S0`. Use `:=` for a reusable intermediate signal. This behavior was verified through the real parse, netlist, layout, and placed-schematic engine-verification path.
+A referenced `=` definition remains an output pin, but references to its name resolve to the defined signal rather than creating an extra input. For example, `S0 = A^B; S1 = S0^C` has primary inputs `A`, `B`, and `C`, with both `S0` and `S1` output pins. The reused-output hint remains useful when the intermediate should instead be private; use `:=` to avoid an output pin.
 
 ## Netlist JSON schema
 
@@ -58,13 +59,13 @@ Important distinction: referencing a previous `=` output name does **not** refer
 
 - `inputs` is an ordered array of unique signal names. The general Netlist model permits more than 12 inputs for layout-only uses; expression compilation and exhaustive truth-table generation remain limited to 12.
 - `gates` contains unique signal ids and one of `AND`, `OR`, `NAND`, `NOR`, `XOR`, `XNOR` (exactly two inputs), `NOT`, or `BUFFER` (one input).
-- A gate input references a primary input name or another gate id. Forward references are allowed; the validated model detects cycles and exposes a topological gate order.
+- A gate input references a primary input name, another gate id, or literal constant `0`/`1`. Forward references are allowed. The default Netlist constructor rejects cycles; the expression feedback path opts into cyclic graphs, while `topologicalGates()` still rejects a cycle when a DAG-only consumer requests topological order.
 - `outputs` contains unique output labels and a source that references an input or gate id.
 - Signal names and gate ids share one namespace and must be unique. Output labels form a separate namespace and may match a signal name.
 
-**Constant outputs:** the `outputs[].source` field also accepts the literal string `"0"` or `"1"`. The expression compiler folds Boolean constants and identities; when an entire output reduces to a constant it emits that literal directly. This avoids fabricating an input that would appear as a free truth-table variable. Gate input references do not accept literal constants; the compiler simplifies them before netlist creation.
+**Constant sources:** the `outputs[].source` field and gate input references accept the literal string `"0"` or `"1"`. The layout and direct truth-table builder realize gate-input constants as fixed source pins, not user-declared inputs. Ordinary acyclic expression compilation continues to fold constants and identities where possible.
 
-`NetlistJson` reads and writes this schema with the existing Gson dependency. `Netlist` validates the graph when constructed and reports duplicate names/ids, unknown references, gate arity errors, missing output sources, and combinational cycles. `ExpressionCompiler` and `TruthTableGenerator` enforce the 12-input exhaustive-verification limit; the Netlist itself can represent larger graphs for layout workflows that skip exhaustive verification.
+`NetlistJson` reads and writes this same schema with the existing Gson dependency; no document or netlist JSON format change is made. The JSON reader constructs the default DAG-only Netlist. `Netlist` validates duplicate names/ids, unknown references, gate arity and output sources. Feedback-enabled expression compilations carry an explicit in-memory opt-in; DAG-only consumers still detect and reject cycles through `topologicalGates()`. `ExpressionCompiler` and `TruthTableGenerator` enforce the 12-input exhaustive-verification limit; the Netlist itself can represent larger graphs for layout workflows that skip exhaustive verification.
 
 ## Compilation and engine verification
 
@@ -74,7 +75,7 @@ Important distinction: referencing a previous `=` output name does **not** refer
 
 `TruthTableVerifier.verify(compilation)` compares each engine output to the pure AST evaluator for the same assignment. `VerificationResult.verified()` is true only when there are no mismatching outputs or oscillating rows. `mismatches()` identifies the input row, output, expected and actual value; `mismatchingRows()` returns each affected truth-table row once.
 
-The expression-to-schematic path is documented in [SYNTH_EXPRESSION_LAYOUT.md](SYNTH_EXPRESSION_LAYOUT.md). `SchematicLayout` creates editable components and wires; `SchematicExpressionVerifier` checks the placed geometry through `SchematicCompiler.compileAndSettle` against the independent AST evaluator.
+The expression-to-schematic path is documented in [SYNTH_EXPRESSION_LAYOUT.md](SYNTH_EXPRESSION_LAYOUT.md). `SchematicLayout` creates editable components and wires; `SchematicExpressionVerifier` checks acyclic placed geometry through `SchematicCompiler.compileAndSettle` against the independent AST evaluator. For feedback compilations, `FeedbackCircuitExtractor` cuts back-edges into placeholders, and `SchematicLayout.layoutFeedback` reuses the existing feedback-lane router. It checks the final pin-to-net partition against the reconstructed cyclic netlist; combinational truth-table verification is skipped.
 
 ## Public API
 
