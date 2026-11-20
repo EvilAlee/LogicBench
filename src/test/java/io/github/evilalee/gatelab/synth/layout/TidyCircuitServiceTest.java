@@ -13,6 +13,8 @@ import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
+import io.github.evilalee.gatelab.synth.Netlist;
+import io.github.evilalee.gatelab.synth.SchematicNetlistExtractor;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 import org.junit.jupiter.api.Test;
 
