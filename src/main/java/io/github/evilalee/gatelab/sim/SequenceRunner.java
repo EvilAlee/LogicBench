@@ -1,0 +1,275 @@
+package io.github.evilalee.gatelab.sim;
+
+import io.github.evilalee.gatelab.model.Circuit;
+import io.github.evilalee.gatelab.model.Component;
+import io.github.evilalee.gatelab.model.InputPin;
+import io.github.evilalee.gatelab.model.OutputProbe;
+import io.github.evilalee.gatelab.model.Value;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * Runs named input/output test vectors against one circuit and one persistent
+ * simulator. The named clock is initialized LOW; every other InputPin in the
+ * circuit is reset to X before the initial settle.
+ */
+public final class SequenceRunner {
+    private final Simulator simulator;
+    private final Map<String, InputPin> inputs;
+    private final Map<String, OutputProbe> outputs;
+    private final String clockName;
+    private final InputPin clock;
+
+    /**
+     * Creates a runner. The inputs map includes the clock entry identified by
+     * clockName; sequence steps may set any other named input, but may not set
+     * the clock directly. Unregistered circuit inputs remain at X.
+     */
+    public SequenceRunner(
+            Circuit circuit,
+            Map<String, InputPin> inputs,
+            String clockName,
+            Map<String, OutputProbe> outputs) {
+        Objects.requireNonNull(circuit, "circuit");
+        this.inputs = immutableNamedMap(inputs, "inputs");
+        this.outputs = immutableNamedMap(outputs, "outputs");
+        this.clockName = requireName(clockName, "clockName");
+
+        this.clock = this.inputs.get(this.clockName);
+        if (this.clock == null) {
+            throw new IllegalArgumentException(
+                    "clock input is not present in the named inputs: " + this.clockName);
+        }
+
+        Map<InputPin, String> seenInputs = new LinkedHashMap<>();
+        for (Map.Entry<String, InputPin> entry : this.inputs.entrySet()) {
+            InputPin input = entry.getValue();
+            if (!circuit.contains(input)) {
+                throw new IllegalArgumentException(
+                        "input is not part of the circuit: " + entry.getKey());
+            }
+            String previousName = seenInputs.put(input, entry.getKey());
+            if (previousName != null) {
+                throw new IllegalArgumentException(
+                        "one input pin has multiple names: " + previousName + " and " + entry.getKey());
+            }
+        }
+
+        Map<OutputProbe, String> seenOutputs = new LinkedHashMap<>();
+        for (Map.Entry<String, OutputProbe> entry : this.outputs.entrySet()) {
+            OutputProbe output = entry.getValue();
+            if (!circuit.contains(output)) {
+                throw new IllegalArgumentException(
+                        "output probe is not part of the circuit: " + entry.getKey());
+            }
+            String previousName = seenOutputs.put(output, entry.getKey());
+            if (previousName != null) {
+                throw new IllegalArgumentException(
+                        "one output probe has multiple names: " + previousName + " and " + entry.getKey());
+            }
+        }
+
+        simulator = new Simulator(circuit);
+        for (Component component : circuit.components()) {
+            if (component instanceof InputPin input) {
+                simulator.setInputValue(input, Value.X);
+            }
+        }
+        simulator.setInputValue(clock, Value.ZERO);
+        simulator.settle();
+    }
+
+    /**
+     * Applies each step's inputs while the clock is LOW, settles that
+     * low-phase state, then performs the requested number of complete
+     * HIGH/settle/LOW/settle cycles. Outputs are sampled after the final LOW
+     * settle. Unspecified inputs retain their previous values.
+     */
+    public SequenceResult run(List<Step> steps) {
+        Objects.requireNonNull(steps, "steps");
+        List<Step> checkedSteps = List.copyOf(steps);
+        for (Step step : checkedSteps) {
+            validateStep(step);
+        }
+
+        List<StepObservation> observations = new ArrayList<>(checkedSteps.size());
+        for (int index = 0; index < checkedSteps.size(); index++) {
+            Step step = checkedSteps.get(index);
+            for (Map.Entry<String, Value> entry : step.inputs().entrySet()) {
+                simulator.setInputValue(inputs.get(entry.getKey()), entry.getValue());
+            }
+
+            simulator.setInputValue(clock, Value.ZERO);
+            simulator.settle();
+            boolean oscillating = simulator.isOscillating();
+
+            for (int cycle = 0; cycle < step.cycles(); cycle++) {
+                simulator.setInputValue(clock, Value.ONE);
+                simulator.settle();
+                oscillating |= simulator.isOscillating();
+
+                simulator.setInputValue(clock, Value.ZERO);
+                simulator.settle();
+                oscillating |= simulator.isOscillating();
+            }
+
+            Map<String, Value> observed = new LinkedHashMap<>();
+            outputs.forEach((name, probe) ->
+                    observed.put(name, simulator.getProbeValue(probe)));
+
+            List<Mismatch> mismatches = new ArrayList<>();
+            for (Map.Entry<String, Value> expectedEntry : step.expectedOutputs().entrySet()) {
+                String outputName = expectedEntry.getKey();
+                Value expected = expectedEntry.getValue();
+                Value actual = observed.get(outputName);
+                if (actual != expected) {
+                    mismatches.add(new Mismatch(
+                            index, step.name(), outputName, expected, actual));
+                }
+            }
+
+            observations.add(new StepObservation(
+                    index,
+                    step.name(),
+                    step.cycles(),
+                    step.expectedOutputs(),
+                    observed,
+                    mismatches,
+                    oscillating));
+        }
+
+        return new SequenceResult(observations);
+    }
+
+    private void validateStep(Step step) {
+        Objects.requireNonNull(step, "step");
+        for (String inputName : step.inputs().keySet()) {
+            if (inputName.equals(clockName)) {
+                throw new IllegalArgumentException(
+                        "sequence steps must not drive the clock input directly: " + clockName);
+            }
+            if (!inputs.containsKey(inputName)) {
+                throw new IllegalArgumentException("unknown input name: " + inputName);
+            }
+        }
+        for (String outputName : step.expectedOutputs().keySet()) {
+            if (!outputs.containsKey(outputName)) {
+                throw new IllegalArgumentException("unknown output name: " + outputName);
+            }
+        }
+    }
+
+    private static <T> Map<String, T> immutableNamedMap(Map<String, T> source, String label) {
+        Objects.requireNonNull(source, label);
+        Map<String, T> copy = new LinkedHashMap<>();
+        source.forEach((name, value) -> {
+            String validName = requireName(name, label + " name");
+            if (copy.put(validName, Objects.requireNonNull(value, label + " value")) != null) {
+                throw new IllegalArgumentException("duplicate " + label + " name: " + validName);
+            }
+        });
+        return Collections.unmodifiableMap(copy);
+    }
+
+    private static String requireName(String name, String label) {
+        Objects.requireNonNull(name, label);
+        String trimmed = name.trim();
+        if (trimmed.isEmpty() || !trimmed.equals(name)) {
+            throw new IllegalArgumentException(label + " must be non-blank and trimmed");
+        }
+        return name;
+    }
+
+    private static Map<String, Value> immutableValues(Map<String, Value> source, String label) {
+        Objects.requireNonNull(source, label);
+        Map<String, Value> copy = new LinkedHashMap<>();
+        source.forEach((name, value) -> {
+            String validName = requireName(name, label + " name");
+            if (copy.put(validName, Objects.requireNonNull(value, label + " value")) != null) {
+                throw new IllegalArgumentException("duplicate " + label + " name: " + validName);
+            }
+        });
+        return Collections.unmodifiableMap(copy);
+    }
+
+    /** One input assignment and one expected observation point. */
+    public record Step(
+            String name,
+            Map<String, Value> inputs,
+            int cycles,
+            Map<String, Value> expectedOutputs) {
+        public Step {
+            name = requireName(name, "step name");
+            if (cycles < 0) {
+                throw new IllegalArgumentException("cycle count must not be negative");
+            }
+            inputs = immutableValues(inputs, "step inputs");
+            expectedOutputs = immutableValues(expectedOutputs, "expected outputs");
+        }
+    }
+
+    /** Observed outputs and comparisons after a step completes. */
+    public record StepObservation(
+            int index,
+            String name,
+            int cycles,
+            Map<String, Value> expectedOutputs,
+            Map<String, Value> observedOutputs,
+            List<Mismatch> mismatches,
+            boolean oscillating) {
+        public StepObservation {
+            name = requireName(name, "step name");
+            expectedOutputs = immutableValues(expectedOutputs, "expected outputs");
+            observedOutputs = immutableValues(observedOutputs, "observed outputs");
+            mismatches = List.copyOf(mismatches);
+        }
+
+        public Optional<Mismatch> firstMismatch() {
+            return mismatches.stream().findFirst();
+        }
+    }
+
+    /** The first observed value for an output that did not equal its expectation. */
+    public record Mismatch(
+            int stepIndex,
+            String stepName,
+            String outputName,
+            Value expected,
+            Value observed) {
+        public Mismatch {
+            stepName = requireName(stepName, "stepName");
+            outputName = requireName(outputName, "outputName");
+            Objects.requireNonNull(expected, "expected");
+            Objects.requireNonNull(observed, "observed");
+        }
+    }
+
+    /** Immutable run report. X compares equal only to X, never to ZERO or ONE. */
+    public record SequenceResult(List<StepObservation> steps) {
+        public SequenceResult {
+            steps = List.copyOf(steps);
+        }
+
+        public List<Mismatch> mismatches() {
+            return steps.stream()
+                    .flatMap(step -> step.mismatches().stream())
+                    .toList();
+        }
+
+        public Optional<Mismatch> firstMismatch() {
+            return steps.stream()
+                    .flatMap(step -> step.mismatches().stream())
+                    .findFirst();
+        }
+
+        public boolean passed() {
+            return firstMismatch().isEmpty();
+        }
+    }
+}
