@@ -114,7 +114,7 @@ public final class SchematicLayout {
     private static final class Node {
         private final String key;
         private final NodeKind kind;
-        private final int column;
+        private int column;
         private final int slotHeight;
         private final String signal;
         private final String componentId;
@@ -334,6 +334,11 @@ public final class SchematicLayout {
             outputIds.put(output.name(), id);
         }
 
+        if (feedback != null) {
+            relocateFeedbackInputs(netlist, columns, signalNodes, gateNodes,
+                    inputColumnNodes, outputColumn);
+        }
+
         List<RouteStep> routeSteps = new ArrayList<>();
         int dummyCount = 0;
         for (Netlist.Gate gate : topological) {
@@ -352,11 +357,16 @@ public final class SchematicLayout {
                     output.source(), source, target, 0, columns, routeSteps);
         }
 
-        orderColumns(columns);
         int rowGap = ROW_GAP * spacingFactor;
-        assignInputColumn(inputColumnNodes, rowGap);
+        if (feedback == null) {
+            orderColumns(columns);
+            assignInputColumn(inputColumnNodes, rowGap);
+        } else {
+            assignFeedbackInputColumns(inputColumnNodes, rowGap);
+            orderFeedbackColumns(columns);
+        }
         optimizeVerticalPositions(
-                columns, outputNodes, routeSteps, rowGap);
+                columns, outputNodes, routeSteps, rowGap, feedback != null);
 
         int laneStart = TRUNK_START_MARGIN * spacingFactor;
         int lanePitch = TRUNK_PITCH * spacingFactor;
@@ -629,6 +639,84 @@ public final class SchematicLayout {
         return count == 0 ? fallback : sum / count;
     }
 
+    private static void relocateFeedbackInputs(
+            Netlist netlist,
+            List<List<Node>> columns,
+            Map<String, Node> signalNodes,
+            Map<String, Node> gateNodes,
+            List<Node> inputColumnNodes,
+            int outputColumn) {
+        for (Node input : inputColumnNodes) {
+            if (input.kind != NodeKind.INPUT && input.kind != NodeKind.CLOCK) {
+                continue;
+            }
+            int firstConsumerColumn = outputColumn;
+            boolean consumed = false;
+            for (Netlist.Gate gate : netlist.gates()) {
+                if (gate.inputs().contains(input.signal)) {
+                    firstConsumerColumn = Math.min(
+                            firstConsumerColumn, gateNodes.get(gate.id()).column);
+                    consumed = true;
+                }
+            }
+            for (Netlist.Output output : netlist.outputs()) {
+                if (output.source().equals(input.signal)) {
+                    consumed = true;
+                }
+            }
+            if (consumed) {
+                int destination = Math.max(0, firstConsumerColumn - 1);
+                if (destination != input.column) {
+                    columns.get(input.column).remove(input);
+                    input.column = destination;
+                    columns.get(destination).add(input);
+                }
+            }
+        }
+    }
+
+    private static void assignFeedbackInputColumns(List<Node> inputNodes, int rowGap) {
+        Map<Integer, List<Node>> byColumn = new LinkedHashMap<>();
+        for (Node node : inputNodes) {
+            byColumn.computeIfAbsent(node.column, ignored -> new ArrayList<>()).add(node);
+        }
+        for (List<Node> nodes : byColumn.values()) {
+            nodes.sort(Comparator.comparing((Node node) -> node.kind.name())
+                    .thenComparing(node -> node.signal));
+            int tallest = nodes.stream()
+                    .mapToInt(node -> nodeBottomOffset(node) - nodeTopOffset(node))
+                    .max().orElse(DUMMY_SLOT_HEIGHT);
+            int pitch = roundUpToGrid(tallest + rowGap);
+            for (int index = 0; index < nodes.size(); index++) {
+                nodes.get(index).y = index * pitch;
+            }
+        }
+    }
+
+    private static void orderFeedbackColumns(List<List<Node>> columns) {
+        for (int column = 1; column < columns.size(); column++) {
+            List<Node> layer = columns.get(column);
+            layer.sort(Comparator
+                    .comparingDouble(SchematicLayout::driverBarycenter)
+                    .thenComparing(SchematicLayout::nodeTieBreakId));
+        }
+    }
+
+    private static double driverBarycenter(Node node) {
+        if (node.previous.isEmpty()) {
+            return node.y;
+        }
+        long total = 0L;
+        for (Node driver : node.previous) {
+            total += sourcePinY(driver);
+        }
+        return total / (double) node.previous.size();
+    }
+
+    private static String nodeTieBreakId(Node node) {
+        return node.componentId == null ? node.key : node.componentId;
+    }
+
     private static void assignInputColumn(List<Node> inputNodes, int rowGap) {
         if (inputNodes.isEmpty()) {
             return;
@@ -651,7 +739,8 @@ public final class SchematicLayout {
             List<List<Node>> columns,
             Map<String, Node> outputNodes,
             List<RouteStep> routeSteps,
-            int rowGap) {
+            int rowGap,
+            boolean feedbackPacking) {
         int outputColumn = columns.size() - 1;
         int[] bestPositions = null;
         long bestLength = Long.MAX_VALUE;
@@ -661,7 +750,7 @@ public final class SchematicLayout {
                 for (int column = outputColumn - 1; column >= 1; column--) {
                     assignColumn(
                             columns.get(column), routeSteps, rowGap,
-                            false, column, true);
+                            false, column, true, feedbackPacking);
                 }
             } else {
                 for (int column = 1; column <= outputColumn; column++) {
@@ -670,7 +759,7 @@ public final class SchematicLayout {
                             : columns.get(column);
                     assignColumn(
                             ordered, routeSteps, rowGap,
-                            true, column - 1, false);
+                            true, column - 1, false, feedbackPacking);
                 }
             }
 
@@ -701,7 +790,8 @@ public final class SchematicLayout {
             int rowGap,
             boolean fromPredecessors,
             int conflictChannel,
-            boolean movingSources) {
+            boolean movingSources,
+            boolean feedbackPacking) {
         if (ordered.isEmpty()) {
             return;
         }
@@ -731,7 +821,7 @@ public final class SchematicLayout {
             if (index > 0) {
                 Node previous = ordered.get(index - 1);
                 y = Math.max(y, previous.y + minimumVerticalSeparation(
-                        previous, node, rowGap));
+                        previous, node, rowGap, feedbackPacking));
             }
             node.y = y;
         }
@@ -838,8 +928,16 @@ public final class SchematicLayout {
         return false;
     }
 
-    private static int minimumVerticalSeparation(Node previous, Node current, int rowGap) {
-        int required = nodeBottomOffset(previous) - nodeTopOffset(current) + rowGap;
+    private static int minimumVerticalSeparation(
+            Node previous, Node current, int rowGap, boolean feedbackPacking) {
+        int requiredGap = rowGap;
+        if (feedbackPacking) {
+            int previousPins = previous.isDummy() ? 1 : previous.definition.inputs().size() + 1;
+            int currentPins = current.isDummy() ? 1 : current.definition.inputs().size() + 1;
+            int pinBasedGap = 10 + 10 * Math.max(previousPins, currentPins);
+            requiredGap = Math.max(requiredGap, pinBasedGap);
+        }
+        int required = nodeBottomOffset(previous) - nodeTopOffset(current) + requiredGap;
         return roundUpToGrid(required);
     }
 
