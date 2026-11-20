@@ -89,7 +89,7 @@ public final class FeedbackCircuitExtractor {
             List<String> primaryInputs = dagNetlist.inputs().stream()
                     .filter(name -> !edgeByPlaceholder.containsKey(name))
                     .toList();
-            return new Netlist(primaryInputs, dagNetlist.outputs(), sourceGates);
+            return new Netlist(primaryInputs, dagNetlist.outputs(), sourceGates, true);
         }
 
         private static Map<String, String> immutableMap(Map<String, String> values) {
