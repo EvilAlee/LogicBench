@@ -6,8 +6,10 @@ import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
+import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.synth.Netlist;
+import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -68,15 +70,29 @@ public final class SchematicLayout {
             Map<String, String> inputComponentIds,
             Map<String, String> outputComponentIds,
             Map<String, String> constantComponentIds,
-            int dummyNodeCount) {
+            int dummyNodeCount,
+            Map<String, String> clockComponentIds,
+            Map<String, String> gateComponentIds) {
         public LayoutResult {
             Objects.requireNonNull(schematic, "schematic");
             inputComponentIds = immutableOrderedMap(inputComponentIds);
             outputComponentIds = immutableOrderedMap(outputComponentIds);
             constantComponentIds = immutableOrderedMap(constantComponentIds);
+            clockComponentIds = immutableOrderedMap(clockComponentIds);
+            gateComponentIds = immutableOrderedMap(gateComponentIds);
             if (dummyNodeCount < 0) {
                 throw new IllegalArgumentException("dummyNodeCount must not be negative");
             }
+        }
+
+        public LayoutResult(
+                Schematic schematic,
+                Map<String, String> inputComponentIds,
+                Map<String, String> outputComponentIds,
+                Map<String, String> constantComponentIds,
+                int dummyNodeCount) {
+            this(schematic, inputComponentIds, outputComponentIds,
+                    constantComponentIds, dummyNodeCount, Map.of(), Map.of());
         }
 
         private static Map<String, String> immutableOrderedMap(Map<String, String> values) {
@@ -87,6 +103,8 @@ public final class SchematicLayout {
 
     private enum NodeKind {
         INPUT,
+        CLOCK,
+        FEEDBACK,
         CONSTANT,
         GATE,
         OUTPUT,
@@ -158,10 +176,10 @@ public final class SchematicLayout {
     public LayoutResult layout(Netlist netlist) {
         Objects.requireNonNull(netlist, "netlist");
         try {
-            return build(netlist, 1);
+            return build(netlist, 1, null);
         } catch (LayoutCheckException firstFailure) {
             try {
-                return build(netlist, 2);
+                return build(netlist, 2, null);
             } catch (LayoutCheckException retryFailure) {
                 Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
                 involved.addAll(retryFailure.involvedNets);
@@ -176,7 +194,31 @@ public final class SchematicLayout {
         }
     }
 
-    private LayoutResult build(Netlist netlist, int spacingFactor) {
+    /** Builds a feedback-aware layout while keeping the ordinary DAG path unchanged. */
+    public LayoutResult layoutFeedback(FeedbackCircuitExtractor.Extraction extraction) {
+        Objects.requireNonNull(extraction, "extraction");
+        try {
+            return build(extraction.dagNetlist(), 1, extraction);
+        } catch (LayoutCheckException firstFailure) {
+            try {
+                return build(extraction.dagNetlist(), 2, extraction);
+            } catch (LayoutCheckException retryFailure) {
+                Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
+                involved.addAll(retryFailure.involvedNets);
+                String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
+                throw new IllegalStateException(
+                        "Feedback layout failed its connectivity self-check after one "
+                                + "doubled-spacing retry. Involved nets: " + names
+                                + ". First failure: " + firstFailure.getMessage()
+                                + "; retry failure: " + retryFailure.getMessage(),
+                        retryFailure);
+            }
+        }
+    }
+
+    private LayoutResult build(
+            Netlist netlist, int spacingFactor,
+            FeedbackCircuitExtractor.Extraction feedback) {
         Map<String, Integer> depthBySignal = new LinkedHashMap<>();
         netlist.inputs().forEach(name -> depthBySignal.put(name, 0));
 
@@ -211,6 +253,9 @@ public final class SchematicLayout {
 
         Schematic schematic = new Schematic(definitions);
         Map<String, String> inputIds = new LinkedHashMap<>();
+        Map<String, String> clockIds = new LinkedHashMap<>();
+        Map<String, String> feedbackIds = new LinkedHashMap<>();
+        Map<String, String> connectivityInputIds = new LinkedHashMap<>();
         Map<String, String> outputIds = new LinkedHashMap<>();
         Map<String, String> constantIds = new LinkedHashMap<>();
         Map<String, Node> signalNodes = new LinkedHashMap<>();
@@ -218,14 +263,33 @@ public final class SchematicLayout {
         Map<String, Node> outputNodes = new LinkedHashMap<>();
         List<Node> inputColumnNodes = new ArrayList<>();
 
+        Set<String> clockSignals = feedback == null
+                ? Set.of() : feedback.clockComponentIds().keySet();
+        Set<String> feedbackSignals = feedback == null
+                ? Set.of() : feedback.feedbackInputSignals();
         for (String input : netlist.inputs()) {
-            String id = "expr-input-" + input;
-            Node node = componentNode(
-                    "input:" + input, NodeKind.INPUT, 0, input, id, "input");
+            Node node;
+            String id;
+            if (clockSignals.contains(input)) {
+                id = "expr-clock-" + input;
+                node = componentNode(
+                        "clock:" + input, NodeKind.CLOCK, 0, input, id, "clock");
+                clockIds.put(input, id);
+            } else if (feedbackSignals.contains(input)) {
+                id = "expr-feedback-" + input;
+                node = componentNode(
+                        "feedback:" + input, NodeKind.FEEDBACK, 0, input, id, "input");
+                feedbackIds.put(input, id);
+            } else {
+                id = "expr-input-" + input;
+                node = componentNode(
+                        "input:" + input, NodeKind.INPUT, 0, input, id, "input");
+                inputIds.put(input, id);
+            }
             columns.get(0).add(node);
             inputColumnNodes.add(node);
             signalNodes.put(input, node);
-            inputIds.put(input, id);
+            connectivityInputIds.put(input, id);
         }
 
         for (String constant : constantsUsed) {
@@ -305,12 +369,42 @@ public final class SchematicLayout {
             signalsByChannel.computeIfAbsent(step.channel(), ignored -> new TreeSet<>())
                     .add(step.signal());
         }
+        Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> feedbackSourcesByChannel =
+                new LinkedHashMap<>();
+        Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> feedbackTargetsByChannel =
+                new LinkedHashMap<>();
+        if (feedback != null) {
+            for (FeedbackCircuitExtractor.FeedbackEdge edge : feedback.feedbackEdges()) {
+                Node source = gateNodes.get(edge.sourceGate());
+                Node target = gateNodes.get(edge.targetGate());
+                if (source == null || target == null || source.column <= target.column) {
+                    throw new IllegalArgumentException(
+                            "feedback edge does not return to an earlier layout column: "
+                                    + edge.sourceGate() + " -> " + edge.targetGate());
+                }
+                feedbackSourcesByChannel.computeIfAbsent(
+                        source.column, ignored -> new ArrayList<>()).add(edge);
+                feedbackTargetsByChannel.computeIfAbsent(
+                        target.column - 1, ignored -> new ArrayList<>()).add(edge);
+            }
+        }
+        int feedbackTrackPitch = TRUNK_PITCH * spacingFactor;
+        Map<Integer, Integer> normalGapByChannel = new LinkedHashMap<>();
+        Map<Integer, Integer> feedbackGapByChannel = new LinkedHashMap<>();
         for (int channel = 0; channel < columns.size() - 1; channel++) {
             int count = signalsByChannel.getOrDefault(channel, Set.of()).size();
-            int channelGap = laneStart + laneEnd
+            int normalGap = laneStart + laneEnd
                     + (count > 0 ? (count - 1) * lanePitch : 0);
+            int sourceTracks = feedbackSourcesByChannel.getOrDefault(
+                    channel, List.of()).size();
+            int targetTracks = feedbackTargetsByChannel.getOrDefault(
+                    channel, List.of()).size();
+            int feedbackGap = feedback == null ? 0
+                    : (sourceTracks + targetTracks + 2) * feedbackTrackPitch;
+            normalGapByChannel.put(channel, normalGap);
+            feedbackGapByChannel.put(channel, feedbackGap);
             columnLeft[channel + 1] = columnLeft[channel]
-                    + columnWidths[channel] + channelGap;
+                    + columnWidths[channel] + normalGap + feedbackGap;
         }
 
         for (Node node : allNodes(columns)) {
@@ -328,7 +422,8 @@ public final class SchematicLayout {
 
         for (Node node : allNodes(columns)) {
             if (!node.isDummy()) {
-                String label = node.kind == NodeKind.INPUT || node.kind == NodeKind.CONSTANT
+                String label = node.kind == NodeKind.INPUT || node.kind == NodeKind.CLOCK
+                        || node.kind == NodeKind.FEEDBACK || node.kind == NodeKind.CONSTANT
                         ? node.signal
                         : node.kind == NodeKind.OUTPUT ? outputLabelFor(node, netlist) : "";
                 schematic.add(new PlacedComponent(
@@ -348,11 +443,53 @@ public final class SchematicLayout {
         }
 
         checkNoComponentOverlaps(schematic);
-        checkConnectivity(netlist, schematic, inputIds, constantIds,
+        checkConnectivity(netlist, schematic, connectivityInputIds, constantIds,
                 gateNodes, outputIds);
 
+        if (feedback == null) {
+            return new LayoutResult(
+                    schematic, inputIds, outputIds, constantIds, dummyCount);
+        }
+
+        Set<WireSegment> feedbackPlaceholderWires = new LinkedHashSet<>();
+        Connectivity.Result dagTopology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        for (String placeholder : feedback.feedbackInputSignals()) {
+            String componentId = feedbackIds.get(placeholder);
+            Connectivity.PinPosition outputPin = schematic.pinPositions().stream()
+                    .filter(pin -> pin.componentId().equals(componentId)
+                            && pin.pinId().equals("out"))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "feedback placeholder output is missing: " + placeholder));
+            Connectivity.Net placeholderNet = dagTopology.nets().stream()
+                    .filter(net -> net.pins().contains(outputPin))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "feedback placeholder has no generated net: " + placeholder));
+            feedbackPlaceholderWires.addAll(placeholderNet.segments());
+        }
+
+        LinkedHashSet<WireSegment> feedbackWires = routeFeedbackEdges(
+                feedback, gateNodes, feedbackSourcesByChannel, feedbackTargetsByChannel,
+                normalGapByChannel, feedbackTrackPitch, allNodes(columns));
+        List<PlacedComponent> finalComponents = schematic.components().stream()
+                .filter(component -> !feedbackIds.containsValue(component.id()))
+                .toList();
+        LinkedHashSet<WireSegment> finalWires = new LinkedHashSet<>(schematic.wires());
+        finalWires.removeAll(feedbackPlaceholderWires);
+        finalWires.addAll(feedbackWires);
+
+        Schematic feedbackSchematic = new Schematic(definitions);
+        feedbackSchematic.restoreSnapshot(new SchematicSnapshot(
+                finalComponents, List.copyOf(finalWires)));
+        checkNoComponentOverlaps(feedbackSchematic);
+
+        Map<String, String> gateIds = new LinkedHashMap<>();
+        gateNodes.forEach((signal, node) -> gateIds.put(signal, node.componentId));
         return new LayoutResult(
-                schematic, inputIds, outputIds, constantIds, dummyCount);
+                feedbackSchematic, inputIds, outputIds, constantIds, dummyCount,
+                clockIds, gateIds);
     }
 
     private Node componentNode(
@@ -895,6 +1032,80 @@ public final class SchematicLayout {
         GateGeometry.Offset offset = GateGeometry.pinOffset(
                 definition, definition.inputs().get(inputIndex), Facing.EAST);
         return new int[]{target.x + offset.x(), target.y + offset.y()};
+    }
+
+    /**
+     * Routes each removed back-edge on its own perimeter lane. The ordinary
+     * channel gap remains untouched outside feedback builds; feedback builds
+     * reserve separate, grid-spaced vertical tracks on both ends of each edge.
+     */
+    private static LinkedHashSet<WireSegment> routeFeedbackEdges(
+            FeedbackCircuitExtractor.Extraction extraction,
+            Map<String, Node> gateNodes,
+            Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> sourcesByChannel,
+            Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> targetsByChannel,
+            Map<Integer, Integer> normalGapByChannel,
+            int trackPitch,
+            List<Node> allNodes) {
+        LinkedHashSet<WireSegment> wires = new LinkedHashSet<>();
+        int minComponentY = Integer.MAX_VALUE;
+        for (Node node : allNodes) {
+            if (!node.isDummy() && node.kind != NodeKind.FEEDBACK) {
+                GateGeometry.Bounds bounds = GateGeometry.bounds(node.definition, Facing.EAST);
+                minComponentY = Math.min(minComponentY, node.y + bounds.y());
+            }
+        }
+        if (minComponentY == Integer.MAX_VALUE) {
+            throw new IllegalStateException("feedback layout has no placed gate area");
+        }
+
+        for (int edgeIndex = 0; edgeIndex < extraction.feedbackEdges().size(); edgeIndex++) {
+            FeedbackCircuitExtractor.FeedbackEdge edge =
+                    extraction.feedbackEdges().get(edgeIndex);
+            Node source = gateNodes.get(edge.sourceGate());
+            Node target = gateNodes.get(edge.targetGate());
+            if (source == null || target == null) {
+                throw new IllegalStateException("feedback edge references a missing gate");
+            }
+
+            List<FeedbackCircuitExtractor.FeedbackEdge> sourceEdges =
+                    sourcesByChannel.getOrDefault(source.column, List.of());
+            List<FeedbackCircuitExtractor.FeedbackEdge> targetEdges =
+                    targetsByChannel.getOrDefault(target.column - 1, List.of());
+            int sourceTrackIndex = sourceEdges.indexOf(edge);
+            int targetTrackIndex = targetEdges.indexOf(edge);
+            if (sourceTrackIndex < 0 || targetTrackIndex < 0) {
+                throw new IllegalStateException("feedback route is missing a reserved track");
+            }
+
+            int normalSourceGap = normalGapByChannel.get(source.column);
+            int normalTargetGap = normalGapByChannel.get(target.column - 1);
+            int sourceX = source.x + normalSourceGap
+                    + (sourceTrackIndex + 1) * trackPitch;
+            GateGeometry.Offset targetInputOffset = GateGeometry.pinOffset(
+                    target.definition,
+                    target.definition.inputs().get(edge.targetInputIndex()),
+                    Facing.EAST);
+            int targetPinX = target.x + targetInputOffset.x();
+            int targetTrackX = targetPinX
+                    - (targetEdges.size() + 1 - targetTrackIndex) * trackPitch;
+
+            int sourceY = sourcePinY(source);
+            int targetY = target.y + targetInputOffset.y();
+            int laneY = minComponentY - (edgeIndex + 1) * trackPitch;
+
+            if (sourceX <= targetTrackX) {
+                throw new IllegalStateException(
+                        "feedback route tracks are not ordered from source to target: "
+                                + edge.sourceGate() + " -> " + edge.targetGate());
+            }
+            addWire(wires, source.x, sourceY, sourceX, sourceY);
+            addWire(wires, sourceX, sourceY, sourceX, laneY);
+            addWire(wires, targetTrackX, laneY, sourceX, laneY);
+            addWire(wires, targetTrackX, laneY, targetTrackX, targetY);
+            addWire(wires, targetTrackX, targetY, targetPinX, targetY);
+        }
+        return wires;
     }
 
     private static void addWire(
