@@ -20,7 +20,7 @@ class ExpressionFeedbackTest {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 Q = NOT (R | Qn)
                 Qn = NOT (S | Q)
-                """);
+                """, true);
 
         assertEquals(List.of("R", "S"), compilation.netlist().inputs());
         assertEquals(List.of("Q", "Qn"), compilation.netlist().outputs().stream()
@@ -118,7 +118,7 @@ class ExpressionFeedbackTest {
     @Test
     void selfReferencesAreFeedbackNotPrimaryInputsAndUseBoundedSettling() {
         ExpressionCompiler.Compilation compilation =
-                ExpressionCompiler.compile("Q = NOT Q");
+                ExpressionCompiler.compile("Q = NOT Q", true);
 
         assertTrue(compilation.hasFeedback());
         assertTrue(compilation.netlist().inputs().isEmpty());
