@@ -1253,6 +1253,12 @@ public final class SchematicLayout {
      * interval. Each interval uses the left-edge lane allocation above, so
      * disjoint column spans share the same logical lane.
      */
+    private record FeedbackRouteSpan(int startColumn, int endColumn, int y) {
+        private boolean overlaps(int start, int end) {
+            return start <= endColumn && startColumn <= end;
+        }
+    }
+
     private static LinkedHashSet<WireSegment> routeFeedbackEdges(
             FeedbackCircuitExtractor.Extraction extraction,
             Map<String, Node> gateNodes,
@@ -1266,6 +1272,7 @@ public final class SchematicLayout {
         gateNodes.forEach((signal, node) -> columnsByGate.put(signal, node.column));
         Map<FeedbackCircuitExtractor.FeedbackEdge, Integer> laneByEdge =
                 assignFeedbackLanes(extraction.feedbackEdges(), columnsByGate);
+        List<FeedbackRouteSpan> assignedRouteSpans = new ArrayList<>();
 
         for (FeedbackCircuitExtractor.FeedbackEdge edge : extraction.feedbackEdges()) {
             Node source = gateNodes.get(edge.sourceGate());
@@ -1318,9 +1325,10 @@ public final class SchematicLayout {
             int lane = laneByEdge.get(edge);
             int aboveY = minGateTop - (lane + 1) * trackPitch;
             int belowY = maxGateBottom + (lane + 1) * trackPitch;
-            int aboveLength = Math.abs(sourceY - aboveY) + Math.abs(targetY - aboveY);
-            int belowLength = Math.abs(sourceY - belowY) + Math.abs(targetY - belowY);
-            int laneY = aboveLength <= belowLength ? aboveY : belowY;
+            int laneY = chooseFeedbackLaneY(
+                    startColumn, endColumn, sourceY, targetY,
+                    aboveY, belowY, trackPitch, assignedRouteSpans);
+            assignedRouteSpans.add(new FeedbackRouteSpan(startColumn, endColumn, laneY));
 
             if (sourceX <= targetTrackX) {
                 throw new IllegalStateException(
@@ -1334,6 +1342,49 @@ public final class SchematicLayout {
             addWire(wires, targetTrackX, targetY, targetPinX, targetY);
         }
         return wires;
+    }
+
+    private static int chooseFeedbackLaneY(
+            int startColumn, int endColumn, int sourceY, int targetY,
+            int aboveY, int belowY, int trackPitch,
+            List<FeedbackRouteSpan> assigned) {
+        int bestY = 0;
+        long bestLength = Long.MAX_VALUE;
+        boolean found = false;
+        for (int offset = 0; offset <= assigned.size(); offset++) {
+            int above = aboveY - offset * trackPitch;
+            if (hasFreeFeedbackLane(startColumn, endColumn, above, assigned)) {
+                long length = (long) Math.abs(sourceY - above) + Math.abs(targetY - above);
+                if (length < bestLength) {
+                    bestLength = length;
+                    bestY = above;
+                    found = true;
+                }
+            }
+            int below = belowY + offset * trackPitch;
+            if (hasFreeFeedbackLane(startColumn, endColumn, below, assigned)) {
+                long length = (long) Math.abs(sourceY - below) + Math.abs(targetY - below);
+                if (length < bestLength) {
+                    bestLength = length;
+                    bestY = below;
+                    found = true;
+                }
+            }
+        }
+        if (!found) {
+            throw new IllegalStateException("could not allocate a non-overlapping feedback lane");
+        }
+        return bestY;
+    }
+
+    private static boolean hasFreeFeedbackLane(
+            int startColumn, int endColumn, int y, List<FeedbackRouteSpan> assigned) {
+        for (FeedbackRouteSpan lane : assigned) {
+            if (lane.y() == y && lane.overlaps(startColumn, endColumn)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void addWire(
