@@ -100,6 +100,24 @@ class TidyCircuitServiceTest {
         original.setInputValue(componentByLabel(original, "D").id(), true);
         original.setClockValue(componentByLabel(original, "CLK").id(), true);
 
+        assertTrue(FeedbackCircuitExtractor.hasFeedback(original),
+                "the master-slave NAND schematic must have reachable feedback");
+        FeedbackCircuitExtractor.Extraction extraction =
+                FeedbackCircuitExtractor.extract(original).orElseThrow();
+        SchematicLayout.LayoutResult layout =
+                new SchematicLayout(DEFINITIONS).layoutFeedback(extraction);
+        Map<String, String> newToOldIds = new java.util.LinkedHashMap<>();
+        extraction.inputComponentIds().forEach((signal, oldId) ->
+                newToOldIds.put(layout.inputComponentIds().get(signal), oldId));
+        extraction.clockComponentIds().forEach((signal, oldId) ->
+                newToOldIds.put(layout.clockComponentIds().get(signal), oldId));
+        extraction.outputComponentIds().forEach((signal, oldId) ->
+                newToOldIds.put(layout.outputComponentIds().get(signal), oldId));
+        extraction.gateComponentIds().forEach((signal, oldId) ->
+                newToOldIds.put(layout.gateComponentIds().get(signal), oldId));
+        assertDoesNotThrow(() ->
+                FeedbackConnectivityVerifier.verify(original, layout.schematic(), newToOldIds));
+
         TidyCircuitService.TidyResult result =
                 TidyCircuitService.tidy(original, DEFINITIONS);
 
