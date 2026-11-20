@@ -22,8 +22,8 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
+- feature-name-attribute: expose Input, Output, and Clock labels as an editable Name row with undo/redo and unchanged version-1 label persistence.
 - feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
-- feature-sequential-clock: add an app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, and UI tick controls.
 
 ## Next
 1. M9a attribute table with editable labels
