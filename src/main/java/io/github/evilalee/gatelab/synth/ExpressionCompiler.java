@@ -385,6 +385,10 @@ public final class ExpressionCompiler {
                 GateOperator operator = GateOperator.valueOf(binary.operator().name());
                 gates.add(new Netlist.Gate(name, operator, List.of(left, right)));
                 signal = name;
+            } else if (expression instanceof Expression.Variable variable) {
+                String input = signalForExpression(variable);
+                gates.add(new Netlist.Gate(name, GateOperator.BUFFER, List.of(input)));
+                signal = name;
             } else {
                 signal = signalForExpression(expression);
             }
