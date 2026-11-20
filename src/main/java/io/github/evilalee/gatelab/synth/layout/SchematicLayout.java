@@ -377,9 +377,9 @@ public final class SchematicLayout {
             for (FeedbackCircuitExtractor.FeedbackEdge edge : feedback.feedbackEdges()) {
                 Node source = gateNodes.get(edge.sourceGate());
                 Node target = gateNodes.get(edge.targetGate());
-                if (source == null || target == null || source.column <= target.column) {
+                if (source == null || target == null || source.column < target.column) {
                     throw new IllegalArgumentException(
-                            "feedback edge does not return to an earlier layout column: "
+                            "feedback edge does not return to the same or an earlier layout column: "
                                     + edge.sourceGate() + " -> " + edge.targetGate());
                 }
                 feedbackSourcesByChannel.computeIfAbsent(
