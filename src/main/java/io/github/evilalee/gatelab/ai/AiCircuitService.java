@@ -644,7 +644,7 @@ public final class AiCircuitService {
 
         ExpressionCompiler.Compilation compilation;
         try {
-            compilation = ExpressionCompiler.compile(source.toString(, false));
+            compilation = ExpressionCompiler.compile(source.toString(), false);
         } catch (RuntimeException exception) {
             return new Attempt(answer, null, null, null, List.of(),
                     List.of("Expression compilation failed: " + safeParseMessage(exception)));
