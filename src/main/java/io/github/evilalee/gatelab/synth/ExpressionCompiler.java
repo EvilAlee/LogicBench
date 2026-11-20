@@ -125,9 +125,12 @@ public final class ExpressionCompiler {
      * internal signal that can be referenced by later statements without a pin.
      * An unnamed statement receives the default output name "F".
      */
-    /** Defaults to rejecting raw feedback; sequential part feedback remains supported. */
+    /**
+     * Preserves the original expression-dialog/#38 feedback behavior.
+     * Callers that require a combinational DAG must use compile(source, false).
+     */
     public static Compilation compile(String source) {
-        return compile(source, false);
+        return compile(source, true);
     }
 
     /**
