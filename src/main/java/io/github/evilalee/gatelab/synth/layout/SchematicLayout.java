@@ -363,11 +363,6 @@ public final class SchematicLayout {
             assignInputColumn(inputColumnNodes, rowGap);
         } else {
             assignFeedbackInputColumns(inputColumnNodes, rowGap);
-            // Seed driver rows using the established stable column ordering, then
-            // sort feedback columns by actual driver pin-row barycentres.
-            orderColumns(columns);
-            optimizeVerticalPositions(
-                    columns, outputNodes, routeSteps, rowGap, true);
             orderFeedbackColumns(columns);
         }
         optimizeVerticalPositions(
@@ -699,27 +694,41 @@ public final class SchematicLayout {
     }
 
     private static void orderFeedbackColumns(List<List<Node>> columns) {
-        for (int column = 1; column < columns.size(); column++) {
-            List<Node> layer = columns.get(column);
-            layer.sort(Comparator
-                    .comparingDouble(SchematicLayout::driverBarycenter)
-                    .thenComparing(SchematicLayout::nodeTieBreakId));
+        for (int pass = 0; pass < 4; pass++) {
+            for (int column = 1; column < columns.size(); column++) {
+                reorderFeedbackByBarycenter(columns, column, true);
+            }
+            for (int column = columns.size() - 2; column >= 0; column--) {
+                reorderFeedbackByBarycenter(columns, column, false);
+            }
         }
     }
 
-    private static double driverBarycenter(Node node) {
-        if (node.previous.isEmpty()) {
-            return node.y;
+    /**
+     * Uses the average row rank of the connected drivers (or sinks in the
+     * backward pass). The stable component id resolves equal barycentres.
+     */
+    private static void reorderFeedbackByBarycenter(
+            List<List<Node>> columns, int column, boolean usePrevious) {
+        List<Node> layer = columns.get(column);
+        if (layer.size() < 2) {
+            return;
         }
-        long total = 0L;
-        for (Node driver : node.previous) {
-            total += sourcePinY(driver);
+        List<Node> neighborLayer = columns.get(usePrevious ? column - 1 : column + 1);
+        Map<Node, Integer> positions = new HashMap<>();
+        for (int index = 0; index < neighborLayer.size(); index++) {
+            positions.put(neighborLayer.get(index), index);
         }
-        return total / (double) node.previous.size();
-    }
-
-    private static String nodeTieBreakId(Node node) {
-        return node.componentId == null ? node.key : node.componentId;
+        Map<Node, Integer> currentPositions = new HashMap<>();
+        for (int index = 0; index < layer.size(); index++) {
+            currentPositions.put(layer.get(index), index);
+        }
+        layer.sort(Comparator
+                .comparingDouble((Node node) -> barycenter(
+                        usePrevious ? node.previous : node.next,
+                        positions, currentPositions.get(node)))
+                .thenComparing(node -> node.componentId == null
+                        ? node.key : node.componentId));
     }
 
     private static void assignInputColumn(List<Node> inputNodes, int rowGap) {
