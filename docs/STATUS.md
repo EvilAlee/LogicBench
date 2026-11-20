@@ -22,6 +22,7 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
+- feature-expression-feedback: resolve all named expression definitions independent of line order, and build feedback schematics through the existing feedback-lane layout path with connectivity verification.
 - feature-select-net: double-click wire selection expands to the full Connectivity net; net collection tests cover junction branches and separate nets.
 - feature-tidy-feedback: route reachable feedback edges on dedicated lanes and verify the rebuilt pin-to-net partition without running combinational equivalence.
 - feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
@@ -53,6 +54,7 @@
 - Undo/redo restoration preserves poke values for input ids still present; an input restored after deletion returns LOW.
 - Undefined-input mode is a persisted document option; changing it increments the modified revision and recomputes simulation, but is excluded from topology undo/redo snapshots.
 - The synthesis package is independent of UI and Schematic. It compiles validated netlists directly into the public engine Circuit API and performs reference comparison against immutable ASTs.
+- Expression compilation resolves every identifier defined by a `Name =` or `Name :=` statement across the whole source; only undefined identifiers become inputs. Feedback expressions opt into cyclic in-memory Netlists, reuse `FeedbackCircuitExtractor` and the `SchematicLayout.layoutFeedback` router, verify final connectivity, and omit combinational truth tables. The ordinary Netlist constructor and AI layout path remain DAG-only.
 - Constant-folded expression outputs use literal 0 or 1 in outputs[].source; the layout realizes these with ordinary labeled input switches (0 starts LOW, 1 starts HIGH) because no fixed-rail source component exists in the current catalogue.
 - Expression layout retains deterministic depth columns, dummy nodes for skipped columns, and four barycenter ordering sweep pairs; compact coordinates use a fixed 60-unit input pitch and three alternating pin-driven vertical sweeps within each later column, with a 40-unit minimum body clearance and closest-safe pin-row shifts to prevent cross-signal T-junctions. Per-net channel trunks use 20-unit margins and 20-unit pitch, sized to the actual trunk count.
 - Layout verification extracts actual geometric nets and requires a one-to-one partition match with the netlist before returning a Schematic; a single retry doubles layout spacing.
@@ -66,4 +68,4 @@
 - User reviews and merges each milestone PR.
 
 - AI circuit generation uses `AiConfig` in `$XDG_CONFIG_HOME/logicbench/ai.json` or `~/.config/logicbench/ai.json` on Linux and `%APPDATA%\\LogicBench\\ai.json` on Windows. Verified live answers are cached in `ai_cache.json`; six bundled examples are in `demo_prompts.json`.
-- AI-generated output is parsed only as expression text, laid out through `SchematicLayout`, and checked through the placed-schematic engine and netlist truth-table engine before it can be placed. The AI response format currently inlines intermediates; although the parser supports `:=`, a previous `=` output referenced by a later expression remains a primary input.
+- AI-generated output remains combinational: its existing response format/prompt continues to inline intermediates, and its validator still uses the DAG-only layout and truth-table verification path, which rejects cyclic answers. The old PR #25 output-reference-as-input limitation is fixed for the expression dialog; it is not a description of the AI response path.
