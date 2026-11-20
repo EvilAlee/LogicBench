@@ -546,6 +546,25 @@ class AiCircuitServiceTest {
 
 
     @Test
+    void modelAnswerWithFeedbackCycleIsStillRejectedAsCombinationalAiOutput() {
+        String cyclic = answer(List.of("Qn", "Q"), List.of(
+                new Output("Q", "NOT Qn"),
+                new Output("Qn", "NOT Q")), "0000", "0000");
+        ScriptedProvider provider = new ScriptedProvider(cyclic);
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Build a cross-coupled latch with outputs Q and Qn.");
+
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertTrue(result.attemptLog().stream()
+                .anyMatch(line -> line.contains("Schematic layout failed")
+                        && line.contains("combinational cycle detected")));
+        assertNull(result.layout());
+        assertNull(result.truthTable());
+    }
+
+    @Test
     void permutedTwoBitAdderWrongBitProducesNamedAssignmentFeedback() throws Exception {
         List<String> declaredOrder = List.of("A1", "A0", "B1", "B0");
         ScriptedProvider provider = new ScriptedProvider(
