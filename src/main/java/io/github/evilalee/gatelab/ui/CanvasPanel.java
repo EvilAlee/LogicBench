@@ -376,6 +376,8 @@ public final class CanvasPanel extends JPanel {
                         ? next.inputValue(component.id())
                         : component.label().equals("1");
                 schematic.setInputValue(component.id(), high);
+            } else if (preserveInputValues && "clock".equals(component.typeId())) {
+                schematic.setClockValue(component.id(), next.clockValue(component.id()));
             }
         }
         if (!history.commit(schematic)) {
