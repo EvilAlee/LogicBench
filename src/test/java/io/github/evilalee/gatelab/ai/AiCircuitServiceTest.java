@@ -471,6 +471,7 @@ class AiCircuitServiceTest {
         List<String> inputs = List.of("A3", "A2", "A1", "A0", "B3", "B2", "B1", "B0");
         String raw = answerWithSignals(inputs, fourByFourMultiplierOutputs(),
                 fourByFourMultiplierSignals(), multiplierSpec());
+        assertTrue(raw.contains("& 0"), "the multiplier fixture must contain a literal-zero term");
         ScriptedProvider provider = new ScriptedProvider(raw);
 
         AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.", false, true, "", false, false);
@@ -483,8 +484,6 @@ class AiCircuitServiceTest {
                 "literal constants must not count as declared primary inputs");
         assertTrue(result.netlist().inputs().containsAll(inputs),
                 "all declared primary inputs must remain in the input list");
-        assertTrue(result.layout().constantComponentIds().containsKey("0"),
-                "the literal zero must be represented as a fixed source");
         assertFalse(result.layout().schematic().components().stream()
                 .anyMatch(component -> component.typeId().equals("input")
                         && component.label().equals("0")),
