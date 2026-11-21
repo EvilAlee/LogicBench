@@ -5,6 +5,8 @@ public final class AiCircuitLimits {
     public static final int MAX_INPUTS = 10;
     public static final int MAX_OUTPUTS = 16;
     public static final int MAX_GATES = 400;
+    public static final int MAX_SIGNALS = 160;
+    public static final int MAX_EXPRESSION_LENGTH = 300;
     public static final int MAX_EXPRESSION_TEXT = 3_000;
     public static final int MAX_SPEC_RULES = 16;
     public static final int MAX_EXPECTED_ROWS = 64;
