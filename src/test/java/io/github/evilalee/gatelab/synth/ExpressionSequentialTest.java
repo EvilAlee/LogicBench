@@ -103,12 +103,12 @@ class ExpressionSequentialTest {
 
     @Test
     void parserLeavesLibraryClockPortValidationToComponentResolution() {
-        Expression.ComponentCall call = assertInstanceOf(
-                Expression.ComponentCall.class,
-                ExpressionParser.parse("DFF(D, NOT CLK)"));
+        Expression parsed = ExpressionParser.parse("DFF(D, NOT CLK)");
+        assertTrue(parsed instanceof Expression.ComponentCall);
+        Expression.ComponentCall call = (Expression.ComponentCall) parsed;
         assertEquals("DFF", call.componentName());
         assertEquals(2, call.arguments().size());
-        assertInstanceOf(Expression.Unary.class, call.arguments().getLast());
+        assertTrue(call.arguments().getLast() instanceof Expression.Unary);
     }
 
     @Test
