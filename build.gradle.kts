@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     java
     application
@@ -31,9 +33,22 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("slow")
+    }
     testLogging {
         events("passed", "skipped", "failed")
         showStandardStreams = true
     }
+}
+
+tasks.register<Test>("slowTest") {
+    description = "Runs tests tagged with the slow JUnit tag."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("slow")
+    }
+    shouldRunAfter(tasks.test)
 }
