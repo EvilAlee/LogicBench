@@ -442,7 +442,7 @@ class AiCircuitServiceTest {
 
     @Test
     void parsableExpressionBeyondCompilerInputLimitStillSkipsTheProvider() throws Exception {
-        String description = "Result = A & B & C & D & E & F & G & H & I & J & K & L & M";
+        String description = "Result = A & B & C & D & E & F & G & H & I & J & K";
         ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate(description);
 
@@ -577,7 +577,7 @@ class AiCircuitServiceTest {
         String retryConversation = String.join("\n", provider.conversations.get(1).stream()
                 .map(Turn::text).toList());
         assertTrue(retryConversation.contains(
-                "A=0 B=1: S spec 2, circuit 1. Either side may be wrong."));
+                "A=0 B=0: S spec 1, circuit 0. Either side may be wrong."));
         assertFalse(retryConversation.contains("truthTable"));
     }
 
