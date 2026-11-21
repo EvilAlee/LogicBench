@@ -11,6 +11,7 @@ import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.SequenceRunner;
+import io.github.evilalee.gatelab.synth.layout.TidyCircuitService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -161,6 +162,42 @@ class ComponentExpressionCompilerTest {
                 IllegalArgumentException.class,
                 () -> compile(library, "Q = DFF(D, NOT CLK)"));
         assertTrue(error.getMessage().contains("clock input must be a plain identifier"));
+    }
+
+    @Test
+    void oneOutputSequentialCallUsesItsDeclaredPrimaryOutput(@TempDir Path directory)
+            throws IOException {
+        ComponentLibrary library = ComponentLibrary.load(GATES, directory);
+        ComponentExpressionCompiler.Compilation compilation =
+                compile(library, "Q = DFF(D, CLK)");
+
+        assertTrue(compilation.hasSequentialInstances());
+        assertEquals(1, compilation.schematic().componentInstances().size());
+        ComponentInstance instance = compilation.schematic().componentInstances().getFirst();
+        assertEquals("Q", instance.id());
+        assertEquals("DFF", instance.definitionName());
+        assertEquals("Q", library.get("DFF").primaryOutput());
+        SchematicCompiler.SimulationResult result =
+                SchematicCompiler.compileAndSettle(compilation.schematic());
+        assertNotNull(result.outputValues().get(compilation.outputComponentIds().get("Q")));
+    }
+
+    @Test
+    void tidyRefusesInstanceBearingSchematicsWithAnExplicitMessage(@TempDir Path directory)
+            throws IOException {
+        ComponentLibrary library = ComponentLibrary.load(GATES, directory);
+        ComponentExpressionCompiler.Compilation compilation =
+                compile(library, """
+                        U0 := FA(A, B, CIN)
+                        S = U0.S
+                        COUT = U0.COUT
+                        """);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> TidyCircuitService.tidy(compilation.schematic(), GATES));
+        assertTrue(error.getMessage().contains(
+                "Tidy circuit does not support component instances"), error.getMessage());
     }
 
     @Test
