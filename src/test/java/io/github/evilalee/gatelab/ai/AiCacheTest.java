@@ -25,6 +25,12 @@ class AiCacheTest {
              "truthTable":[{"output":"F","bits":"0001"}]}
             """;
 
+    private static final String AND_ANSWER_WITH_SPEC = """
+            {"summary":"AND gate","inputs":["A","B"],
+             "outputs":[{"name":"F","expression":"A & B"}],
+             "spec":{"buses":{},"rules":[{"out":"F","expr":"A & B"}]}}
+            """;
+
     private AiCircuitService service(AiProvider provider, AiCache cache) {
         return new AiCircuitService(provider, GateLibrary.load().all(), cache);
     }
@@ -41,7 +47,7 @@ class AiCacheTest {
 
         for (String description : cache.bundledDescriptions()) {
             AiCircuitService.Result result = service.generate(description, true);
-            assertEquals(AiCircuitService.Status.VERIFIED, result.status(), description);
+            assertEquals(AiCircuitService.Status.BUILT, result.status(), description);
             assertTrue(result.fromCache(), description);
             assertNotNull(result.netlist(), description);
             assertNotNull(result.layout(), description);
@@ -67,17 +73,17 @@ class AiCacheTest {
                 (prompt, conversation, schema) -> { fail("cache-only should not call provider"); return ""; },
                 cache).generate(FULL_ADDER, true);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals("user override", result.summary());
         assertEquals(AiCache.Source.USER, cache.lookupCandidates(FULL_ADDER).getFirst().source());
     }
 
     @Test
-    void verifiedLiveAnswerIsStoredInTheUserCache() throws Exception {
+    void specVerifiedLiveAnswerIsStoredInTheUserCache() throws Exception {
         AiCache cache = new AiCache(directory);
         String description = "Build a two-input AND gate with inputs A and B.";
-        AiProvider provider = (prompt, conversation, schema) -> AND_ANSWER;
+        AiProvider provider = (prompt, conversation, schema) -> AND_ANSWER_WITH_SPEC;
         AiCircuitService.Result result = service(provider, cache).generate(description);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
@@ -86,6 +92,7 @@ class AiCacheTest {
         String saved = Files.readString(cache.file());
         assertFalse(saved.contains("test-secret"));
         assertTrue(saved.contains(AiCache.normalizeDescription(description)));
+        assertFalse(saved.contains("truthTable"));
     }
 
     @Test
@@ -93,7 +100,7 @@ class AiCacheTest {
         AiCache cache = new AiCache(directory);
         String secret = "sensitive-key";
         String description = "Build an AND gate; token=" + secret;
-        String answerWithSecret = AND_ANSWER.replace("AND gate", secret + " AND gate");
+        String answerWithSecret = AND_ANSWER_WITH_SPEC.replace("AND gate", secret + " AND gate");
         AiProvider provider = new AiProvider() {
             @Override
             public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
@@ -124,7 +131,7 @@ class AiCacheTest {
         };
         AiCircuitService.Result result = service(provider, cache).generate(FULL_ADDER, true);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals(0, calls[0]);
         assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("FROM CACHE")));
@@ -140,7 +147,7 @@ class AiCacheTest {
                 (prompt, conversation, schema) -> { fail("bundled entry should pass"); return ""; },
                 cache).generate(FULL_ADDER, true);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals("Full adder with sum and carry outputs.", result.summary());
         assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("Ignored invalid user cache")));
@@ -161,7 +168,7 @@ class AiCacheTest {
         AiCircuitService.Result result = new AiCircuitService(
                 provider, GateLibrary.load().all(), cache, delays::add).generate(description);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals(0, result.attemptCount());
         assertEquals(3, calls[0]);
@@ -199,7 +206,7 @@ class AiCacheTest {
 
         AiCircuitService.Result result = service(provider, cache).generate(description);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals(List.of("primary-model"), calls);
         assertTrue(result.attemptLog().stream().anyMatch(line ->
@@ -227,7 +234,7 @@ class AiCacheTest {
 
         AiCircuitService.Result result = service(neverCall, cache).generate(description, true);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertFalse(result.summary().contains(secret));
         assertTrue(result.summary().contains("***"));
@@ -264,7 +271,7 @@ class AiCacheTest {
         AiCircuitService.Result result = new AiCircuitService(
                 provider, GateLibrary.load().all(), cache, delays::add).generate(description);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals(0, result.attemptCount());
         assertEquals(3, calls[0]);
