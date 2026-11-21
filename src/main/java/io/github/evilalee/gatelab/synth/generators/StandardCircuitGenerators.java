@@ -17,7 +17,7 @@ public final class StandardCircuitGenerators {
 
     private record Definition(
             String id,
-            Map<String, Parameter> parameters,
+            Map<String, TemplateGenerator.Parameter> parameters,
             Function<Map<String, String>, GeneratedCircuit> builder) implements TemplateGenerator {
         private Definition {
             parameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters));
@@ -35,7 +35,7 @@ public final class StandardCircuitGenerators {
                         + " invalid; missing=" + missing + ", unexpected=" + unexpected);
             }
             Map<String, String> normalized = new LinkedHashMap<>();
-            for (Map.Entry<String, Parameter> parameter : parameters.entrySet()) {
+            for (Map.Entry<String, TemplateGenerator.Parameter> parameter : parameters.entrySet()) {
                 String value = values.get(parameter.getKey());
                 if (!parameter.getValue().accepts(value)) {
                     throw new IllegalArgumentException("parameter '" + parameter.getKey()
@@ -52,36 +52,36 @@ public final class StandardCircuitGenerators {
 
     private static final List<TemplateGenerator> GENERATORS = List.of(
             definition("ripple_adder", Map.of(
-                    "n", Parameter.integerRange(1, 4),
-                    "carryIn", Parameter.choices("yes", "no")), StandardCircuitGenerators::rippleAdder),
-            definition("subtractor", Map.of("n", Parameter.integerRange(1, 4)),
+                    "n", TemplateGenerator.Parameter.integerRange(1, 4),
+                    "carryIn", TemplateGenerator.Parameter.choices("yes", "no")), StandardCircuitGenerators::rippleAdder),
+            definition("subtractor", Map.of("n", TemplateGenerator.Parameter.integerRange(1, 4)),
                     StandardCircuitGenerators::subtractor),
-            definition("comparator", Map.of("n", Parameter.integerRange(1, 4)),
+            definition("comparator", Map.of("n", TemplateGenerator.Parameter.integerRange(1, 4)),
                     StandardCircuitGenerators::comparator),
             definition("array_multiplier", Map.of(
-                    "n", Parameter.integerRange(1, 4),
-                    "m", Parameter.integerRange(1, 4)), StandardCircuitGenerators::arrayMultiplier),
+                    "n", TemplateGenerator.Parameter.integerRange(1, 4),
+                    "m", TemplateGenerator.Parameter.integerRange(1, 4)), StandardCircuitGenerators::arrayMultiplier),
             // k=3 requires 11 one-bit inputs (8 data + 3 select), exceeding the shared 10-input cap.
-            definition("mux", Map.of("k", Parameter.integerRange(1, 2)),
+            definition("mux", Map.of("k", TemplateGenerator.Parameter.integerRange(1, 2)),
                     StandardCircuitGenerators::mux),
             definition("decoder", Map.of(
-                    "n", Parameter.integerRange(1, 3),
-                    "enable", Parameter.choices("yes", "no")), StandardCircuitGenerators::decoder),
+                    "n", TemplateGenerator.Parameter.integerRange(1, 3),
+                    "enable", TemplateGenerator.Parameter.choices("yes", "no")), StandardCircuitGenerators::decoder),
             definition("parity", Map.of(
-                    "n", Parameter.integerRange(2, 8),
-                    "mode", Parameter.choices("even", "odd")), StandardCircuitGenerators::parity),
-            definition("majority", Map.of("n", Parameter.choices("3", "5")),
+                    "n", TemplateGenerator.Parameter.integerRange(2, 8),
+                    "mode", TemplateGenerator.Parameter.choices("even", "odd")), StandardCircuitGenerators::parity),
+            definition("majority", Map.of("n", TemplateGenerator.Parameter.choices("3", "5")),
                     StandardCircuitGenerators::majority),
-            definition("gray_to_binary", Map.of("n", Parameter.integerRange(2, 4)),
+            definition("gray_to_binary", Map.of("n", TemplateGenerator.Parameter.integerRange(2, 4)),
                     StandardCircuitGenerators::grayToBinary),
-            definition("binary_to_gray", Map.of("n", Parameter.integerRange(2, 4)),
+            definition("binary_to_gray", Map.of("n", TemplateGenerator.Parameter.integerRange(2, 4)),
                     StandardCircuitGenerators::binaryToGray)
     );
 
     private StandardCircuitGenerators() { }
 
     private static Definition definition(
-            String id, Map<String, Parameter> parameters,
+            String id, Map<String, TemplateGenerator.Parameter> parameters,
             Function<Map<String, String>, GeneratedCircuit> builder) {
         return new Definition(id, parameters, builder);
     }
