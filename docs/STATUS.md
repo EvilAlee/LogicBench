@@ -22,6 +22,7 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
+- fix-instance-selection: component box instances participate in mixed click/marquee selection, drag, rotate, delete and undo/redo; instance pins use validated wire-follow routing.
 - feature-expression-feedback: resolve all named expression definitions independent of line order, and build feedback schematics through the existing feedback-lane layout path with connectivity verification.
 - feature-select-net: double-click wire selection expands to the full Connectivity net; net collection tests cover junction branches and separate nets.
 - feature-tidy-feedback: route reachable feedback edges on dedicated lanes and verify the rebuilt pin-to-net partition without running combinational equivalence.

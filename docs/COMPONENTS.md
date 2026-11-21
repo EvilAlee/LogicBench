@@ -130,6 +130,21 @@ supports pan and zoom. Nested instances can be opened in another read-only
 viewer using the same double-click or context-menu action. The source document
 is not changed by viewing a definition.
 
+In the Edit tool, clicking inside a component box selects the instance; clicking
+on one of its pins starts a wire instead. Marquee selection includes instances
+whose box bounds intersect the rectangle, and Shift/Ctrl can add or toggle
+instances in mixed selections with gates and wires. Dragging a selected instance
+moves it with its selected wires, while connected stationary wires use the
+same validated orthogonal follow-routing as gates. Arrow keys rotate selected
+instances to the corresponding facing; attached wires follow the changed pin
+positions. Delete removes an instance and the wire nets attached to its pins.
+These edits are undoable and redoable. Selecting an instance does not alter its
+simulation result.
+
+The Attribute table currently does not expose component-instance name or
+rotation fields; instance selection and geometry operations work without those
+editor fields.
+
 A standalone definition JSON document has this version-1 shape:
 
 ```json
