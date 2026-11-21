@@ -1,5 +1,7 @@
 package io.github.evilalee.gatelab.io;
 
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
@@ -9,6 +11,7 @@ import io.github.evilalee.gatelab.model.WireSegment;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -128,6 +131,65 @@ class SchematicJsonTest {
         assertEquals(legacyJson, SchematicJson.toJson(reloadedLegacy));
         assertTrue(reloadedLegacy.components().stream()
                 .noneMatch(component -> component.typeId().equals("clock")));
+    }
+
+    @Test
+    void instancesAndTheirDefinitionsRoundTripInTheNewOptionalSections(@org.junit.jupiter.api.io.TempDir Path userDirectory)
+            throws Exception {
+        ComponentLibrary library = ComponentLibrary.load(DEFINITIONS, userDirectory);
+        ComponentDefinition halfAdder = library.get("HA");
+        Schematic original = new Schematic(DEFINITIONS);
+        original.addInstance(halfAdder, "sum", 200, 300, Facing.EAST);
+
+        String json = SchematicJson.toJson(original);
+        assertTrue(json.contains("\"instances\""));
+        assertTrue(json.contains("\"componentDefinitions\""));
+        assertFalse(json.contains("\"components\" : ["));
+
+        SchematicJson.LoadResult loaded = SchematicJson.fromJsonWithNotices(
+                json, DEFINITIONS, library);
+        assertTrue(loaded.notices().isEmpty());
+        assertEquals(original.componentInstances(), loaded.schematic().componentInstances());
+        assertEquals(halfAdder.hash(),
+                loaded.schematic().componentDefinitionFor(
+                        loaded.schematic().componentInstances().getFirst()).hash());
+        assertEquals(json, SchematicJson.toJson(loaded.schematic()));
+    }
+
+    @Test
+    void embeddedDefinitionWinsOverDifferentLibraryHashAndRecordsNotice(
+            @org.junit.jupiter.api.io.TempDir Path userDirectory) throws Exception {
+        ComponentLibrary library = ComponentLibrary.load(DEFINITIONS, userDirectory);
+        ComponentDefinition libraryHalfAdder = library.get("HA");
+        ComponentDefinition embeddedHalfAdder = new ComponentDefinition(
+                libraryHalfAdder.name(), "Document-pinned half adder revision",
+                libraryHalfAdder.category(), libraryHalfAdder.ports(),
+                libraryHalfAdder.primaryOutput(), libraryHalfAdder.internalCircuit());
+        assertNotEquals(libraryHalfAdder.hash(), embeddedHalfAdder.hash());
+
+        Schematic original = new Schematic(DEFINITIONS);
+        original.addInstance(embeddedHalfAdder, "U1", 200, 300, Facing.EAST);
+        String json = SchematicJson.toJson(original);
+
+        SchematicJson.LoadResult loaded = SchematicJson.fromJsonWithNotices(
+                json, DEFINITIONS, library);
+
+        assertEquals(1, loaded.notices().size());
+        assertTrue(loaded.notices().getFirst().contains("overrides library version"));
+        ComponentInstance instance = loaded.schematic().componentInstances().getFirst();
+        assertEquals(embeddedHalfAdder.hash(),
+                loaded.schematic().componentDefinitionFor(instance).hash());
+        assertEquals(embeddedHalfAdder.description(),
+                loaded.schematic().componentDefinitionFor(instance).description());
+    }
+
+    @Test
+    void documentsWithoutInstancesDoNotEmitComponentDefinitionSections() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        schematic.add("and", 100, 100, Facing.EAST);
+        String json = SchematicJson.toJson(schematic);
+        assertFalse(json.contains("\"instances\""));
+        assertFalse(json.contains("\"componentDefinitions\""));
     }
 
     @Test

@@ -2,6 +2,8 @@ package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -428,6 +430,14 @@ public final class CanvasPanel extends JPanel {
             minY = Math.min(minY, component.y() + bounds.y());
             maxX = Math.max(maxX, component.x() + bounds.x() + bounds.width());
             maxY = Math.max(maxY, component.y() + bounds.y() + bounds.height());
+        }
+        for (ComponentInstance instance : schematic.componentInstances()) {
+            ComponentInstance.Geometry bounds =
+                    instance.geometry(schematic.componentDefinitionFor(instance));
+            minX = Math.min(minX, instance.x());
+            minY = Math.min(minY, instance.y());
+            maxX = Math.max(maxX, instance.x() + bounds.width());
+            maxY = Math.max(maxY, instance.y() + bounds.height());
         }
         for (WireSegment wire : schematic.wires()) {
             minX = Math.min(minX, Math.min(wire.x1(), wire.x2()));
@@ -1602,6 +1612,16 @@ public final class CanvasPanel extends JPanel {
                 }
             }
 
+            for (ComponentInstance instance : schematic.componentInstances()) {
+                ComponentDefinition definition = schematic.componentDefinitionFor(instance);
+                ComponentInstance.Geometry geometry = instance.geometry(definition);
+                if (screenClip.intersects(componentInstanceScreenBounds(
+                        instance, 0, 0, DIRTY_REGION_MARGIN + 12))) {
+                    paintComponentInstancePlaceholder(
+                            worldGraphics, instance, definition, geometry);
+                }
+            }
+
             worldGraphics.setColor(Color.BLACK);
             for (Connectivity.Point junction : simulationResult.topology().junctions()) {
                 Point2D.Double screen = transform.worldToScreen(junction.x(), junction.y());
@@ -1654,6 +1674,65 @@ public final class CanvasPanel extends JPanel {
             } finally {
                 status.dispose();
             }
+        }
+    }
+
+    /** Draws a deliberately plain black-box body and its derived terminals. */
+    private void paintComponentInstancePlaceholder(
+            Graphics2D graphics,
+            ComponentInstance instance,
+            ComponentDefinition definition,
+            ComponentInstance.Geometry geometry) {
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            int x = instance.x();
+            int y = instance.y();
+            g2.setColor(Color.WHITE);
+            g2.fillRect(x, y, geometry.width(), geometry.height());
+            g2.setColor(Color.DARK_GRAY);
+            g2.setStroke(new BasicStroke((float) (1.4 / transform.scale())));
+            g2.drawRect(x, y, geometry.width(), geometry.height());
+
+            Font titleFont = new Font(Font.SANS_SERIF, Font.BOLD, 12);
+            g2.setFont(titleFont);
+            java.awt.FontMetrics titleMetrics = g2.getFontMetrics();
+            String title = definition.name();
+            g2.drawString(title,
+                    x + (geometry.width() - titleMetrics.stringWidth(title)) / 2,
+                    y + Math.max(titleMetrics.getAscent() + 4, geometry.height() / 2));
+            if (!instance.label().isEmpty()) {
+                Font labelFont = new Font(Font.SANS_SERIF, Font.PLAIN, 9);
+                g2.setFont(labelFont);
+                java.awt.FontMetrics labelMetrics = g2.getFontMetrics();
+                g2.drawString(instance.label(),
+                        x + (geometry.width() - labelMetrics.stringWidth(instance.label())) / 2,
+                        y + geometry.height() - 5);
+            }
+
+            g2.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 8));
+            java.awt.FontMetrics pinMetrics = g2.getFontMetrics();
+            for (ComponentInstance.PinGeometry pin : geometry.pins()) {
+                int outward = pin.direction() == ComponentDefinition.Direction.IN ? -9 : 9;
+                GateGeometry.Offset direction = GateGeometry.rotate(
+                        new GateGeometry.Offset(outward, 0), instance.rotation());
+                int endX = pin.x() + direction.x();
+                int endY = pin.y() + direction.y();
+                g2.drawLine(pin.x(), pin.y(), endX, endY);
+                g2.fillOval(pin.x() - 2, pin.y() - 2, 4, 4);
+                if (pin.isClock()) {
+                    // The square marker distinguishes an externally driven Clock input.
+                    g2.drawRect(pin.x() - 4, pin.y() - 4, 8, 8);
+                }
+                int textX = endX + (direction.x() < 0
+                        ? -pinMetrics.stringWidth(pin.name()) - 3
+                        : direction.x() > 0 ? 3 : -pinMetrics.stringWidth(pin.name()) / 2);
+                int textY = endY + (direction.y() < 0
+                        ? -2 : direction.y() > 0 ? pinMetrics.getAscent() + 2
+                        : pinMetrics.getAscent() / 2);
+                g2.drawString(pin.name(), textX, textY);
+            }
+        } finally {
+            g2.dispose();
         }
     }
 
@@ -1933,6 +2012,15 @@ public final class CanvasPanel extends JPanel {
         GateDef definition = schematic.definitionFor(component);
         return componentScreenBounds(definition, component.facing(),
                 component.x() + deltaX, component.y() + deltaY, margin);
+    }
+
+    private Rectangle componentInstanceScreenBounds(
+            ComponentInstance instance, int deltaX, int deltaY, int margin) {
+        ComponentInstance.Geometry geometry =
+                instance.geometry(schematic.componentDefinitionFor(instance));
+        return worldBoundsToScreen(new GateGeometry.Bounds(
+                instance.x() + deltaX, instance.y() + deltaY,
+                geometry.width(), geometry.height()), margin);
     }
 
     private Rectangle componentScreenBounds(

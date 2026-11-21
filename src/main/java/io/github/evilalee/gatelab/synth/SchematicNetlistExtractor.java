@@ -44,6 +44,10 @@ public final class SchematicNetlistExtractor {
      */
     public static Extraction extract(Schematic schematic) {
         Objects.requireNonNull(schematic, "schematic");
+        if (!schematic.componentInstances().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Expression analysis does not support component instances.");
+        }
         List<PlacedComponent> components = schematic.components();
         Map<String, PlacedComponent> byId = new LinkedHashMap<>();
         List<PlacedComponent> inputs = new ArrayList<>();
