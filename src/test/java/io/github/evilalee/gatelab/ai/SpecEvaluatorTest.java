@@ -29,9 +29,44 @@ class SpecEvaluatorTest {
     }
 
     private static SpecEvaluator integerSpec(String expression) {
-        List<String> outputs = new java.util.ArrayList<>();
-        for (int index = 31; index >= 0; index--) outputs.add("Y" + index);
-        return spec(List.of("A", "B"), outputs, expression);
+        JsonObject root = new JsonObject();
+        JsonObject buses = new JsonObject();
+        JsonArray aPins = new JsonArray();
+        JsonArray bPins = new JsonArray();
+        JsonArray yPins = new JsonArray();
+        for (int index = 63; index >= 0; index--) {
+            aPins.add("A" + index);
+            bPins.add("B" + index);
+            yPins.add("Y" + index);
+        }
+        buses.add("A", aPins);
+        buses.add("B", bPins);
+        buses.add("Y", yPins);
+        root.add("buses", buses);
+        JsonArray rules = new JsonArray();
+        JsonObject rule = new JsonObject();
+        rule.addProperty("out", "Y");
+        rule.addProperty("expr", expression);
+        rules.add(rule);
+        root.add("rules", rules);
+        return SpecEvaluator.parse(root,
+                java.util.stream.IntStream.iterate(63, i -> i >= 0, i -> i - 1)
+                        .mapToObj(i -> "A" + i).toList()
+                        .stream().collect(java.util.stream.Stream.concat(
+                                java.util.stream.IntStream.iterate(63, i -> i >= 0, i -> i - 1)
+                                        .mapToObj(i -> "B" + i),
+                                java.util.stream.Stream::concat).toList()),
+                java.util.stream.IntStream.iterate(63, i -> i >= 0, i -> i - 1)
+                        .mapToObj(i -> "Y" + i).toList());
+    }
+
+    private static Map<String, Boolean> longInputs(long a, long b) {
+        Map<String, Boolean> values = new LinkedHashMap<>();
+        for (int index = 63; index >= 0; index--) {
+            values.put("A" + index, ((a >>> index) & 1L) != 0);
+            values.put("B" + index, ((b >>> index) & 1L) != 0);
+        }
+        return values;
     }
 
     private static Map<String, Boolean> values(Object... pairs) {
@@ -44,8 +79,7 @@ class SpecEvaluatorTest {
 
     private static long oneBit(String expression, long a, long b) {
         SpecEvaluator evaluator = integerSpec(expression);
-        return evaluator.evaluate(values("A", a != 0, "B", b != 0))
-                .outputBusValues().get("Y");
+        return evaluator.evaluate(longInputs(a, b)).outputBusValues().get("Y");
     }
 
     @Test
