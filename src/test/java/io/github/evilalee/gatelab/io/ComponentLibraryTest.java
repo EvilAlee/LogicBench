@@ -269,6 +269,10 @@ class ComponentLibraryTest {
         route(schematic, pin(schematic, "d1-and", "out"), d1Pin, route++);
         route(schematic, pin(schematic, "clock", "out"), clk0Pin, route++);
         route(schematic, pin(schematic, "clock", "out"), clk1Pin, route);
+        System.out.println("COUNTER_PIN_COORDINATES: " + schematic.pinPositions().stream()
+                .map(pin -> pin.componentId() + "." + pin.pinId()
+                        + "@" + pin.x() + "," + pin.y())
+                .sorted().toList());
         return schematic;
     }
 
@@ -365,6 +369,11 @@ class ComponentLibraryTest {
         int laneY = 1200 + index * 20;
         int startX = outwardTrackX(schematic, start);
         int endX = outwardTrackX(schematic, end);
+        System.out.println("COUNTER_ROUTE: " + start.componentId() + "." + start.pinId()
+                + "@" + start.x() + "," + start.y() + " -> "
+                + end.componentId() + "." + end.pinId()
+                + "@" + end.x() + "," + end.y()
+                + " trackX=" + startX + "," + endX + " laneY=" + laneY);
         addWire(schematic, start.x(), start.y(), startX, start.y());
         addWire(schematic, startX, start.y(), startX, laneY);
         addWire(schematic, startX, laneY, endX, laneY);
