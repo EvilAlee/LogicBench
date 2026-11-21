@@ -244,10 +244,10 @@ public final class SchematicLayout {
     record FeedbackLayoutRun(
             LayoutResult result,
             boolean legacyFallbackUsed,
-            String fallbackReason) {
+            String selectionDescription) {
         FeedbackLayoutRun {
             Objects.requireNonNull(result, "result");
-            fallbackReason = Objects.requireNonNull(fallbackReason, "fallbackReason");
+            selectionDescription = Objects.requireNonNull(selectionDescription, "selectionDescription");
         }
     }
 

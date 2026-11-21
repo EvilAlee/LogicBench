@@ -70,7 +70,8 @@ class FeedbackCircuitLayoutMetricsTest {
             Metrics baseline = measure(legacy);
             String description = name + " legacy=" + baseline.display()
                     + " compact=" + actual.display()
-                    + " legacyFallback=" + compactRun.legacyFallbackUsed();
+                    + " legacyFallback=" + compactRun.legacyFallbackUsed()
+                    + " " + compactRun.selectionDescription();
 
             return DynamicTest.dynamicTest(description, () -> {
                 SchematicLayout.FeedbackLayoutRun repeated = layout.layoutFeedbackRun(
@@ -80,6 +81,8 @@ class FeedbackCircuitLayoutMetricsTest {
                         "feedback layout must be deterministic across runs");
                 assertEquals(compactRun.legacyFallbackUsed(), repeated.legacyFallbackUsed(),
                         "fallback selection must be deterministic");
+                assertEquals(compactRun.selectionDescription(), repeated.selectionDescription(),
+                        "the selected compact candidate must be deterministic");
                 assertNoOverlaps(compact);
                 Connectivity.Result topology = Connectivity.analyze(
                         compact.pinPositions(), compact.wires());
@@ -124,7 +127,7 @@ class FeedbackCircuitLayoutMetricsTest {
 
         assertTrue(forced.legacyFallbackUsed(),
                 "a failed compact attempt and doubled-spacing retry must select legacy mode");
-        assertTrue(forced.fallbackReason().contains("forced compact failure"));
+        assertTrue(forced.selectionDescription().contains("forced compact failure"));
         assertEquals(SchematicSnapshot.capture(expectedLegacy),
                 SchematicSnapshot.capture(forced.result().schematic()),
                 "fallback schematic must be the preserved legacy layout");
