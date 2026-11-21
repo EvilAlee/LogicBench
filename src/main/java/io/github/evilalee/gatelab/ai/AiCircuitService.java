@@ -252,7 +252,7 @@ public final class AiCircuitService {
                 You write Boolean circuits. Return ONLY JSON for the supplied schema:
                 summary, inputs, outputs, optional signals, optional spec. Never output a
                 truth table. Use only declared primary inputs. Limits: 10 inputs, 16 outputs,
-                400 gates, 3000 total expression characters, 16 spec rules.
+                400 gates, 3000 total expression characters, 16 spec rules; user rows max 64.
 
                 Expressions use identifiers [A-Za-z][A-Za-z0-9_]*, constants 0/1, parentheses,
                 prefix !, ~, NOT, postfix ', AND &, *, AND, NAND, XOR ^, XNOR, OR |, +, NOR.
