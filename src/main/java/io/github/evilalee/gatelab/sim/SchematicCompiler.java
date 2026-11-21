@@ -1,6 +1,8 @@
 package io.github.evilalee.gatelab.sim;
 
 import io.github.evilalee.gatelab.model.Circuit;
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Gate;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -58,6 +60,13 @@ public final class SchematicCompiler {
         Map<String, Gate> gates = new LinkedHashMap<>();
         Set<String> gateIds = new LinkedHashSet<>();
         Set<PinKey> ignoredInputs = new HashSet<>();
+        Set<PinKey> inactiveInstancePins = new HashSet<>();
+        for (ComponentInstance instance : schematic.componentInstances()) {
+            ComponentDefinition instanceDefinition = schematic.componentDefinitionFor(instance);
+            for (ComponentDefinition.Port port : instanceDefinition.ports()) {
+                inactiveInstancePins.add(new PinKey(instance.id(), port.name()));
+            }
+        }
         boolean ignoreBareInputs =
                 schematic.undefinedInputMode() == UndefinedInputMode.IGNORE;
 
@@ -130,7 +139,9 @@ public final class SchematicCompiler {
             for (Connectivity.PinPosition position : net.pins()) {
                 PinKey key = new PinKey(position.componentId(), position.pinId());
                 Pin current = pinsByKey.get(key);
-                if (current == null && ignoredInputs.contains(key)) {
+                if (current == null
+                        && (ignoredInputs.contains(key) || inactiveInstancePins.contains(key))) {
+                    // Instance terminals become active engine pins in the flattening checkpoint.
                     continue;
                 }
                 if (current == null) {
