@@ -232,7 +232,7 @@ class CircuitDescriberTest {
                 .toList();
 
         assertOutputsEqual(originalResult, rebuiltResult, outputs, layout,
-                circuitName + " initial", original, description.text());
+                circuitName + " initial");
         Random random = new Random(seed);
         for (int step = 0; step < 200; step++) {
             for (PlacedComponent source : sources) {
@@ -250,7 +250,7 @@ class CircuitDescriberTest {
             originalResult = SchematicCompiler.compileAndSettle(original, originalResult);
             rebuiltResult = SchematicCompiler.compileAndSettle(rebuilt, rebuiltResult);
             assertOutputsEqual(originalResult, rebuiltResult, outputs, layout,
-                    circuitName + " step " + step, original, description.text());
+                    circuitName + " step " + step);
         }
     }
 

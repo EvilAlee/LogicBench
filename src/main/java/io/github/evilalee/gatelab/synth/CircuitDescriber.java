@@ -1,6 +1,5 @@
 package io.github.evilalee.gatelab.synth;
 
-import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
