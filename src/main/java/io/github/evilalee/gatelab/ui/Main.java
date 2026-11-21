@@ -499,9 +499,13 @@ public final class Main {
 
         Path selected = chooser.getSelectedFile().toPath();
         final Schematic loaded;
+        final List<String> definitionNotices;
         try {
             String json = Files.readString(selected);
-            loaded = SchematicJson.fromJson(json, GateLibrary.load().all());
+            SchematicJson.LoadResult result = SchematicJson.fromJsonWithNotices(
+                    json, GateLibrary.load().all(), canvas.componentLibrary());
+            loaded = result.schematic();
+            definitionNotices = result.notices();
         } catch (IOException | IllegalArgumentException exception) {
             showFileError(frame, "Could not open schematic", exception);
             return;
@@ -514,6 +518,13 @@ public final class Main {
         document.savedModificationCount = loaded.modificationCount();
         canvas.clearSignalHistory();
         canvas.replaceSchematic(loaded);
+        if (!definitionNotices.isEmpty()) {
+            JOptionPane.showMessageDialog(
+                    frame,
+                    String.join(System.lineSeparator(), definitionNotices),
+                    "Component definition versions",
+                    JOptionPane.WARNING_MESSAGE);
+        }
     }
 
     private static boolean saveDocument(
