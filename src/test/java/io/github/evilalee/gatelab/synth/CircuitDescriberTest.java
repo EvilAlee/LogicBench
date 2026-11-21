@@ -113,6 +113,28 @@ class CircuitDescriberTest {
     }
 
     @Test
+    void selfReferencingGateWithoutPrimaryInputsExportsAsASelfReference() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent gate = new PlacedComponent(
+                "not-self", "not", 100, 100, Facing.EAST);
+        PlacedComponent output = new PlacedComponent(
+                "output-q", "output", 300, 100, Facing.EAST, Map.of(), "Q");
+        schematic.add(gate);
+        schematic.add(output);
+        connect(schematic, gate.id(), "out", gate.id(), "in0");
+        connect(schematic, gate.id(), "out", output.id(), "in0");
+
+        CircuitDescriber.Description description = CircuitDescriber.describe(schematic);
+        assertEquals("n1 := (NOT n1)\\nQ = n1", description.text());
+
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile(description.text(), true);
+        assertTrue(compilation.hasFeedback());
+        assertTrue(compilation.netlist().inputs().isEmpty());
+        assertEquals("n1", compilation.netlist().outputs().getFirst().source());
+    }
+
+    @Test
     void srLatchDlatchAndGateLevelMasterSlaveDffMatchAcrossTwoHundredRandomSteps()
             throws Exception {
         Schematic srLatch = layout(ExpressionCompiler.compile("""
