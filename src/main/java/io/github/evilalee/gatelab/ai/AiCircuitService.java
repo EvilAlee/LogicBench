@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -31,13 +32,7 @@ import java.util.regex.Pattern;
  * lays out and engine-verifies the resulting circuit before it can be placed.
  */
 public final class AiCircuitService {
-    public static final int MAX_INPUTS = 6;
-    public static final int MAX_OUTPUTS = 8;
-    public static final int MAX_EXPRESSION_LENGTH = 1000;
-    public static final int MAX_GATES = 200;
-    public static final int MAX_ATTEMPTS = 3;
-
-    public enum Status { VERIFIED, UNVERIFIED, UNAVAILABLE }
+    public enum Status { VERIFIED, BUILT, UNVERIFIED, UNAVAILABLE }
 
     @FunctionalInterface
     interface Sleeper {
@@ -90,8 +85,25 @@ public final class AiCircuitService {
             String summary,
             List<String> inputs,
             List<String> outputNames,
+            List<String> signalNames,
+            List<String> signalExpressions,
             List<String> expressionTexts,
-            Map<String, String> claimedBits) {
+            JsonObject specification) {
+    }
+
+    private record ExpectedRow(int lineNumber, Map<String, Boolean> inputs,
+                               Map<String, Boolean> outputs) {
+        private ExpectedRow {
+            inputs = Map.copyOf(inputs);
+            outputs = Map.copyOf(outputs);
+        }
+    }
+
+    private record ExpectedParse(List<ExpectedRow> rows, List<String> errors) {
+        private ExpectedParse {
+            rows = List.copyOf(rows);
+            errors = List.copyOf(errors);
+        }
     }
 
     private record Attempt(
@@ -100,9 +112,23 @@ public final class AiCircuitService {
             SchematicLayout.LayoutResult layout,
             TruthTable truthTable,
             List<String> mismatchRows,
-            List<String> errors) {
+            List<String> errors,
+            List<String> warnings,
+            boolean independentCheck) {
+        private Attempt {
+            mismatchRows = List.copyOf(mismatchRows);
+            errors = List.copyOf(errors);
+            warnings = List.copyOf(warnings);
+        }
+
         private int score() {
-            return truthTable == null ? Integer.MAX_VALUE : mismatchRows.size();
+            if (answer == null) return Integer.MAX_VALUE;
+            return (truthTable == null ? 10_000 : 0)
+                    + mismatchRows.size() + errors.size();
+        }
+
+        private boolean passed() {
+            return errors.isEmpty() && mismatchRows.isEmpty();
         }
     }
 
@@ -145,44 +171,73 @@ public final class AiCircuitService {
         inputs.add("items", inputItems);
         properties.add("inputs", inputs);
 
-        JsonObject outputProperties = new JsonObject();
-        JsonObject outputName = new JsonObject();
-        outputName.addProperty("type", "STRING");
-        JsonObject expression = new JsonObject();
-        expression.addProperty("type", "STRING");
-        outputProperties.add("name", outputName);
-        outputProperties.add("expression", expression);
-        JsonObject outputItem = new JsonObject();
-        outputItem.addProperty("type", "OBJECT");
-        outputItem.add("properties", outputProperties);
-        outputItem.add("required", stringArray("name", "expression"));
-        outputItem.addProperty("additionalProperties", false);
+        JsonObject outputItem = namedExpressionSchema();
         JsonObject outputs = new JsonObject();
         outputs.addProperty("type", "ARRAY");
         outputs.add("items", outputItem);
         properties.add("outputs", outputs);
 
-        JsonObject tableProperties = new JsonObject();
-        JsonObject tableOutput = new JsonObject();
-        tableOutput.addProperty("type", "STRING");
-        JsonObject bits = new JsonObject();
-        bits.addProperty("type", "STRING");
-        tableProperties.add("output", tableOutput);
-        tableProperties.add("bits", bits);
-        JsonObject tableItem = new JsonObject();
-        tableItem.addProperty("type", "OBJECT");
-        tableItem.add("properties", tableProperties);
-        tableItem.add("required", stringArray("output", "bits"));
-        tableItem.addProperty("additionalProperties", false);
-        JsonObject table = new JsonObject();
-        table.addProperty("type", "ARRAY");
-        table.add("items", tableItem);
-        properties.add("truthTable", table);
+        JsonObject signals = new JsonObject();
+        signals.addProperty("type", "ARRAY");
+        signals.add("items", namedExpressionSchema());
+        properties.add("signals", signals);
+
+        JsonObject spec = new JsonObject();
+        spec.addProperty("type", "OBJECT");
+        JsonObject specProperties = new JsonObject();
+
+        JsonObject pinArray = new JsonObject();
+        pinArray.addProperty("type", "ARRAY");
+        JsonObject pinName = new JsonObject();
+        pinName.addProperty("type", "STRING");
+        pinArray.add("items", pinName);
+        JsonObject buses = new JsonObject();
+        buses.addProperty("type", "OBJECT");
+        buses.add("additionalProperties", pinArray);
+        specProperties.add("buses", buses);
+
+        JsonObject ruleProperties = new JsonObject();
+        JsonObject ruleOut = new JsonObject();
+        ruleOut.addProperty("type", "STRING");
+        JsonObject ruleExpr = new JsonObject();
+        ruleExpr.addProperty("type", "STRING");
+        ruleProperties.add("out", ruleOut);
+        ruleProperties.add("expr", ruleExpr);
+        JsonObject ruleItem = new JsonObject();
+        ruleItem.addProperty("type", "OBJECT");
+        ruleItem.add("properties", ruleProperties);
+        ruleItem.add("required", stringArray("out", "expr"));
+        ruleItem.addProperty("additionalProperties", false);
+        JsonObject rules = new JsonObject();
+        rules.addProperty("type", "ARRAY");
+        rules.add("items", ruleItem);
+        specProperties.add("rules", rules);
+
+        spec.add("properties", specProperties);
+        spec.add("required", stringArray("buses", "rules"));
+        spec.addProperty("additionalProperties", false);
+        properties.add("spec", spec);
 
         root.add("properties", properties);
-        root.add("required", stringArray("summary", "inputs", "outputs", "truthTable"));
+        root.add("required", stringArray("summary", "inputs", "outputs"));
         root.addProperty("additionalProperties", false);
         return root;
+    }
+
+    private static JsonObject namedExpressionSchema() {
+        JsonObject fields = new JsonObject();
+        JsonObject name = new JsonObject();
+        name.addProperty("type", "STRING");
+        JsonObject expression = new JsonObject();
+        expression.addProperty("type", "STRING");
+        fields.add("name", name);
+        fields.add("expression", expression);
+        JsonObject item = new JsonObject();
+        item.addProperty("type", "OBJECT");
+        item.add("properties", fields);
+        item.add("required", stringArray("name", "expression"));
+        item.addProperty("additionalProperties", false);
+        return item;
     }
 
     private static JsonArray stringArray(String... values) {
@@ -191,44 +246,49 @@ public final class AiCircuitService {
         return array;
     }
 
-    /** The prompt deliberately disallows intermediate named signals. */
+    /** Short model instruction; verification comes from code, never model-claimed rows. */
     public static String systemPrompt() {
         return """
-                You are a Boolean-circuit expression author. Treat the user's description as
-                the specification. Return ONLY one JSON object matching the supplied schema;
-                no Markdown, code fences, commentary, or extra properties.
+                You write Boolean circuits. Return ONLY JSON for the supplied schema:
+                summary, inputs, outputs, optional signals, optional spec. Never output a
+                truth table. Use only declared primary inputs. Limits: 10 inputs, 16 outputs,
+                400 gates, 3000 total expression characters, 16 spec rules; user rows max 64.
 
-                JSON fields:
-                - summary: short plain-language description.
-                - inputs: every true primary input exactly once. The inputs array may be in
-                  any order; each truth-table row's bits follow the order of that inputs array.
-                  The first input is the most-significant bit.
-                - outputs: only the outputs the user requested, each with a unique name and
-                  one Boolean expression.
-                - truthTable: independently reason from the user's description and provide
-                  one entry per output. Each bits string has exactly 2^input-count characters,
-                  uses only 0 and 1, and starts with the row where all inputs are zero.
-                  Do NOT derive the table by merely copying/evaluating your expressions;
-                  independently determine the intended behavior from the description.
+                Expressions use identifiers [A-Za-z][A-Za-z0-9_]*, constants 0/1, parentheses,
+                prefix !, ~, NOT, postfix ', AND &, *, AND, NAND, XOR ^, XNOR, OR |, +, NOR.
+                NAND, NOR and XNOR are operator words. Outputs use {name, expression};
+                internal named signals use {name, expression} in signals and compile as
+                name := expression. Forward references between signals are allowed.
+                List every primary input exactly once; do not list internal signals as inputs.
 
-                Expression syntax must be exactly the LogicBench expression parser syntax.
-                Identifiers are ASCII names matching [A-Za-z][A-Za-z0-9_]*. Constants are 0
-                and 1. Operators, highest precedence first:
-                1. NOT: prefix !, ~, NOT; postfix apostrophe (').
-                2. AND family: &, *, AND, NAND.
-                3. XOR family: ^, XOR, XNOR.
-                4. OR family: |, +, OR, NOR.
-                Parentheses override precedence; binary operators are left-associative.
+                Add an executable spec for arithmetic, comparison, selection, parity, counting
+                and decoders. Omit spec for irregular logic whose behavior is not compactly
+                described by integer rules. A spec is {buses:{bus:[pins...]},rules:[{out,expr}]};
+                bus pins are MSB first, and every output pin must be covered. A pin not grouped
+                in buses is its own one-bit bus. Specs use decimal integer arithmetic and
+                bitwise expressions; they are checked against every engine input combination.
+                The circuit expressions and the spec are both independently checked.
 
-                Every expression may reference only names declared in inputs. Use at most
-                6 inputs and 8 outputs. Each expression must be at most 1000 characters.
-                Names must use the identifier syntax above.
+                Example 1 — 2-bit adder with carry-in:
+                {"summary":"2-bit adder","inputs":["A1","A0","B1","B0","CIN"],
+                 "signals":[{"name":"C1","expression":"(A0 & B0) | (A0 & CIN) | (B0 & CIN)"}],
+                 "outputs":[
+                  {"name":"S0","expression":"A0 ^ B0 ^ CIN"},
+                  {"name":"S1","expression":"A1 ^ B1 ^ C1"},
+                  {"name":"COUT","expression":"(A1 & B1) | (A1 & C1) | (B1 & C1)"}],
+                 "spec":{"buses":{"A":["A1","A0"],"B":["B1","B0"],"S":["S1","S0"]},
+                         "rules":[{"out":"S","expr":"A + B + CIN"},
+                                  {"out":"COUT","expr":"(A + B + CIN) >> 2"}]}}
 
-                Each output is represented as "Name = expression" and therefore creates an
-                output pin. Do NOT define intermediate named signals; inline sub-expressions
-                instead. Identical subexpressions are shared automatically by the compiler.
-                Do not output netlists, gates, wiring, or schematic instructions. The
-                application parses your expressions and constructs and verifies the circuit.
+                Example 2 — 2-to-4 decoder with enable:
+                {"summary":"enabled decoder","inputs":["A1","A0","E"],
+                 "outputs":[
+                  {"name":"D0","expression":"E & NOT A1 & NOT A0"},
+                  {"name":"D1","expression":"E & NOT A1 & A0"},
+                  {"name":"D2","expression":"E & A1 & NOT A0"},
+                  {"name":"D3","expression":"E & A1 & A0"}],
+                 "spec":{"buses":{"A":["A1","A0"],"D":["D3","D2","D1","D0"]},
+                         "rules":[{"out":"D","expr":"E << A"}]}}
                 """;
     }
 
@@ -237,19 +297,35 @@ public final class AiCircuitService {
      * not call the provider. Otherwise request, validate and retry up to three times.
      */
     public Result generate(String description) throws IOException, InterruptedException {
-        return generate(description, false);
+        return generate(description, false, true, "");
     }
 
     /** When cacheOnly is true, no provider request is made. */
     public Result generate(String description, boolean cacheOnly)
             throws IOException, InterruptedException {
+        return generate(description, cacheOnly, true, "");
+    }
+
+    public Result generate(String description, boolean cacheOnly, boolean invertingGates)
+            throws IOException, InterruptedException {
+        return generate(description, cacheOnly, invertingGates, "");
+    }
+
+    /**
+     * Generates a circuit with optional caller-supplied expected rows.
+     * Provider transport, model retry/fallback and cache-fallback policy are unchanged.
+     */
+    public Result generate(
+            String description, boolean cacheOnly, boolean invertingGates,
+            String expectedRowsText) throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
+        expectedRowsText = expectedRowsText == null ? "" : expectedRowsText;
         String safeDescription = provider.redact(description);
         List<String> log = new ArrayList<>();
 
         ExpressionCompiler.Compilation local = null;
         try {
-            local = ExpressionCompiler.compile(description, false);
+            local = ExpressionCompiler.compile(description, false, invertingGates);
         } catch (RuntimeException notExpressionText) {
             if (isExpressionSource(description)) {
                 log.add("Description parses as expression text but cannot be compiled: "
@@ -261,9 +337,9 @@ public final class AiCircuitService {
             // Natural-language descriptions continue to the provider.
         }
         if (local != null) {
-            if (local.netlist().inputs().size() > MAX_INPUTS
-                    || local.netlist().outputs().size() > MAX_OUTPUTS
-                    || local.netlist().gates().size() > MAX_GATES) {
+            if (local.netlist().inputs().size() > AiCircuitLimits.MAX_INPUTS
+                    || local.netlist().outputs().size() > AiCircuitLimits.MAX_OUTPUTS
+                    || local.netlist().gates().size() > AiCircuitLimits.MAX_GATES) {
                 log.add("Description parses as expressions but exceeds AI circuit limits.");
                 return new Result(0, Status.UNVERIFIED, "Local expression exceeds AI circuit limits.",
                         local.expressions(), local.netlist(), null, null, List.of(), log, false);
@@ -279,11 +355,30 @@ public final class AiCircuitService {
                             placedCheck.mismatches().stream().map(Object::toString).toList(), log, false);
                 }
                 TruthTable table = TruthTableGenerator.generate(local.netlist());
-                log.add("Description parsed as expression text; skipped AI.");
-                log.add("Verified " + table.rows().size() + "/" + table.rows().size() + " rows");
-                return new Result(0, Status.VERIFIED, "Parsed and verified locally.",
-                        local.expressions(), local.netlist(), placed, table,
-                        List.of(), log, false);
+                List<String> structuralErrors = structuralErrors(table);
+                List<String> warnings = structuralWarnings(local.netlist(), table);
+                ExpectedParse expected = parseExpectedRows(expectedRowsText,
+                        table.inputNames(), table.outputNames());
+                List<String> mismatches = compareExpectedRows(expected.rows(), table);
+                List<String> failures = new ArrayList<>(structuralErrors);
+                failures.addAll(expected.errors());
+                if (failures.isEmpty()) failures.addAll(mismatches);
+                warnings.forEach(warning -> log.add("Warning: " + warning));
+                boolean independent = !expectedRowsText.isBlank();
+                if (failures.isEmpty()) {
+                    Status status = independent ? Status.VERIFIED : Status.BUILT;
+                    log.add(independent
+                            ? "Verified against the user's expected rows."
+                            : "BUILT: no independent check; read the truth table.");
+                    log.add("Description parsed as expression text; skipped AI.");
+                    return new Result(0, status, status == Status.VERIFIED
+                            ? "Parsed and verified locally." : "Parsed and built locally.",
+                            local.expressions(), local.netlist(), placed, table,
+                            List.of(), log, false);
+                }
+                log.addAll(failures);
+                return new Result(0, Status.UNVERIFIED, "Local expression failed verification.",
+                        local.expressions(), local.netlist(), placed, table, failures, log, false);
             } catch (RuntimeException exception) {
                 log.add("Local expression build failed: " + safeParseMessage(exception));
                 return new Result(0, Status.UNVERIFIED, "Local expression could not be built.",
@@ -292,7 +387,8 @@ public final class AiCircuitService {
         }
 
         if (cacheOnly) {
-            Result cached = cachedResult(safeDescription, log, "Using", 0);
+            Result cached = cachedResult(
+                    safeDescription, log, "Using", 0, invertingGates, expectedRowsText);
             if (cached != null) return cached;
             log.add("AI unavailable: cache-only mode is enabled and no valid cached answer exists.");
             return new Result(0, Status.UNAVAILABLE,
@@ -306,7 +402,7 @@ public final class AiCircuitService {
         Attempt best = null;
         String bestAnsweredBy = "";
         List<String> allModelAttempts = new ArrayList<>();
-        for (int attemptNumber = 1; attemptNumber <= MAX_ATTEMPTS; attemptNumber++) {
+        for (int attemptNumber = 1; attemptNumber <= AiCircuitLimits.MAX_ATTEMPTS; attemptNumber++) {
             log.add("Verification attempt " + attemptNumber + ": requesting a model answer.");
             ModelAnswer response;
             try {
@@ -316,7 +412,8 @@ public final class AiCircuitService {
                 allModelAttempts.addAll(failure.modelAttempts());
                 String reason = provider.redact(unavailableReason(failure));
                 String notice = provider.redact(cachedNotice(failure));
-                Result fallback = cachedResult(safeDescription, log, notice, attemptNumber - 1);
+                Result fallback = cachedResult(safeDescription, log, notice, attemptNumber - 1,
+                        invertingGates, expectedRowsText);
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
@@ -329,44 +426,46 @@ public final class AiCircuitService {
 
             String safeRaw = provider.redact(response.raw());
             conversation.add(new Turn(Turn.Role.MODEL, safeRaw));
-            Attempt current = validate(safeRaw);
+            Attempt current = validate(safeRaw, invertingGates, expectedRowsText);
             if (best == null || current.score() < best.score()
                     || (current.score() == best.score()
                         && current.errors().size() < best.errors().size())) {
                 best = current;
                 bestAnsweredBy = response.model();
             }
-            if (current.errors().isEmpty()) {
+            current.warnings().forEach(warning -> log.add("Warning: " + warning));
+            if (current.passed()) {
+                Status status = current.independentCheck() ? Status.VERIFIED : Status.BUILT;
                 int rows = current.truthTable().rows().size();
-                log.add("Verified " + rows + "/" + rows + " rows via " + response.model());
-                if (cache != null) {
-                    try {
-                        cache.storeVerified(safeDescription, safeRaw);
-                        log.add("Saved verified live answer to the user cache.");
-                    } catch (IOException cacheError) {
-                        log.add("Verified answer, but could not save the user cache.");
+                if (status == Status.VERIFIED) {
+                    log.add("Verified " + rows + " engine rows against independent checks via "
+                            + response.model());
+                    if (cache != null) {
+                        try {
+                            cache.storeVerified(safeDescription, serializeAnswer(current.answer()));
+                            log.add("Saved verified live answer in the new cache schema.");
+                        } catch (IOException cacheError) {
+                            log.add("Verified answer, but could not save the user cache.");
+                        }
                     }
+                } else {
+                    log.add("BUILT: " + rows
+                            + " engine rows generated; no independent check, read the truth table.");
                 }
-                return result(attemptNumber, Status.VERIFIED, current, log, false,
+                return result(attemptNumber, status, current, log, false,
                         response.model(), allModelAttempts);
             }
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
-            feedbackLines.addAll(current.mismatchRows().stream().limit(8).toList());
-            feedbackLines.add("Rows in your table are interpreted using the order of YOUR inputs array.");
-            String feedback = String.join("\n", feedbackLines);
-            if (!current.mismatchRows().isEmpty()) {
-                log.add("Mismatch at rows " + String.join("; ",
-                        current.mismatchRows().stream().limit(8).toList())
-                        + (attemptNumber < MAX_ATTEMPTS ? ", retrying verification" : ""));
-            } else {
-                log.add("Validation failed: " + feedback
-                        + (attemptNumber < MAX_ATTEMPTS ? "; retrying verification" : ""));
-            }
-            if (attemptNumber < MAX_ATTEMPTS) {
+            feedbackLines.addAll(current.mismatchRows());
+            if (feedbackLines.isEmpty()) feedbackLines.add("An independent validation check failed.");
+            String feedback = String.join("\n", feedbackLines.stream().limit(8).toList());
+            log.add("Validation failed: " + feedback
+                    + (attemptNumber < AiCircuitLimits.MAX_ATTEMPTS ? "; retrying verification" : ""));
+            if (attemptNumber < AiCircuitLimits.MAX_ATTEMPTS) {
                 conversation.add(new Turn(Turn.Role.USER,
                         "Your previous JSON was:\n" + safeRaw
-                                + "\nCorrect it. The concrete validation errors are:\n"
+                                + "\nCorrect it. The named validation errors are:\n"
                                 + feedback
                                 + "\nReturn the complete corrected JSON object only."));
             }
@@ -376,7 +475,7 @@ public final class AiCircuitService {
             return new Result(0, Status.UNAVAILABLE, "AI unavailable: no model answer was received.",
                     List.of(), null, null, null, List.of(), log, false, "", allModelAttempts);
         }
-        return result(MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false,
+        return result(AiCircuitLimits.MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false,
                 bestAnsweredBy, allModelAttempts);
     }
 
@@ -557,12 +656,15 @@ public final class AiCircuitService {
     }
 
     private Result cachedResult(
-            String description, List<String> log, String prefix, int attemptCount) {
+            String description, List<String> log, String prefix, int attemptCount,
+            boolean invertingGates, String expectedRowsText) {
         if (cache == null) return null;
         for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
-            Attempt cachedAttempt = validate(provider.redact(hit.answerJson()));
+            Attempt cachedAttempt = validate(
+                    provider.redact(hit.answerJson()), invertingGates, expectedRowsText);
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
-            if (cachedAttempt.errors().isEmpty()) {
+            if (cachedAttempt.passed()) {
+                Status status = cachedAttempt.independentCheck() ? Status.VERIFIED : Status.BUILT;
                 int rows = cachedAttempt.truthTable().rows().size();
                 if (prefix.startsWith("AI unavailable")) {
                     log.add(prefix);
@@ -570,11 +672,14 @@ public final class AiCircuitService {
                 } else {
                     log.add(prefix + " " + source + " cache.");
                 }
-                log.add("FROM CACHE: Verified " + rows + "/" + rows + " rows");
-                return result(attemptCount, Status.VERIFIED, cachedAttempt, log, true);
+                log.add("FROM CACHE: Revalidated " + rows + " engine rows"
+                        + (status == Status.BUILT ? "; no independent check, read the truth table." : "."));
+                return result(attemptCount, status, cachedAttempt, log, true);
             }
+            List<String> failures = new ArrayList<>(cachedAttempt.errors());
+            failures.addAll(cachedAttempt.mismatchRows());
             log.add("Ignored invalid " + source + " cache entry: "
-                    + String.join("; ", cachedAttempt.errors()));
+                    + String.join("; ", failures.stream().limit(8).toList()));
         }
         return null;
     }
@@ -587,72 +692,100 @@ public final class AiCircuitService {
     private Result result(int attempts, Status status, Attempt attempt,
                           List<String> log, boolean fromCache,
                           String answeredBy, List<String> modelAttempts) {
+        List<String> failures = new ArrayList<>(attempt.errors());
+        failures.addAll(attempt.mismatchRows());
         return new Result(attempts, status,
                 attempt.answer() == null ? "" : provider.redact(attempt.answer().summary()),
                 attempt.compilation() == null ? List.of() : attempt.compilation().expressions(),
                 attempt.compilation() == null ? null : attempt.compilation().netlist(),
-                attempt.layout(), attempt.truthTable(), attempt.mismatchRows(), log, fromCache,
+                attempt.layout(), attempt.truthTable(), failures, log, fromCache,
                 answeredBy, modelAttempts);
     }
 
-    private Attempt validate(String raw) {
+    private Attempt validate(String raw, boolean invertingGates, String expectedRowsText) {
         Answer answer;
         try {
             answer = parseAnswer(raw);
         } catch (RuntimeException exception) {
             return new Attempt(null, null, null, null, List.of(),
-                    List.of("JSON/schema error: " + safeParseMessage(exception)));
+                    List.of("JSON/schema error: " + safeParseMessage(exception)),
+                    List.of(), false);
         }
 
         StringBuilder source = new StringBuilder();
-        for (int index = 0; index < answer.expressionTexts().size(); index++) {
-            if (index > 0) source.append('\n');
-            source.append(answer.outputNames().get(index))
-                    .append(" = ").append(answer.expressionTexts().get(index));
-        }
-
-        List<NamedExpression> parsed = new ArrayList<>();
         List<String> parseErrors = new ArrayList<>();
-        for (int index = 0; index < answer.expressionTexts().size(); index++) {
+        int expressionIndex = 0;
+        for (int index = 0; index < answer.signalNames().size(); index++) {
+            String name = answer.signalNames().get(index);
+            String expression = answer.signalExpressions().get(index);
             try {
-                parsed.add(new NamedExpression(answer.outputNames().get(index),
-                        ExpressionParser.parse(answer.expressionTexts().get(index))));
+                ExpressionParser.parse(expression);
             } catch (RuntimeException exception) {
-                String position = exception instanceof io.github.evilalee.gatelab.synth.ParseException parse
-                        ? " at position " + parse.position() : "";
-                parseErrors.add("Output " + answer.outputNames().get(index)
-                        + " expression parse error" + position + ": "
-                        + safeParseMessage(exception));
+                parseErrors.add(parseError("Signal", name, exception));
             }
+            if (!source.isEmpty()) source.append('\n');
+            source.append(name).append(" := ").append(expression);
+            expressionIndex++;
+        }
+        for (int index = 0; index < answer.expressionTexts().size(); index++) {
+            String name = answer.outputNames().get(index);
+            String expression = answer.expressionTexts().get(index);
+            try {
+                ExpressionParser.parse(expression);
+            } catch (RuntimeException exception) {
+                parseErrors.add(parseError("Output", name, exception));
+            }
+            if (!source.isEmpty()) source.append('\n');
+            source.append(name).append(" = ").append(expression);
+            expressionIndex++;
         }
         if (!parseErrors.isEmpty()) {
-            return new Attempt(answer, null, null, null, List.of(), parseErrors);
-        }
-
-        LinkedHashSet<String> usedVariables = new LinkedHashSet<>();
-        parsed.forEach(named -> usedVariables.addAll(named.expression().variables()));
-        Set<String> declared = new LinkedHashSet<>(answer.inputs());
-        if (!declared.equals(usedVariables)) {
-            Set<String> missing = new LinkedHashSet<>(usedVariables);
-            missing.removeAll(declared);
-            Set<String> extra = new LinkedHashSet<>(declared);
-            extra.removeAll(usedVariables);
-            return new Attempt(answer, null, null, null, List.of(),
-                    List.of("inputs must contain exactly the expression variables; missing="
-                            + missing + ", extra=" + extra));
+            return new Attempt(answer, null, null, null, List.of(), parseErrors, List.of(),
+                    answer.specification() != null || !expectedRowsText.isBlank());
         }
 
         ExpressionCompiler.Compilation compilation;
         try {
-            compilation = ExpressionCompiler.compile(source.toString(), false);
+            compilation = ExpressionCompiler.compile(source.toString(), false, invertingGates);
         } catch (RuntimeException exception) {
             return new Attempt(answer, null, null, null, List.of(),
-                    List.of("Expression compilation failed: " + safeParseMessage(exception)));
+                    List.of("Expression compilation failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
-        if (compilation.netlist().gates().size() > MAX_GATES) {
+
+        Set<String> declaredInputs = new LinkedHashSet<>(answer.inputs());
+        Set<String> expressionInputs = new LinkedHashSet<>(compilation.netlist().inputs());
+        if (!declaredInputs.equals(expressionInputs)) {
+            Set<String> undeclared = new LinkedHashSet<>(expressionInputs);
+            undeclared.removeAll(declaredInputs);
+            Set<String> unused = new LinkedHashSet<>(declaredInputs);
+            unused.removeAll(expressionInputs);
+            List<String> errors = new ArrayList<>();
+            undeclared.forEach(name -> errors.add(
+                    "Expression variable '" + name + "' became an input but is not declared."));
+            unused.forEach(name -> errors.add(
+                    "Declared input '" + name + "' is not used by the expressions."));
+            return new Attempt(answer, compilation, null, null, List.of(), errors,
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+
+        if (compilation.netlist().inputs().size() > AiCircuitLimits.MAX_INPUTS) {
+            return new Attempt(answer, compilation, null, null, List.of(),
+                    List.of("Circuit has " + compilation.netlist().inputs().size()
+                            + " inputs; maximum is " + AiCircuitLimits.MAX_INPUTS),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        if (compilation.netlist().outputs().size() > AiCircuitLimits.MAX_OUTPUTS) {
+            return new Attempt(answer, compilation, null, null, List.of(),
+                    List.of("Circuit has " + compilation.netlist().outputs().size()
+                            + " outputs; maximum is " + AiCircuitLimits.MAX_OUTPUTS),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        if (compilation.netlist().gates().size() > AiCircuitLimits.MAX_GATES) {
             return new Attempt(answer, compilation, null, null, List.of(),
                     List.of("Circuit has " + compilation.netlist().gates().size()
-                            + " gates; maximum is " + MAX_GATES));
+                            + " gates; maximum is " + AiCircuitLimits.MAX_GATES),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
 
         SchematicLayout.LayoutResult placed;
@@ -660,7 +793,8 @@ public final class AiCircuitService {
             placed = layoutBuilder.layout(compilation.netlist());
         } catch (RuntimeException exception) {
             return new Attempt(answer, compilation, null, null, List.of(),
-                    List.of("Schematic layout failed: " + safeParseMessage(exception)));
+                    List.of("Schematic layout failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
 
         SchematicExpressionVerifier.VerificationResult placedVerification;
@@ -668,17 +802,19 @@ public final class AiCircuitService {
             placedVerification = SchematicExpressionVerifier.verify(compilation, placed);
         } catch (RuntimeException exception) {
             return new Attempt(answer, compilation, placed, null, List.of(),
-                    List.of("Placed schematic verification failed: " + safeParseMessage(exception)));
+                    List.of("Placed geometry verification failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
         if (!placedVerification.verified()) {
             List<String> placedMismatches = placedVerification.mismatches().stream()
                     .limit(8)
-                    .map(mismatch -> "placed schematic inputs " + mismatch.inputBits()
-                            + " output " + mismatch.outputName() + ": expected "
-                            + mismatch.expected() + ", got " + mismatch.actual())
+                    .map(mismatch -> "Placed geometry " + mismatch.inputBits()
+                            + ": " + mismatch.outputName() + " expected "
+                            + mismatch.expected() + ", circuit " + mismatch.actual())
                     .toList();
             return new Attempt(answer, compilation, placed, null, placedMismatches,
-                    List.of("Placed schematic did not match its parsed expressions."));
+                    List.of("Placed geometry does not preserve the compiled netlist."),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
 
         TruthTable engineTable;
@@ -686,106 +822,409 @@ public final class AiCircuitService {
             engineTable = TruthTableGenerator.generate(compilation.netlist());
         } catch (RuntimeException exception) {
             return new Attempt(answer, compilation, placed, null, List.of(),
-                    List.of("Engine truth-table generation failed: " + safeParseMessage(exception)));
+                    List.of("Engine truth-table generation failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
-        List<String> mismatches = compareClaimedTable(answer, engineTable);
-        if (!mismatches.isEmpty()) {
-            return new Attempt(answer, compilation, placed, engineTable, mismatches,
-                    List.of("Claimed truth table does not match the engine truth table."));
+
+        List<String> structuralFailures = structuralErrors(engineTable);
+        List<String> warnings = structuralWarnings(compilation.netlist(), engineTable);
+        if (!structuralFailures.isEmpty()) {
+            return new Attempt(answer, compilation, placed, engineTable, List.of(),
+                    structuralFailures, warnings,
+                    answer.specification() != null || !expectedRowsText.isBlank());
         }
-        return new Attempt(answer, compilation, placed, engineTable, List.of(), List.of());
+
+        List<String> failures = new ArrayList<>();
+        ExpectedParse expected = parseExpectedRows(
+                expectedRowsText, engineTable.inputNames(), engineTable.outputNames());
+        failures.addAll(expected.errors());
+        List<String> rowMismatches = compareExpectedRows(expected.rows(), engineTable);
+
+        // The spec is intentionally the last check in the pipeline, after user-owned rows.
+        if (answer.specification() != null) {
+            try {
+                SpecEvaluator evaluator = SpecEvaluator.parse(
+                        answer.specification(), engineTable.inputNames(), engineTable.outputNames());
+                List<String> specMismatches = compareSpecification(evaluator, engineTable);
+                if (!specMismatches.isEmpty()) failures.addAll(specMismatches);
+            } catch (SpecEvaluator.SpecException exception) {
+                String position = exception.position() >= 0
+                        ? " at position " + exception.position() : "";
+                failures.add("Spec error" + position + ": " + safeParseMessage(exception));
+            } catch (RuntimeException exception) {
+                failures.add("Spec error: " + safeParseMessage(exception));
+            }
+        }
+
+        boolean independent = answer.specification() != null || !expectedRowsText.isBlank();
+        return new Attempt(answer, compilation, placed, engineTable, rowMismatches,
+                failures, warnings, independent);
+    }
+
+    private static String parseError(String kind, String name, RuntimeException exception) {
+        String position = exception instanceof io.github.evilalee.gatelab.synth.ParseException parse
+                ? " at position " + parse.position() : "";
+        String detail = exception.getMessage() == null
+                ? exception.getClass().getSimpleName() : exception.getMessage();
+        return kind + " '" + name + "' parse error" + position + ": "
+                + detail.replaceAll("[\\r\\n]+", " ");
+    }
+
+    static List<String> structuralErrors(TruthTable table) {
+        List<String> errors = new ArrayList<>();
+        for (TruthTable.Row row : table.rows()) {
+            String assignment = inputPinContext(table, row);
+            if (row.oscillating()) {
+                errors.add("Engine oscillation for " + assignment + ".");
+            }
+            for (int index = 0; index < row.outputValues().size(); index++) {
+                Value value = row.outputValues().get(index);
+                if (value != Value.ZERO && value != Value.ONE) {
+                    errors.add("Engine output " + table.outputNames().get(index)
+                            + " is X for " + assignment + ".");
+                }
+            }
+            if (errors.size() >= 8) break;
+        }
+        return List.copyOf(errors);
+    }
+
+    private static List<String> structuralWarnings(Netlist netlist, TruthTable table) {
+        List<String> warnings = new ArrayList<>();
+        Set<String> referenced = new LinkedHashSet<>();
+        for (Netlist.Gate gate : netlist.gates()) referenced.addAll(gate.inputs());
+        for (Netlist.Output output : netlist.outputs()) referenced.add(output.source());
+        for (String input : netlist.inputs()) {
+            if (!referenced.contains(input)) {
+                warnings.add("Declared input '" + input + "' is not connected to an output path.");
+            }
+        }
+        for (int index = 0; index < table.outputNames().size(); index++) {
+            int outputIndex = index;
+            Value first = table.rows().getFirst().outputValues().get(outputIndex);
+            boolean constant = table.rows().stream()
+                    .allMatch(row -> row.outputValues().get(outputIndex) == first);
+            if (constant) warnings.add("Output '" + table.outputNames().get(index)
+                    + "' is constant at " + first + ".");
+        }
+        return List.copyOf(warnings);
+    }
+
+    private static String inputPinContext(TruthTable table, TruthTable.Row row) {
+        StringBuilder result = new StringBuilder();
+        for (int index = 0; index < table.inputNames().size(); index++) {
+            if (!result.isEmpty()) result.append(' ');
+            result.append(table.inputNames().get(index)).append('=')
+                    .append(row.inputBits().charAt(index));
+        }
+        return result.toString();
+    }
+
+    private static ExpectedParse parseExpectedRows(
+            String text, List<String> inputNames, List<String> outputNames) {
+        if (text == null || text.isBlank()) return new ExpectedParse(List.of(), List.of());
+        List<ExpectedRow> rows = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        String[] lines = text.split("\\R", -1);
+        Pattern assignment = Pattern.compile("([A-Za-z][A-Za-z0-9_]*)\\s*=\\s*([01])");
+        for (int index = 0; index < lines.length; index++) {
+            String line = lines[index].trim();
+            if (line.isEmpty()) continue;
+            if (rows.size() + errors.size() >= AiCircuitLimits.MAX_EXPECTED_ROWS) {
+                errors.add("Expected rows exceed maximum of "
+                        + AiCircuitLimits.MAX_EXPECTED_ROWS + ".");
+                break;
+            }
+            String[] halves = line.split("->", -1);
+            if (halves.length != 2) {
+                errors.add("Expected row line " + (index + 1)
+                        + ": expected 'inputs -> outputs'.");
+                continue;
+            }
+            Map<String, Boolean> inputValues = parseAssignments(
+                    halves[0], assignment, inputNames, "input", index + 1, errors);
+            Map<String, Boolean> outputValues = parseAssignments(
+                    halves[1], assignment, outputNames, "output", index + 1, errors);
+            if (inputValues.size() != inputNames.size()
+                    || outputValues.size() != outputNames.size()) continue;
+            rows.add(new ExpectedRow(index + 1, inputValues, outputValues));
+        }
+        return new ExpectedParse(rows, errors);
+    }
+
+    private static Map<String, Boolean> parseAssignments(
+            String text, Pattern pattern, List<String> allowed, String label,
+            int lineNumber, List<String> errors) {
+        Map<String, Boolean> values = new LinkedHashMap<>();
+        Matcher matcher = pattern.matcher(text);
+        int cursor = 0;
+        boolean invalid = false;
+        while (matcher.find()) {
+            if (!text.substring(cursor, matcher.start()).isBlank()) invalid = true;
+            String name = matcher.group(1);
+            if (!allowed.contains(name)) {
+                errors.add("Expected row line " + lineNumber
+                        + ": unknown " + label + " name '" + name + "'.");
+                invalid = true;
+            } else if (values.putIfAbsent(name, matcher.group(2).equals("1")) != null) {
+                errors.add("Expected row line " + lineNumber
+                        + ": duplicate " + label + " name '" + name + "'.");
+                invalid = true;
+            }
+            cursor = matcher.end();
+        }
+        if (cursor == 0 || !text.substring(cursor).isBlank()) invalid = true;
+        if (invalid) {
+            errors.add("Expected row line " + lineNumber
+                    + ": malformed " + label + " assignments.");
+        }
+        for (String name : allowed) {
+            if (!values.containsKey(name)) {
+                errors.add("Expected row line " + lineNumber
+                        + ": missing " + label + " '" + name + "'.");
+            }
+        }
+        return values;
+    }
+
+    private static List<String> compareExpectedRows(
+            List<ExpectedRow> expectedRows, TruthTable table) {
+        List<String> mismatches = new ArrayList<>();
+        Map<String, Integer> inputs = new LinkedHashMap<>();
+        Map<String, Integer> outputs = new LinkedHashMap<>();
+        for (int index = 0; index < table.inputNames().size(); index++) {
+            inputs.put(table.inputNames().get(index), index);
+        }
+        for (int index = 0; index < table.outputNames().size(); index++) {
+            outputs.put(table.outputNames().get(index), index);
+        }
+        for (ExpectedRow expected : expectedRows) {
+            int rowIndex = 0;
+            for (String name : table.inputNames()) {
+                rowIndex = (rowIndex << 1) | (expected.inputs().get(name) ? 1 : 0);
+            }
+            TruthTable.Row actualRow = table.rows().get(rowIndex);
+            for (String outputName : table.outputNames()) {
+                boolean expectedValue = expected.outputs().get(outputName);
+                Value actualValue = actualRow.outputValues().get(outputs.get(outputName));
+                if (actualValue == Value.X || (actualValue == Value.ONE) != expectedValue) {
+                    mismatches.add("Expected row line " + expected.lineNumber() + " "
+                            + formatAssignments(expected.inputs()) + ": " + outputName
+                            + " expected " + (expectedValue ? "1" : "0") + ", circuit "
+                            + (actualValue == Value.ONE ? "1" : actualValue == Value.ZERO ? "0" : "X") + ".");
+                    break;
+                }
+            }
+        }
+        return mismatches.stream().limit(8).toList();
+    }
+
+    private static String formatAssignments(Map<String, Boolean> values) {
+        StringBuilder result = new StringBuilder();
+        values.forEach((name, value) -> {
+            if (!result.isEmpty()) result.append(' ');
+            result.append(name).append('=').append(value ? '1' : '0');
+        });
+        return result.toString();
+    }
+
+    private static List<String> compareSpecification(SpecEvaluator evaluator, TruthTable table) {
+        List<String> mismatches = new ArrayList<>();
+        for (TruthTable.Row row : table.rows()) {
+            Map<String, Boolean> inputValues = new LinkedHashMap<>();
+            for (int index = 0; index < table.inputNames().size(); index++) {
+                inputValues.put(table.inputNames().get(index), row.inputValue(index));
+            }
+            SpecEvaluator.Evaluation expected = evaluator.evaluate(inputValues);
+            String context = evaluator.formatInputContext(inputValues);
+            for (SpecEvaluator.Bus bus : evaluator.outputBuses()) {
+                long circuitValue = 0L;
+                for (String pin : bus.pins()) {
+                    int outputIndex = table.outputNames().indexOf(pin);
+                    Value bit = row.outputValues().get(outputIndex);
+                    circuitValue = (circuitValue << 1)
+                            | (bit == Value.ONE ? 1L : 0L);
+                }
+                long specValue = expected.outputBusValues().get(bus.name());
+                if (specValue != circuitValue) {
+                    mismatches.add(context + ": " + bus.name() + " spec " + specValue
+                            + ", circuit " + circuitValue + ". Either side may be wrong.");
+                    break;
+                }
+            }
+            if (mismatches.size() >= 8) break;
+        }
+        return List.copyOf(mismatches);
+    }
+
+    private static String serializeAnswer(Answer answer) {
+        JsonObject root = new JsonObject();
+        root.addProperty("summary", answer.summary());
+        JsonArray inputs = new JsonArray();
+        answer.inputs().forEach(inputs::add);
+        root.add("inputs", inputs);
+        if (!answer.signalNames().isEmpty()) {
+            JsonArray signals = new JsonArray();
+            for (int index = 0; index < answer.signalNames().size(); index++) {
+                JsonObject signal = new JsonObject();
+                signal.addProperty("name", answer.signalNames().get(index));
+                signal.addProperty("expression", answer.signalExpressions().get(index));
+                signals.add(signal);
+            }
+            root.add("signals", signals);
+        }
+        JsonArray outputs = new JsonArray();
+        for (int index = 0; index < answer.outputNames().size(); index++) {
+            JsonObject output = new JsonObject();
+            output.addProperty("name", answer.outputNames().get(index));
+            output.addProperty("expression", answer.expressionTexts().get(index));
+            outputs.add(output);
+        }
+        root.add("outputs", outputs);
+        if (answer.specification() != null) root.add("spec", answer.specification().deepCopy());
+        return root.toString();
     }
 
     private static Answer parseAnswer(String raw) {
         String jsonText = stripCodeFence(Objects.requireNonNull(raw, "model response"));
         JsonObject root = JsonParser.parseString(jsonText).getAsJsonObject();
-        requireKeys(root, Set.of("summary", "inputs", "outputs", "truthTable"), "response");
-        if (!root.get("summary").isJsonPrimitive()
-                || !root.get("summary").getAsJsonPrimitive().isString()) {
-            throw new IllegalArgumentException("summary must be a string");
+        Set<String> required = Set.of("summary", "inputs", "outputs");
+        Set<String> allowed = Set.of("summary", "inputs", "outputs", "signals", "spec", "truthTable");
+        Set<String> actual = new LinkedHashSet<>(root.keySet());
+        Set<String> missing = new LinkedHashSet<>(required);
+        missing.removeAll(actual);
+        Set<String> unexpected = new LinkedHashSet<>(actual);
+        unexpected.removeAll(allowed);
+        if (!missing.isEmpty() || !unexpected.isEmpty()) {
+            throw new IllegalArgumentException("response fields invalid; missing="
+                    + missing + ", unexpected=" + unexpected);
         }
+        JsonElement summaryElement = root.get("summary");
+        String summary = requireString(summaryElement, "summary");
 
         JsonArray inputArray = requireArray(root, "inputs");
-        if (inputArray.size() > MAX_INPUTS) {
+        if (inputArray.size() > AiCircuitLimits.MAX_INPUTS) {
             throw new IllegalArgumentException("inputs has " + inputArray.size()
-                    + " entries; maximum is " + MAX_INPUTS);
+                    + " entries; maximum is " + AiCircuitLimits.MAX_INPUTS);
         }
         List<String> inputs = new ArrayList<>();
         Set<String> seenInputs = new LinkedHashSet<>();
         for (JsonElement item : inputArray) {
             String name = requireString(item, "input name");
             requireName(name, "input name");
-            if (!seenInputs.add(name)) throw new IllegalArgumentException("duplicate input name: " + name);
+            if (!seenInputs.add(name)) {
+                throw new IllegalArgumentException("duplicate input name: " + name);
+            }
             inputs.add(name);
         }
 
         JsonArray outputArray = requireArray(root, "outputs");
         if (outputArray.isEmpty()) throw new IllegalArgumentException("outputs must not be empty");
-        if (outputArray.size() > MAX_OUTPUTS) {
+        if (outputArray.size() > AiCircuitLimits.MAX_OUTPUTS) {
             throw new IllegalArgumentException("outputs has " + outputArray.size()
-                    + " entries; maximum is " + MAX_OUTPUTS);
+                    + " entries; maximum is " + AiCircuitLimits.MAX_OUTPUTS);
         }
         List<String> outputNames = new ArrayList<>();
-        List<String> expressions = new ArrayList<>();
+        List<String> outputExpressions = new ArrayList<>();
         Set<String> seenOutputs = new LinkedHashSet<>();
+        int totalExpressionLength = 0;
         for (JsonElement item : outputArray) {
             if (!item.isJsonObject()) throw new IllegalArgumentException("each output must be an object");
             JsonObject output = item.getAsJsonObject();
-            requireKeys(output, Set.of("name", "expression"), "output");
+            requireExactKeys(output, Set.of("name", "expression"), "output");
             String name = requireString(output.get("name"), "output name");
             String expression = requireString(output.get("expression"), "output expression");
             requireName(name, "output name");
             if (!seenOutputs.add(name)) throw new IllegalArgumentException("duplicate output name: " + name);
-            if (expression.length() > MAX_EXPRESSION_LENGTH) {
-                throw new IllegalArgumentException("expression for " + name + " exceeds "
-                        + MAX_EXPRESSION_LENGTH + " characters");
-            }
             if (expression.isBlank()) throw new IllegalArgumentException("expression for " + name + " is empty");
+            totalExpressionLength += expression.length();
             outputNames.add(name);
-            expressions.add(expression);
+            outputExpressions.add(expression);
         }
 
-        JsonArray tableArray = requireArray(root, "truthTable");
-        if (tableArray.size() != outputNames.size()) {
-            throw new IllegalArgumentException("truthTable must contain exactly one entry per output");
-        }
-        Map<String, String> claimed = new LinkedHashMap<>();
-        int expectedLength = 1 << inputs.size();
-        for (JsonElement item : tableArray) {
-            if (!item.isJsonObject()) throw new IllegalArgumentException("each truthTable entry must be an object");
-            JsonObject entry = item.getAsJsonObject();
-            requireKeys(entry, Set.of("output", "bits"), "truthTable entry");
-            String output = requireString(entry.get("output"), "truthTable output");
-            String bits = requireString(entry.get("bits"), "truthTable bits");
-            if (!seenOutputs.contains(output)) {
-                throw new IllegalArgumentException("truthTable references unknown output: " + output);
-            }
-            if (claimed.putIfAbsent(output, bits) != null) {
-                throw new IllegalArgumentException("duplicate truthTable output: " + output);
-            }
-            if (bits.length() != expectedLength) {
-                throw new IllegalArgumentException("truthTable bits for " + output + " has length "
-                        + bits.length() + "; expected " + expectedLength);
-            }
-            if (!bits.matches("[01]+")) {
-                throw new IllegalArgumentException("truthTable bits for " + output
-                        + " must contain only 0 and 1");
+        List<String> signalNames = new ArrayList<>();
+        List<String> signalExpressions = new ArrayList<>();
+        Set<String> seenSignals = new LinkedHashSet<>();
+        JsonElement signalsElement = root.get("signals");
+        if (signalsElement != null) {
+            if (!signalsElement.isJsonArray()) throw new IllegalArgumentException("signals must be an array");
+            for (JsonElement item : signalsElement.getAsJsonArray()) {
+                if (!item.isJsonObject()) throw new IllegalArgumentException("each signal must be an object");
+                JsonObject signal = item.getAsJsonObject();
+                requireExactKeys(signal, Set.of("name", "expression"), "signal");
+                String name = requireString(signal.get("name"), "signal name");
+                String expression = requireString(signal.get("expression"), "signal expression");
+                requireName(name, "signal name");
+                if (!seenSignals.add(name)) throw new IllegalArgumentException("duplicate signal name: " + name);
+                if (seenOutputs.contains(name)) {
+                    throw new IllegalArgumentException("signal name conflicts with output: " + name);
+                }
+                if (expression.isBlank()) throw new IllegalArgumentException("expression for signal " + name + " is empty");
+                totalExpressionLength += expression.length();
+                signalNames.add(name);
+                signalExpressions.add(expression);
             }
         }
-        if (!claimed.keySet().equals(seenOutputs)) {
-            throw new IllegalArgumentException("truthTable entries must cover every output");
+        for (String name : signalNames) {
+            if (seenInputs.contains(name)) {
+                throw new IllegalArgumentException("signal name conflicts with declared input: " + name);
+            }
         }
-        return new Answer(root.get("summary").getAsString(), List.copyOf(inputs),
-                List.copyOf(outputNames), List.copyOf(expressions), Map.copyOf(claimed));
+        for (String name : outputNames) {
+            if (seenInputs.contains(name)) {
+                // Output labels may legally equal an input name; the engine signal namespace is separate.
+                continue;
+            }
+        }
+        if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
+            throw new IllegalArgumentException("total expression text exceeds "
+                    + AiCircuitLimits.MAX_EXPRESSION_TEXT + " characters");
+        }
+
+        JsonObject specification = null;
+        JsonElement specElement = root.get("spec");
+        if (specElement != null) {
+            if (!specElement.isJsonObject()) throw new IllegalArgumentException("spec must be an object");
+            specification = specElement.getAsJsonObject().deepCopy();
+            requireExactKeys(specification, Set.of("buses", "rules"), "spec");
+            if (!specification.has("buses") || !specification.get("buses").isJsonObject()) {
+                throw new IllegalArgumentException("spec.buses must be an object");
+            }
+            JsonArray rules = requireArray(specification, "rules");
+            if (rules.size() > AiCircuitLimits.MAX_SPEC_RULES) {
+                throw new IllegalArgumentException("spec.rules has " + rules.size()
+                        + " entries; maximum is " + AiCircuitLimits.MAX_SPEC_RULES);
+            }
+            for (int index = 0; index < rules.size(); index++) {
+                JsonElement ruleElement = rules.get(index);
+                if (!ruleElement.isJsonObject()) {
+                    throw new IllegalArgumentException("spec.rules[" + index + "] must be an object");
+                }
+                JsonObject rule = ruleElement.getAsJsonObject();
+                requireExactKeys(rule, Set.of("out", "expr"), "spec.rules[" + index + "]");
+                requireString(rule.get("out"), "spec.rules[" + index + "].out");
+                String specExpression = requireString(rule.get("expr"),
+                        "spec.rules[" + index + "].expr");
+                totalExpressionLength += specExpression.length();
+            }
+            if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
+                throw new IllegalArgumentException("total expression text exceeds "
+                        + AiCircuitLimits.MAX_EXPRESSION_TEXT + " characters");
+            }
+        }
+        // truthTable is a legacy cache field. It is deliberately never parsed or used as evidence.
+        return new Answer(summary, List.copyOf(inputs), List.copyOf(outputNames),
+                List.copyOf(signalNames), List.copyOf(signalExpressions),
+                List.copyOf(outputExpressions), specification);
     }
 
-    private static void requireKeys(JsonObject object, Set<String> required, String label) {
+    private static void requireExactKeys(JsonObject object, Set<String> expected, String label) {
         Set<String> actual = new LinkedHashSet<>(object.keySet());
-        if (!actual.equals(required)) {
-            Set<String> missing = new LinkedHashSet<>(required);
+        if (!actual.equals(expected)) {
+            Set<String> missing = new LinkedHashSet<>(expected);
             missing.removeAll(actual);
             Set<String> extra = new LinkedHashSet<>(actual);
-            extra.removeAll(required);
+            extra.removeAll(expected);
             throw new IllegalArgumentException(label + " fields invalid; missing="
                     + missing + ", unexpected=" + extra);
         }
@@ -811,50 +1250,6 @@ public final class AiCircuitService {
         if (!NAME.matcher(name).matches()) {
             throw new IllegalArgumentException(label + " must match [A-Za-z][A-Za-z0-9_]*: " + name);
         }
-    }
-
-    private static List<String> compareClaimedTable(Answer answer, TruthTable engineTable) {
-        Map<String, Integer> engineInputPositions = new LinkedHashMap<>();
-        for (int index = 0; index < engineTable.inputNames().size(); index++) {
-            engineInputPositions.put(engineTable.inputNames().get(index), index);
-        }
-
-        Map<Integer, List<String>> mismatchesByRow = new LinkedHashMap<>();
-        for (int outputIndex = 0; outputIndex < engineTable.outputNames().size(); outputIndex++) {
-            String outputName = engineTable.outputNames().get(outputIndex);
-            String claimedBits = answer.claimedBits().get(outputName);
-            for (TruthTable.Row row : engineTable.rows()) {
-                int claimedRowIndex = 0;
-                for (String inputName : answer.inputs()) {
-                    int enginePosition = engineInputPositions.get(inputName);
-                    int bit = row.inputBits().charAt(enginePosition) - '0';
-                    claimedRowIndex = (claimedRowIndex << 1) | bit;
-                }
-
-                Value actual = row.outputValues().get(outputIndex);
-                char actualBit = actual == Value.ONE ? '1' : actual == Value.ZERO ? '0' : 'X';
-                char claimedBit = claimedBits.charAt(claimedRowIndex);
-                if (actualBit != claimedBit || row.oscillating()) {
-                    String detail = outputName + " claimed " + claimedBit
-                            + ", circuit gives " + actualBit;
-                    if (row.oscillating()) detail += " (oscillating)";
-                    mismatchesByRow.computeIfAbsent(row.index(), ignored -> new ArrayList<>())
-                            .add(detail);
-                }
-            }
-        }
-        List<String> result = new ArrayList<>();
-        for (Map.Entry<Integer, List<String>> entry : mismatchesByRow.entrySet()) {
-            TruthTable.Row row = engineTable.rows().get(entry.getKey());
-            StringBuilder assignment = new StringBuilder();
-            for (int inputIndex = 0; inputIndex < engineTable.inputNames().size(); inputIndex++) {
-                if (inputIndex > 0) assignment.append(' ');
-                assignment.append(engineTable.inputNames().get(inputIndex))
-                        .append('=').append(row.inputBits().charAt(inputIndex));
-            }
-            result.add(assignment + ": " + String.join("; ", entry.getValue()));
-        }
-        return List.copyOf(result);
     }
 
     private static String stripCodeFence(String text) {

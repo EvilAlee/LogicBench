@@ -12,6 +12,7 @@ import io.github.evilalee.gatelab.synth.TruthTable;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -60,6 +61,9 @@ public final class AiCircuitDialog extends JDialog {
     private final JButton cancelButton = new JButton("Cancel");
     private final JButton placeButton = new JButton("Place circuit");
     private final JButton testConnectionButton = new JButton("Test connection");
+    private final JCheckBox optimizeInvertingGates =
+            new JCheckBox("Optimize with NAND/NOR/XNOR", true);
+    private final JTextArea expectedRows = new JTextArea(2, 64);
 
     private SwingWorker<?, ?> activeWorker;
     private AiCircuitService.Result currentResult;
@@ -91,6 +95,11 @@ public final class AiCircuitDialog extends JDialog {
             @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
             @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
         });
+        expectedRows.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
+        });
         JScrollPane descriptionScroll = new JScrollPane(description);
         descriptionScroll.setBorder(BorderFactory.createTitledBorder("Circuit description"));
         top.add(descriptionScroll, BorderLayout.CENTER);
@@ -101,7 +110,17 @@ public final class AiCircuitDialog extends JDialog {
         setupHelp.setForeground(new Color(145, 88, 0));
         keyPanel.add(keyStatus, BorderLayout.NORTH);
         keyPanel.add(setupHelp, BorderLayout.CENTER);
-        top.add(keyPanel, BorderLayout.SOUTH);
+        keyPanel.add(optimizeInvertingGates, BorderLayout.EAST);
+        expectedRows.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        expectedRows.setLineWrap(false);
+        JScrollPane expectedRowsScroll = new JScrollPane(expectedRows);
+        expectedRowsScroll.setPreferredSize(new Dimension(500, 58));
+        expectedRowsScroll.setBorder(
+                BorderFactory.createTitledBorder("Expected rows (optional)"));
+        JPanel topFooter = new JPanel(new BorderLayout(4, 4));
+        topFooter.add(expectedRowsScroll, BorderLayout.CENTER);
+        topFooter.add(keyPanel, BorderLayout.SOUTH);
+        top.add(topFooter, BorderLayout.SOUTH);
         add(top, BorderLayout.NORTH);
 
         logArea.setEditable(false);
@@ -202,10 +221,14 @@ public final class AiCircuitDialog extends JDialog {
         statusBadge.setText("WORKING");
         summary.setText("Generating and verifying...");
         appendLog("Starting generation.");
+        boolean optimize = optimizeInvertingGates.isSelected();
+        String rowText = expectedRows.getText();
+        optimizeInvertingGates.setEnabled(false);
+        expectedRows.setEditable(false);
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
-                return service.generate(prompt, cacheOnly);
+                return service.generate(prompt, cacheOnly, optimize, rowText);
             }
 
             @Override
@@ -213,6 +236,8 @@ public final class AiCircuitDialog extends JDialog {
                 activeWorker = null;
                 generateButton.setEnabled(true);
                 description.setEditable(true);
+                optimizeInvertingGates.setEnabled(true);
+                expectedRows.setEditable(true);
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
                     currentResult = get();
@@ -255,8 +280,12 @@ public final class AiCircuitDialog extends JDialog {
                 displaySummary = config.redact(unavailableNotice) + " — " + displaySummary;
             }
         } else if (!result.answeredBy().isBlank()) {
-            String status = result.status() == AiCircuitService.Status.VERIFIED
-                    ? "VERIFIED" : "UNVERIFIED";
+            String status = switch (result.status()) {
+                case VERIFIED -> "VERIFIED";
+                case BUILT -> "BUILT";
+                case UNAVAILABLE -> "UNAVAILABLE";
+                case UNVERIFIED -> "UNVERIFIED";
+            };
             displaySummary += " — " + status + " via " + config.redact(result.answeredBy());
         }
         summary.setText(config.redact(displaySummary));
@@ -268,6 +297,9 @@ public final class AiCircuitDialog extends JDialog {
         } else if (result.status() == AiCircuitService.Status.VERIFIED) {
             statusBadge.setText("VERIFIED");
             statusBadge.setBackground(new Color(215, 240, 220));
+        } else if (result.status() == AiCircuitService.Status.BUILT) {
+            statusBadge.setText("BUILT: no independent check, read the truth table");
+            statusBadge.setBackground(new Color(235, 235, 235));
         } else if (result.status() == AiCircuitService.Status.UNAVAILABLE) {
             statusBadge.setText("UNAVAILABLE");
             statusBadge.setBackground(new Color(250, 235, 195));
@@ -276,12 +308,12 @@ public final class AiCircuitDialog extends JDialog {
             statusBadge.setBackground(new Color(250, 225, 205));
         }
         boolean placeable = result.status() != AiCircuitService.Status.UNAVAILABLE
-                && result.layout() != null
-                && (result.status() == AiCircuitService.Status.VERIFIED
-                    || !result.mismatchingRows().isEmpty());
+                && result.layout() != null;
         placeButton.setEnabled(placeable);
-        if (result.status() == AiCircuitService.Status.UNVERIFIED) {
-            appendLog("UNVERIFIED: the engine did not confirm the model's claim.");
+        if (result.status() == AiCircuitService.Status.BUILT) {
+            appendLog("BUILT: no independent check was supplied; read the engine truth table.");
+        } else if (result.status() == AiCircuitService.Status.UNVERIFIED) {
+            appendLog("UNVERIFIED: one or more validation checks failed.");
         }
     }
 
@@ -325,7 +357,7 @@ public final class AiCircuitDialog extends JDialog {
             String rows = config.redact(String.join("\n", currentResult.mismatchingRows()));
             int answer = JOptionPane.showConfirmDialog(
                     this,
-                    "This circuit is UNVERIFIED. The engine disagreed on these rows:\n\n"
+                    "This circuit is UNVERIFIED. These validation checks failed:\n\n"
                             + rows + "\n\nPlace it anyway?",
                     "Place unverified circuit",
                     JOptionPane.YES_NO_OPTION,
@@ -346,9 +378,12 @@ public final class AiCircuitDialog extends JDialog {
         }
 
         canvas.replaceWithGeneratedCircuit(currentResult.layout().schematic());
-        canvas.setStatusMessage(currentResult.status() == AiCircuitService.Status.VERIFIED
-                ? "AI circuit verified and placed."
-                : "Unverified AI circuit placed after confirmation.");
+        canvas.setStatusMessage(switch (currentResult.status()) {
+            case VERIFIED -> "AI circuit verified against independent checks and placed.";
+            case BUILT -> "AI circuit built; no independent check was supplied.";
+            case UNVERIFIED -> "Unverified AI circuit placed after confirmation.";
+            case UNAVAILABLE -> "AI circuit unavailable.";
+        });
         dispose();
     }
 

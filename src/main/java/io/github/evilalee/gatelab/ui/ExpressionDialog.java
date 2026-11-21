@@ -13,6 +13,7 @@ import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -53,6 +54,8 @@ public final class ExpressionDialog extends JDialog {
     private final JTable truthTable = new JTable(tableModel);
     private JScrollPane tableScroll;
     private final JButton generateButton = new JButton("Generate");
+    private final JCheckBox optimizeInvertingGates =
+            new JCheckBox("Optimize with NAND/NOR/XNOR", false);
     private ExpressionCompiler.Compilation currentCompilation;
     private SchematicLayout.LayoutResult currentLayout;
 
@@ -77,7 +80,11 @@ public final class ExpressionDialog extends JDialog {
         statusLine.setHorizontalAlignment(SwingConstants.LEFT);
         JPanel expressionPanel = new JPanel(new BorderLayout(0, 4));
         expressionPanel.add(expressionScroll, BorderLayout.CENTER);
-        expressionPanel.add(statusLine, BorderLayout.SOUTH);
+        JPanel expressionControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        expressionControls.add(optimizeInvertingGates);
+        expressionControls.add(statusLine);
+        expressionPanel.add(expressionControls, BorderLayout.SOUTH);
+        optimizeInvertingGates.addActionListener(event -> updatePreview());
 
         truthTable.setFillsViewportHeight(true);
         truthTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
@@ -150,7 +157,7 @@ public final class ExpressionDialog extends JDialog {
         tableScroll.setVisible(true);
         try {
             ExpressionCompiler.Compilation compilation =
-                    ExpressionCompiler.compile(expressionText.getText(), true);
+                    ExpressionCompiler.compile(expressionText.getText(), true, optimizeInvertingGates.isSelected());
             currentCompilation = compilation;
             List<String> variables = compilation.netlist().inputs();
             if (compilation.hasSequentialParts()) {
