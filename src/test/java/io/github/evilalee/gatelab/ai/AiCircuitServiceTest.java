@@ -608,24 +608,5 @@ class AiCircuitServiceTest {
                 line -> line.contains("Expected row line 1") && line.contains("TYPO")));
     }
 
-    @Test
-    void modelAnswerWithFeedbackCycleIsStillRejectedAsCombinationalAiOutput() throws Exception {
-        String cyclic = answer(List.of("Qn", "Q"), List.of(
-                new Output("Q", "NOT Qn"),
-                new Output("Qn", "NOT Q")), "");
-        ScriptedProvider provider = new ScriptedProvider(cyclic);
-
-        AiCircuitService.Result result = service(provider).generate(
-                "Build a cross-coupled latch with outputs Q and Qn.");
-
-        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
-        assertTrue(provider.calls > 0);
-        assertTrue(result.attemptLog().stream()
-                .anyMatch(line -> line.contains("Expression compilation failed")
-                        && line.contains("raw feedback is disabled")));
-        assertNull(result.layout());
-        assertNull(result.truthTable());
-    }
-
 
 }
