@@ -125,7 +125,7 @@ class CircuitDescriberTest {
         connect(schematic, gate.id(), "out", output.id(), "in0");
 
         CircuitDescriber.Description description = CircuitDescriber.describe(schematic);
-        assertEquals("n1 := (NOT n1)\\nQ = n1", description.text());
+        assertEquals("n1 := (NOT n1)\nQ = n1", description.text());
 
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile(description.text(), true);
