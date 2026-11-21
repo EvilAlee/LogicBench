@@ -170,6 +170,44 @@ public final class Schematic {
         return List.copyOf(componentInstances);
     }
 
+    /** Returns the topmost black-box instance whose body contains a world point. */
+    public Optional<ComponentInstance> componentInstanceAt(int worldX, int worldY) {
+        for (int index = componentInstances.size() - 1; index >= 0; index--) {
+            ComponentInstance instance = componentInstances.get(index);
+            GateGeometry.Bounds bounds = instance.bounds(componentDefinitionFor(instance));
+            long right = (long) bounds.x() + bounds.width();
+            long bottom = (long) bounds.y() + bounds.height();
+            if (worldX >= bounds.x() && worldX <= right
+                    && worldY >= bounds.y() && worldY <= bottom) {
+                return Optional.of(instance);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Returns black-box instances whose body bounds intersect a marquee rectangle. */
+    public List<ComponentInstance> componentInstancesIntersecting(
+            GateGeometry.Bounds rectangle) {
+        Objects.requireNonNull(rectangle, "rectangle");
+        if (rectangle.width() < 0 || rectangle.height() < 0) {
+            throw new IllegalArgumentException(
+                    "selection rectangle dimensions must not be negative");
+        }
+        long selectionRight = (long) rectangle.x() + rectangle.width();
+        long selectionBottom = (long) rectangle.y() + rectangle.height();
+        List<ComponentInstance> matches = new ArrayList<>();
+        for (ComponentInstance instance : componentInstances) {
+            GateGeometry.Bounds bounds = instance.bounds(componentDefinitionFor(instance));
+            long instanceRight = (long) bounds.x() + bounds.width();
+            long instanceBottom = (long) bounds.y() + bounds.height();
+            if (bounds.x() <= selectionRight && instanceRight >= rectangle.x()
+                    && bounds.y() <= selectionBottom && instanceBottom >= rectangle.y()) {
+                matches.add(instance);
+            }
+        }
+        return List.copyOf(matches);
+    }
+
     public Map<String, ComponentDefinition> componentDefinitions() {
         return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(componentDefinitions));
     }
@@ -251,7 +289,9 @@ public final class Schematic {
             }
         }
         for (int index = 0; index < componentInstances.size(); index++) {
-            if (componentInstances.get(index).id().equals(id)) {
+            ComponentInstance instance = componentInstances.get(index);
+            if (instance.id().equals(id)) {
+                removeWiresAttachedToInstance(id);
                 componentInstances.remove(index);
                 notifyChanged();
                 return true;
@@ -283,7 +323,9 @@ public final class Schematic {
 
         Set<String> movingComponentIds = new LinkedHashSet<>(selectedComponentIds);
         for (String id : movingComponentIds) {
-            indexOf(Objects.requireNonNull(id, "component id"));
+            if (!containsId(Objects.requireNonNull(id, "component id"))) {
+                throw new IllegalArgumentException("unknown component id: " + id);
+            }
         }
         Set<WireSegment> movingWires = new LinkedHashSet<>(selectedWireSegments);
         movingWires.retainAll(wires);
@@ -299,6 +341,15 @@ public final class Schematic {
                         current.id(), current.typeId(),
                         current.x() + deltaX, current.y() + deltaY,
                         current.facing(), current.attributes(), current.label()));
+            }
+        }
+        Map<String, ComponentInstance> instanceReplacements = new HashMap<>();
+        for (ComponentInstance current : componentInstances) {
+            if (movingComponentIds.contains(current.id())) {
+                instanceReplacements.put(current.id(), new ComponentInstance(
+                        current.definitionName(), current.definitionHash(), current.id(),
+                        current.label(), current.x() + deltaX, current.y() + deltaY,
+                        current.rotation()));
             }
         }
 
@@ -318,11 +369,12 @@ public final class Schematic {
             movedWires.add(translated);
         }
 
-        if (replacements.isEmpty() && movingWires.isEmpty()) {
+        if (replacements.isEmpty() && instanceReplacements.isEmpty() && movingWires.isEmpty()) {
             return new MoveResult(List.of(), true);
         }
 
-        GestureCommit commit = commitValidatedGesture(replacements, movingWires, baseWires);
+        GestureCommit commit = commitValidatedGesture(
+                replacements, instanceReplacements, movingWires, baseWires);
         List<WireSegment> selectedAfterCommit = commit.committed()
                 ? movedWires
                 : movingWireOrder;
@@ -341,7 +393,9 @@ public final class Schematic {
         Objects.requireNonNull(facing, "facing");
         Set<String> selected = new LinkedHashSet<>(selectedComponentIds);
         for (String id : selected) {
-            indexOf(Objects.requireNonNull(id, "component id"));
+            if (!containsId(Objects.requireNonNull(id, "component id"))) {
+                throw new IllegalArgumentException("unknown component id: " + id);
+            }
         }
 
         Map<String, PlacedComponent> replacements = new HashMap<>();
@@ -352,11 +406,19 @@ public final class Schematic {
                         facing, current.attributes(), current.label()));
             }
         }
-        if (replacements.isEmpty()) {
+        Map<String, ComponentInstance> instanceReplacements = new HashMap<>();
+        for (ComponentInstance current : componentInstances) {
+            if (selected.contains(current.id()) && current.rotation() != facing) {
+                instanceReplacements.put(current.id(), new ComponentInstance(
+                        current.definitionName(), current.definitionHash(), current.id(),
+                        current.label(), current.x(), current.y(), facing));
+            }
+        }
+        if (replacements.isEmpty() && instanceReplacements.isEmpty()) {
             return true;
         }
         return commitValidatedGesture(
-                replacements, Set.of(), List.copyOf(wires)).linksFollowed();
+                replacements, instanceReplacements, Set.of(), List.copyOf(wires)).linksFollowed();
     }
 
     /**
@@ -423,12 +485,26 @@ public final class Schematic {
             Map<String, PlacedComponent> replacements,
             Set<WireSegment> movingWires,
             List<WireSegment> baseWires) {
+        return commitValidatedGesture(replacements, Map.of(), movingWires, baseWires);
+    }
+
+    private GestureCommit commitValidatedGesture(
+            Map<String, PlacedComponent> replacements,
+            Map<String, ComponentInstance> instanceReplacements,
+            Set<WireSegment> movingWires,
+            List<WireSegment> baseWires) {
         List<Connectivity.PinPosition> beforePins = pinPositions();
         List<WireSegment> originalWires = List.copyOf(wires);
         Map<String, PlacedComponent> originalComponents = new HashMap<>();
         for (PlacedComponent component : components) {
             if (replacements.containsKey(component.id())) {
                 originalComponents.put(component.id(), component);
+            }
+        }
+        Map<String, ComponentInstance> originalInstances = new HashMap<>();
+        for (ComponentInstance instance : componentInstances) {
+            if (instanceReplacements.containsKey(instance.id())) {
+                originalInstances.put(instance.id(), instance);
             }
         }
         Map<PinKey, Integer> beforeNetIds = netIds(beforePins, originalWires);
@@ -441,9 +517,10 @@ public final class Schematic {
         Map<PinKey, Integer> requiredConnectionNetIds =
                 netIds(beforePins, stationaryBeforeWires);
         List<PinMove> pinsToLink = attachedPinsToFollow(
-                replacements, movingWires, beforePins, originalWires);
+                replacements, instanceReplacements, movingWires, beforePins, originalWires);
 
         replaceComponents(replacements);
+        replaceInstances(instanceReplacements);
         wires.clear();
         wires.addAll(baseWires);
         List<Connectivity.PinPosition> afterPins = pinPositions();
@@ -452,6 +529,7 @@ public final class Schematic {
             // If the moved pins themselves land on unrelated old nets, even the M4
             // no-link fallback would be electrically unsafe; reject that placement.
             replaceComponents(originalComponents);
+            replaceInstances(originalInstances);
             wires.clear();
             wires.addAll(originalWires);
             return new GestureCommit(false, false);
@@ -496,10 +574,12 @@ public final class Schematic {
 
     private List<PinMove> attachedPinsToFollow(
             Map<String, PlacedComponent> replacements,
+            Map<String, ComponentInstance> instanceReplacements,
             Set<WireSegment> movingWires,
             List<Connectivity.PinPosition> beforePins,
             List<WireSegment> beforeWires) {
-        Set<String> movingIds = replacements.keySet();
+        Set<String> movingIds = new LinkedHashSet<>(replacements.keySet());
+        movingIds.addAll(instanceReplacements.keySet());
         Set<Connectivity.Point> stationaryPinPoints = new HashSet<>();
         for (Connectivity.PinPosition pin : beforePins) {
             if (!movingIds.contains(pin.componentId())) {
@@ -514,6 +594,10 @@ public final class Schematic {
         for (PlacedComponent component : components) {
             PlacedComponent replacement = replacements.get(component.id());
             newPinsFor(replacement == null ? component : replacement, newPins);
+        }
+        for (ComponentInstance instance : componentInstances) {
+            ComponentInstance replacement = instanceReplacements.get(instance.id());
+            newPinsFor(replacement == null ? instance : replacement, newPins);
         }
 
         List<PinMove> result = new ArrayList<>();
@@ -534,6 +618,15 @@ public final class Schematic {
             }
         }
         return List.copyOf(result);
+    }
+
+    private void newPinsFor(
+            ComponentInstance instance,
+            Map<PinKey, Connectivity.PinPosition> target) {
+        for (Connectivity.PinPosition pin :
+                instance.pinPositions(componentDefinitionFor(instance))) {
+            target.put(key(pin), pin);
+        }
     }
 
     private void newPinsFor(
@@ -563,6 +656,19 @@ public final class Schematic {
             PlacedComponent replacement = replacements.get(current.id());
             if (replacement != null) {
                 components.set(index, replacement);
+            }
+        }
+    }
+
+    private void replaceInstances(Map<String, ComponentInstance> replacements) {
+        if (replacements.isEmpty()) {
+            return;
+        }
+        for (int index = 0; index < componentInstances.size(); index++) {
+            ComponentInstance current = componentInstances.get(index);
+            ComponentInstance replacement = replacements.get(current.id());
+            if (replacement != null) {
+                componentInstances.set(index, replacement);
             }
         }
     }
@@ -1181,6 +1287,15 @@ public final class Schematic {
             throw new IllegalArgumentException("component is not a Clock: " + id);
         }
         return component;
+    }
+
+    private void removeWiresAttachedToInstance(String instanceId) {
+        Set<WireSegment> attached = Connectivity.analyze(pinPositions(), wires).nets().stream()
+                .filter(net -> net.pins().stream()
+                        .anyMatch(pin -> pin.componentId().equals(instanceId)))
+                .flatMap(net -> net.segments().stream())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        wires.removeAll(attached);
     }
 
     private void notifyChanged() {

@@ -186,6 +186,7 @@ public final class CanvasPanel extends JPanel {
     private boolean gestureMoved;
     private boolean additiveMarquee;
     private Map<String, PlacedComponent> moveStartComponents = Map.of();
+    private Map<String, ComponentInstance> moveStartInstances = Map.of();
     private Set<WireSegment> moveStartWires = Set.of();
     private Connectivity.Point wireStartPoint;
     private WireSegment pendingWireHit;
@@ -564,6 +565,11 @@ public final class CanvasPanel extends JPanel {
 
     public List<WireSegment> selectedWires() {
         return List.copyOf(selectedWires);
+    }
+
+    /** Selected black-box instance ids, exposed to selection observers and headless tests. */
+    public List<String> selectedInstanceIds() {
+        return selectedInstances().stream().map(ComponentInstance::id).toList();
     }
 
     public void setSelectionListener(Consumer<List<PlacedComponent>> listener) {
@@ -971,19 +977,8 @@ public final class CanvasPanel extends JPanel {
 
     private ComponentInstance componentInstanceAt(Point screenPoint) {
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
-        int x = (int) Math.floor(world.x);
-        int y = (int) Math.floor(world.y);
-        List<ComponentInstance> instances = schematic.componentInstances();
-        for (int index = instances.size() - 1; index >= 0; index--) {
-            ComponentInstance instance = instances.get(index);
-            ComponentInstance.Geometry geometry =
-                    instance.geometry(schematic.componentDefinitionFor(instance));
-            if (x >= instance.x() && x <= instance.x() + geometry.width()
-                    && y >= instance.y() && y <= instance.y() + geometry.height()) {
-                return instance;
-            }
-        }
-        return null;
+        return schematic.componentInstanceAt(
+                (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
     }
 
     private void openComponentDefinition(ComponentInstance instance) {
@@ -1201,24 +1196,20 @@ public final class CanvasPanel extends JPanel {
         gestureStartScreen = event.getPoint();
         gestureMoved = false;
 
-        boolean shift = event.isShiftDown();
+        boolean additive = event.isShiftDown() || event.isControlDown();
         Connectivity.PinPosition pin = pinNear(world.x, world.y);
         double wireTolerance = 6.0 / transform.scale();
         WireSegment wireHit = schematic.wireAt(world.x, world.y, wireTolerance).orElse(null);
 
-        if (wireHit != null && selectedWires.contains(wireHit) && !shift) {
+        if (wireHit != null && selectedWires.contains(wireHit) && !additive) {
             gesture = Gesture.MOVE_SELECTION;
-            Map<String, PlacedComponent> starting = new LinkedHashMap<>();
-            for (PlacedComponent component : selectedComponents()) {
-                starting.put(component.id(), component);
-            }
-            moveStartComponents = Map.copyOf(starting);
+            captureSelectionForMove();
             moveStartWires = Set.copyOf(selectedWires);
             beginHistoryGesture();
             repaintUnion(oldSelectionBounds, selectionScreenBounds());
             return;
         }
-        if (wireHit != null && shift) {
+        if (wireHit != null && additive) {
             if (!selectedWires.add(wireHit)) {
                 selectedWires.remove(wireHit);
             }
@@ -1227,6 +1218,7 @@ public final class CanvasPanel extends JPanel {
             return;
         }
 
+        // Electrical pin hit-testing precedes instance/gate body hit-testing.
         if (pin != null) {
             startWireGesture(pin.x(), pin.y());
             if (wireHit != null) {
@@ -1248,9 +1240,33 @@ public final class CanvasPanel extends JPanel {
 
         int hitX = (int) Math.floor(world.x);
         int hitY = (int) Math.floor(world.y);
-        PlacedComponent hit = schematic.componentAt(hitX, hitY).orElse(null);
+        ComponentInstance instanceHit = schematic.componentInstanceAt(hitX, hitY).orElse(null);
+        if (instanceHit != null) {
+            if (additive) {
+                if (!selectedIds.add(instanceHit.id())) {
+                    selectedIds.remove(instanceHit.id());
+                }
+                notifySelectionChanged();
+                gesture = Gesture.NONE;
+                repaintUnion(oldSelectionBounds, selectionScreenBounds());
+                return;
+            }
+            if (!selectedIds.contains(instanceHit.id())) {
+                selectedIds.clear();
+                selectedWires.clear();
+                selectedIds.add(instanceHit.id());
+                notifySelectionChanged();
+            }
+            gesture = Gesture.MOVE_SELECTION;
+            captureSelectionForMove();
+            moveStartWires = Set.copyOf(selectedWires);
+            beginHistoryGesture();
+            repaintUnion(oldSelectionBounds, selectionScreenBounds());
+            return;
+        }
 
-        if (hit != null && shift) {
+        PlacedComponent hit = schematic.componentAt(hitX, hitY).orElse(null);
+        if (hit != null && additive) {
             if (!selectedIds.add(hit.id())) {
                 selectedIds.remove(hit.id());
             }
@@ -1261,14 +1277,15 @@ public final class CanvasPanel extends JPanel {
         }
 
         if (hit == null) {
-            if (!shift) {
+            if (!additive) {
                 selectedIds.clear();
                 selectedWires.clear();
                 notifySelectionChanged();
             }
-            additiveMarquee = shift;
+            additiveMarquee = additive;
             gesture = Gesture.SELECT_RECTANGLE;
             moveStartComponents = Map.of();
+            moveStartInstances = Map.of();
             moveStartWires = Set.of();
             repaintUnion(oldSelectionBounds, marqueeScreenBounds());
             return;
@@ -1281,14 +1298,24 @@ public final class CanvasPanel extends JPanel {
             notifySelectionChanged();
         }
         gesture = Gesture.MOVE_SELECTION;
-        Map<String, PlacedComponent> starting = new LinkedHashMap<>();
-        for (PlacedComponent component : selectedComponents()) {
-            starting.put(component.id(), component);
-        }
-        moveStartComponents = Map.copyOf(starting);
+        captureSelectionForMove();
         moveStartWires = Set.copyOf(selectedWires);
         beginHistoryGesture();
         repaintUnion(oldSelectionBounds, selectionScreenBounds());
+    }
+
+    private void captureSelectionForMove() {
+        Map<String, PlacedComponent> startingComponents = new LinkedHashMap<>();
+        for (PlacedComponent component : selectedComponents()) {
+            startingComponents.put(component.id(), component);
+        }
+        moveStartComponents = Map.copyOf(startingComponents);
+
+        Map<String, ComponentInstance> startingInstances = new LinkedHashMap<>();
+        for (ComponentInstance instance : selectedInstances()) {
+            startingInstances.put(instance.id(), instance);
+        }
+        moveStartInstances = Map.copyOf(startingInstances);
     }
 
     private Connectivity.PinPosition pinNear(double worldX, double worldY) {
@@ -1446,8 +1473,10 @@ public final class CanvasPanel extends JPanel {
         if (gesture == Gesture.MOVE_SELECTION && gestureMoved) {
             int deltaX = snapToGrid(pointerWorldX - gestureStartWorldX);
             int deltaY = snapToGrid(pointerWorldY - gestureStartWorldY);
+            Set<String> movingIds = new LinkedHashSet<>(moveStartComponents.keySet());
+            movingIds.addAll(moveStartInstances.keySet());
             Schematic.MoveResult result = schematic.moveSelection(
-                    moveStartComponents.keySet(), moveStartWires, deltaX, deltaY);
+                    movingIds, moveStartWires, deltaX, deltaY);
             selectedWires.clear();
             selectedWires.addAll(result.movedWires());
             statusMessageListener.accept(
@@ -1466,6 +1495,10 @@ public final class CanvasPanel extends JPanel {
             }
             for (PlacedComponent component : hits) {
                 selectedIds.add(component.id());
+            }
+            for (ComponentInstance instance :
+                    schematic.componentInstancesIntersecting(rectangle)) {
+                selectedIds.add(instance.id());
             }
             selectedWires.addAll(wireHits);
             notifySelectionChanged();
@@ -1565,6 +1598,16 @@ public final class CanvasPanel extends JPanel {
         return List.copyOf(selected);
     }
 
+    private List<ComponentInstance> selectedInstances() {
+        List<ComponentInstance> selected = new ArrayList<>();
+        for (ComponentInstance instance : schematic.componentInstances()) {
+            if (selectedIds.contains(instance.id())) {
+                selected.add(instance);
+            }
+        }
+        return List.copyOf(selected);
+    }
+
     private void notifySelectionChanged() {
         selectionListener.accept(selectedComponents());
         notifyAttributeStateChanged();
@@ -1577,6 +1620,7 @@ public final class CanvasPanel extends JPanel {
         gestureMoved = false;
         additiveMarquee = false;
         moveStartComponents = Map.of();
+        moveStartInstances = Map.of();
         moveStartWires = Set.of();
         wireStartPoint = null;
         pendingWireHit = null;
@@ -1779,13 +1823,26 @@ public final class CanvasPanel extends JPanel {
 
             for (ComponentInstance instance : schematic.componentInstances()) {
                 ComponentDefinition definition = schematic.componentDefinitionFor(instance);
-                ComponentInstance.Geometry geometry = instance.geometry(definition);
+                boolean selected = selectedIds.contains(instance.id());
+                boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
+                ComponentInstance rendered = moving
+                        ? translatedInstance(instance, moveDeltaX, moveDeltaY) : instance;
+                ComponentInstance.Geometry geometry = rendered.geometry(definition);
                 int labelMargin = Math.max(
                         DIRTY_REGION_MARGIN + 12,
                         (int) Math.ceil(36.0 * transform.scale()));
                 if (screenClip.intersects(componentInstanceScreenBounds(
-                        instance, 0, 0, labelMargin))) {
-                    paintComponentInstance(worldGraphics, instance, definition, geometry);
+                        rendered, definition, 0, 0, labelMargin))) {
+                    if (moving) {
+                        worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.72f));
+                    } else {
+                        worldGraphics.setComposite(AlphaComposite.SrcOver);
+                    }
+                    paintComponentInstance(worldGraphics, rendered, definition, geometry);
+                    worldGraphics.setComposite(AlphaComposite.SrcOver);
+                    if (selected) {
+                        paintInstanceSelectionOutline(worldGraphics, rendered, definition);
+                    }
                 }
             }
 
@@ -2131,6 +2188,19 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
+    private void paintInstanceSelectionOutline(
+            Graphics2D graphics, ComponentInstance instance, ComponentDefinition definition) {
+        GateGeometry.Bounds bounds = instance.bounds(definition);
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            g2.setColor(new Color(36, 112, 214));
+            g2.setStroke(new BasicStroke((float) (1.4 / transform.scale())));
+            g2.drawRect(bounds.x(), bounds.y(), bounds.width(), bounds.height());
+        } finally {
+            g2.dispose();
+        }
+    }
+
     private Rectangle previewScreenBounds() {
         if (previewComponentName != null) {
             ComponentDefinition definition = componentLibrary.get(previewComponentName);
@@ -2187,6 +2257,10 @@ public final class CanvasPanel extends JPanel {
         for (PlacedComponent component : selectedComponents()) {
             result = union(result, componentScreenBounds(component, 0, 0, DIRTY_REGION_MARGIN));
         }
+        for (ComponentInstance instance : selectedInstances()) {
+            result = union(result, componentInstanceScreenBounds(
+                    instance, 0, 0, DIRTY_REGION_MARGIN));
+        }
         for (WireSegment wire : selectedWires) {
             result = union(result, wireSegmentScreenBounds(wire, DIRTY_REGION_MARGIN + 3));
         }
@@ -2203,6 +2277,12 @@ public final class CanvasPanel extends JPanel {
                     component, 0, 0, DIRTY_REGION_MARGIN));
             result = union(result, componentScreenBounds(
                     component, deltaX, deltaY, DIRTY_REGION_MARGIN));
+        }
+        for (ComponentInstance instance : moveStartInstances.values()) {
+            result = union(result, componentInstanceScreenBounds(
+                    instance, 0, 0, DIRTY_REGION_MARGIN));
+            result = union(result, componentInstanceScreenBounds(
+                    translatedInstance(instance, deltaX, deltaY), 0, 0, DIRTY_REGION_MARGIN));
         }
         for (WireSegment wire : moveStartWires) {
             result = union(result, wireSegmentScreenBounds(wire, DIRTY_REGION_MARGIN + 3));
@@ -2244,6 +2324,14 @@ public final class CanvasPanel extends JPanel {
         int width = Math.abs(wire.x2() - wire.x1());
         int height = Math.abs(wire.y2() - wire.y1());
         return worldBoundsToScreen(new GateGeometry.Bounds(left, top, width, height), margin);
+    }
+
+    private static ComponentInstance translatedInstance(
+            ComponentInstance instance, int deltaX, int deltaY) {
+        return new ComponentInstance(
+                instance.definitionName(), instance.definitionHash(), instance.id(),
+                instance.label(), instance.x() + deltaX, instance.y() + deltaY,
+                instance.rotation());
     }
 
     private static WireSegment translateWire(WireSegment wire, int deltaX, int deltaY) {
