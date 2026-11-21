@@ -41,7 +41,7 @@ class AiCircuitSpecPipelineTest {
     }
 
     @Test
-    void internalSignalsSupportForwardReferencesWithoutBecomingInputs() throws Exception {
+    void internalSignalsRejectForwardReferencesWithoutBecomingInputs() throws Exception {
         JsonArray signals = new JsonArray();
         signals.add(named("RESULT", "MIDDLE ^ A").get(0));
         signals.add(named("MIDDLE", "A & B").get(0));
@@ -50,10 +50,10 @@ class AiCircuitSpecPipelineTest {
                 named("F", "RESULT"),
                 signals, null)).generate("Build a small circuit with an internal forward reference.");
 
-        assertEquals(AiCircuitService.Status.BUILT, result.status());
-        assertEquals(List.of("A", "B"), result.truthTable().inputNames());
-        assertEquals(List.of("F"), result.truthTable().outputNames());
-        assertEquals(4, result.truthTable().rows().size());
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(result.mismatchingRows().stream().anyMatch(line ->
+                line.contains("RESULT") && line.contains("MIDDLE")
+                        && line.contains("before it is defined")));
     }
 
     @Test

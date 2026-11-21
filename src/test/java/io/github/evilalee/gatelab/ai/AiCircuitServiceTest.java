@@ -313,6 +313,26 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void malformedSignalSyntaxKeepsPositionFeedbackAndRetries() throws Exception {
+        Map<String, String> malformed = new LinkedHashMap<>();
+        malformed.put("C1", "A & (B");
+        Map<String, String> corrected = new LinkedHashMap<>();
+        corrected.put("C1", "A & B");
+        ScriptedProvider provider = new ScriptedProvider(
+                answerWithSignals(List.of("A", "B"), List.of(new Output("F", "C1")), malformed, null),
+                answerWithSignals(List.of("A", "B"), List.of(new Output("F", "C1")), corrected, null));
+
+        AiCircuitService.Result result = service(provider).generate("Build a circuit with a named signal.");
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(2, provider.calls);
+        assertTrue(String.join("\\n", provider.conversations.get(1).stream()
+                .map(Turn::text).toList()).contains("Signal 'C1'"));
+        assertTrue(String.join("\\n", provider.conversations.get(1).stream()
+                .map(Turn::text).toList()).contains("position"));
+    }
+
+    @Test
     void unusedIntermediateSignalsProduceNonFatalWarnings() throws Exception {
         Map<String, String> signals = new LinkedHashMap<>();
         signals.put("USED", "A ^ B");

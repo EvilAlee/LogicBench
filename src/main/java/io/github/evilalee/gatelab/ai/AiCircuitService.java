@@ -722,7 +722,7 @@ public final class AiCircuitService {
         List<String> failures = new ArrayList<>(attempt.errors());
         failures.addAll(attempt.mismatchRows());
         List<NamedExpression> signals = new ArrayList<>();
-        if (attempt.answer() != null) {
+        if (attempt.answer() != null && attempt.compilation() != null) {
             for (int index = 0; index < attempt.answer().signalNames().size(); index++) {
                 signals.add(new NamedExpression(attempt.answer().signalNames().get(index),
                         ExpressionParser.parse(attempt.answer().signalExpressions().get(index))));
@@ -1262,20 +1262,6 @@ public final class AiCircuitService {
                 // Syntax feedback with parser position is produced by validate().
             }
             availableSignalInputs.add(signalName);
-        }
-        for (int index = 0; index < outputNames.size(); index++) {
-            String outputName = outputNames.get(index);
-            try {
-                for (String dependency : ExpressionParser.parse(outputExpressions.get(index)).variables()) {
-                    if (!seenInputs.contains(dependency) && !allSignals.contains(dependency)) {
-                        throw new IllegalArgumentException("output '" + outputName
-                                + "' references undeclared name '" + dependency
-                                + "'; output expressions may use declared inputs and signals only");
-                    }
-                }
-            } catch (io.github.evilalee.gatelab.synth.ParseException ignored) {
-                // Syntax feedback with parser position is produced by validate().
-            }
         }
         if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
             throw new IllegalArgumentException("total expression text exceeds "
