@@ -6,6 +6,7 @@ import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.synth.GateOperator;
 import io.github.evilalee.gatelab.synth.Netlist;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("slow")
 class AiCircuitLargeSpecTest {
     private record Output(String name, String expression) { }
 
