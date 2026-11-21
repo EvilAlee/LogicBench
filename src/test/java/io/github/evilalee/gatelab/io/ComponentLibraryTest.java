@@ -406,7 +406,20 @@ class ComponentLibraryTest {
                 .filter(candidate -> candidate.id().equals(pin.componentId()))
                 .findFirst().orElseThrow();
         if (component.typeId().equals("input") || component.typeId().equals("clock")) {
-            return pin.x() + 10;
+            List<PlacedComponent> sources = schematic.components().stream()
+                    .filter(candidate -> candidate.typeId().equals("input")
+                            || candidate.typeId().equals("clock"))
+                    .sorted(java.util.Comparator.comparingInt(PlacedComponent::y)
+                            .thenComparingInt(PlacedComponent::x)
+                            .thenComparing(PlacedComponent::id))
+                    .toList();
+            int sourceIndex = 0;
+            for (; sourceIndex < sources.size(); sourceIndex++) {
+                if (sources.get(sourceIndex).id().equals(component.id())) {
+                    break;
+                }
+            }
+            return pin.x() + 10 + sourceIndex * 20;
         }
         if (component.typeId().equals("output")) {
             return pin.x() - 10;
