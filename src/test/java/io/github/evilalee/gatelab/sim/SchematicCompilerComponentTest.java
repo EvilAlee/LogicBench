@@ -97,10 +97,10 @@ class SchematicCompilerComponentTest {
     @Test
     void passThroughPortAndTwoLevelsOfNestedDefinitionsPropagateValues() {
         ComponentDefinition pass = passThroughDefinition();
-        Fixture direct = topLevelFixture(pass, Set.of("IN"), Set.of("OUT"));
-        direct.schematic().setInputValue(direct.inputIds().get("IN"), true);
+        Fixture direct = topLevelFixture(pass, Set.of("A"), Set.of("Y"));
+        direct.schematic().setInputValue(direct.inputIds().get("A"), true);
         assertEquals(Value.ONE, SchematicCompiler.compileAndSettle(direct.schematic())
-                .outputValues().get(direct.outputIds().get("OUT")));
+                .outputValues().get(direct.outputIds().get("Y")));
 
         ComponentDefinition levelOne = wrapDefinition("LevelOne", pass);
         ComponentDefinition levelTwo = wrapDefinition("LevelTwo", levelOne);
