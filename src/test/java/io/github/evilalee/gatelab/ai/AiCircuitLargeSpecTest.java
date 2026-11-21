@@ -136,15 +136,15 @@ class AiCircuitLargeSpecTest {
         signals.add(new Output("v0", "s0"));
         signals.add(new Output("v1", "s1"));
         signals.add(new Output("v2", "s2"));
-        signals.add(new Output("P3", "s3 ^ u0"));
+        signals.add(new Output("v3", "s3 ^ u0"));
         signals.add(new Output("e4", "s3 & u0"));
-        signals.add(new Output("P4", "s4 ^ u1 ^ e4"));
+        signals.add(new Output("v4", "s4 ^ u1 ^ e4"));
         signals.add(new Output("e5", "(s4 & u1) | (s4 & e4) | (u1 & e4)"));
-        signals.add(new Output("P5", "s5 ^ u2 ^ e5"));
+        signals.add(new Output("v5", "s5 ^ u2 ^ e5"));
         signals.add(new Output("e6", "(s5 & u2) | (s5 & e5) | (u2 & e5)"));
-        signals.add(new Output("P6", "s6 ^ u3 ^ e6"));
+        signals.add(new Output("v6", "s6 ^ u3 ^ e6"));
         signals.add(new Output("e7", "(s6 & u3) | (s6 & e6) | (u3 & e6)"));
-        signals.add(new Output("P7", "e7"));
+        signals.add(new Output("v7", "e7"));
 
         List<Output> outputs = new ArrayList<>();
         for (int i = 7; i >= 0; i--) outputs.add(new Output("P" + i, "P" + i));
