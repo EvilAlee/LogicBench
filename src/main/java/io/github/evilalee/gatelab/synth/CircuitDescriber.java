@@ -102,7 +102,7 @@ public final class CircuitDescriber {
             SchematicNetlistExtractor.Extraction extraction =
                     SchematicNetlistExtractor.extract(dagCopy);
             Map<String, String> gateIds = gateIdsForDag(dagCopy, extraction.netlist());
-            Map<String, String> constants = constantIdsFor(dagCopy, extraction.netlist());
+            Map<String, String> constants = constantIdsForDag(dagCopy, extraction.netlist());
             source = new GraphSource(
                     extraction.netlist(),
                     componentIds(extraction.inputComponentIds(), Map.of(),
