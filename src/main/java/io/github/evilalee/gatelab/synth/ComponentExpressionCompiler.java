@@ -595,7 +595,7 @@ public final class ComponentExpressionCompiler {
             do {
                 candidate = "U" + nextInstance++;
             } while (usedComponentIds.contains(candidate) || assignments.containsKey(candidate));
-            return candidate;
+            return uniqueComponentId(candidate);
         }
 
         private void addNode(Node node) {
@@ -603,8 +603,8 @@ public final class ComponentExpressionCompiler {
                 throw new IllegalArgumentException("duplicate compiled component id: " + node.id);
             }
             for (String signal : node.outputs.values()) {
-                if (!usedSignals.add(signal)) {
-                    throw new IllegalArgumentException("duplicate compiled signal: " + signal);
+                if (!usedSignals.contains(signal)) {
+                    usedSignals.add(signal);
                 }
             }
             nodes.add(node);
@@ -653,18 +653,18 @@ public final class ComponentExpressionCompiler {
             columns.values().forEach(column ->
                     column.sort(Comparator.comparing(node -> node.id)));
 
-            List<Edge> edges = buildEdges(producerBySignal, maxDepth);
+            int outputColumn = maxDepth + 1;
+            int edgeBudget = nodes.stream().mapToInt(node -> node.inputs.size()).sum()
+                    + outputs.size();
+            int columnPitch = Math.max(440, 300 + edgeBudget * 20);
+            int outputLeft = 100 + outputColumn * columnPitch;
+            List<Edge> edges = buildEdges(producerBySignal, maxDepth, outputLeft);
             Map<Integer, Integer> outgoingCounts = new HashMap<>();
             Map<Integer, Integer> incomingCounts = new HashMap<>();
             for (Edge edge : edges) {
                 outgoingCounts.merge(edge.source().depth, 1, Integer::sum);
                 incomingCounts.merge(edge.targetColumn(), 1, Integer::sum);
             }
-            int maximumTracks = Math.max(
-                    outgoingCounts.values().stream().mapToInt(Integer::intValue).max().orElse(0),
-                    incomingCounts.values().stream().mapToInt(Integer::intValue).max().orElse(0));
-            int columnPitch = Math.max(440, 300 + maximumTracks * 20);
-
             Map<Integer, Integer> columnRowStep = new HashMap<>();
             for (Map.Entry<Integer, List<Node>> entry : columns.entrySet()) {
                 int tallest = entry.getValue().stream()
@@ -685,7 +685,6 @@ public final class ComponentExpressionCompiler {
                 }
             }
 
-            int outputLeft = 100 + (maxDepth + 1) * columnPitch;
             int outputRowStep = narrowGate("output", 1).height() + 60;
             for (int index = 0; index < outputs.size(); index++) {
                 OutputSink output = outputs.get(index);
@@ -764,6 +763,7 @@ public final class ComponentExpressionCompiler {
                         edge.targetId(), edge.targetPin(), targetPin.x(), targetPin.y(),
                         sourceTrackX, targetTrackX, laneY, edge.feedback()));
             }
+            currentRoutes = List.copyOf(routes);
 
             for (OutputSink output : outputs) {
                 PinKey targetKey = new PinKey(output.id(), "in0");
@@ -791,7 +791,7 @@ public final class ComponentExpressionCompiler {
         }
 
         private List<Edge> buildEdges(
-                Map<String, Node> producerBySignal, int maxDepth) {
+                Map<String, Node> producerBySignal, int maxDepth, int outputLeft) {
             List<Edge> result = new ArrayList<>();
             for (Node node : nodes) {
                 for (int index = 0; index < node.inputs.size(); index++) {
@@ -819,7 +819,7 @@ public final class ComponentExpressionCompiler {
                     throw new IllegalStateException(
                             "output " + output.name() + " has no producer: " + output.signal());
                 }
-                int left = 100 + outputColumn * Math.max(440, 300 + nodes.size() * 20);
+                int left = outputLeft;
                 result.add(new Edge(
                         output.signal(), producer, producerOutputPin(producer, output.signal()),
                         output.id(), "in0", outputColumn, left,
