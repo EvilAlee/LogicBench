@@ -4,6 +4,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.synth.ExpressionCompiler;
+import io.github.evilalee.gatelab.synth.TruthTable;
+import io.github.evilalee.gatelab.synth.TruthTableGenerator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -83,7 +87,7 @@ class AiCircuitServiceTest {
         JsonArray rules = new JsonArray();
         JsonObject rule = new JsonObject();
         rule.addProperty("out", "F");
-        rule.addProperty("expr", specificationExpression);
+        rule.addProperty("expression", specificationExpression);
         rules.add(rule);
         spec.add("rules", rules);
         root.add("spec", spec);
@@ -92,6 +96,269 @@ class AiCircuitServiceTest {
 
     private static String andAnswer(String bits) {
         return answer(List.of("A", "B"), List.of(new Output("F", "A & B")), bits);
+    }
+
+    private static String answerWithSignals(
+            List<String> inputs, List<Output> outputs,
+            Map<String, String> signals, JsonObject specification) {
+        JsonObject root = JsonParser.parseString(answer(inputs, outputs)).getAsJsonObject();
+        JsonArray signalArray = new JsonArray();
+        signals.forEach((name, expression) -> {
+            JsonObject item = new JsonObject();
+            item.addProperty("name", name);
+            item.addProperty("expression", expression);
+            signalArray.add(item);
+        });
+        root.add("signals", signalArray);
+        if (specification != null) root.add("spec", specification);
+        return root.toString();
+    }
+
+    private static JsonObject rippleAdderSpec() {
+        JsonObject spec = new JsonObject();
+        JsonObject buses = new JsonObject();
+        buses.add("A", pins("A3", "A2", "A1", "A0"));
+        buses.add("B", pins("B3", "B2", "B1", "B0"));
+        buses.add("S", pins("S3", "S2", "S1", "S0"));
+        spec.add("buses", buses);
+        JsonArray rules = new JsonArray();
+        rules.add(specRule("S", "A + B + CIN"));
+        rules.add(specRule("COUT", "(A + B + CIN) >> 4"));
+        spec.add("rules", rules);
+        return spec;
+    }
+
+    private static JsonObject multiplierSpec() {
+        JsonObject spec = new JsonObject();
+        JsonObject buses = new JsonObject();
+        buses.add("A", pins("A3", "A2", "A1", "A0"));
+        buses.add("B", pins("B3", "B2", "B1", "B0"));
+        buses.add("Y", pins("Y7", "Y6", "Y5", "Y4", "Y3", "Y2", "Y1", "Y0"));
+        spec.add("buses", buses);
+        JsonArray rules = new JsonArray();
+        rules.add(specRule("Y", "A * B"));
+        spec.add("rules", rules);
+        return spec;
+    }
+
+    private static JsonArray pins(String... names) {
+        JsonArray result = new JsonArray();
+        for (String name : names) result.add(name);
+        return result;
+    }
+
+    private static JsonObject specRule(String output, String expression) {
+        JsonObject rule = new JsonObject();
+        rule.addProperty("out", output);
+        rule.addProperty("expression", expression);
+        return rule;
+    }
+
+    private static List<String> bitAdderInputs() {
+        return List.of("A3", "A2", "A1", "A0", "B3", "B2", "B1", "B0", "CIN");
+    }
+
+    private static Map<String, String> fourBitRippleSignals() {
+        Map<String, String> signals = new LinkedHashMap<>();
+        for (int bit = 0; bit < 4; bit++) signals.put("G" + bit, "A" + bit + " & B" + bit);
+        for (int bit = 0; bit < 4; bit++) signals.put("P" + bit, "A" + bit + " ^ B" + bit);
+        signals.put("C1", "G0 | (P0 & CIN)");
+        signals.put("C2", "G1 | (P1 & C1)");
+        signals.put("C3", "G2 | (P2 & C2)");
+        signals.put("C4", "G3 | (P3 & C3)");
+        return signals;
+    }
+
+    private static List<Output> fourBitRippleOutputs() {
+        return List.of(
+                new Output("S0", "P0 ^ CIN"), new Output("S1", "P1 ^ C1"),
+                new Output("S2", "P2 ^ C2"), new Output("S3", "P3 ^ C3"),
+                new Output("COUT", "C4"));
+    }
+
+    private static String flatFourBitRippleAdder() {
+        StringBuilder source = new StringBuilder();
+        String carry = "CIN";
+        for (int bit = 0; bit < 4; bit++) {
+            if (!source.isEmpty()) source.append('\n');
+            source.append("S").append(bit).append(" = A").append(bit)
+                    .append(" ^ B").append(bit).append(" ^ (").append(carry).append(")");
+            carry = "((A" + bit + " & B" + bit + ") | ((A" + bit + " ^ B" + bit
+                    + ") & (" + carry + ")))";
+        }
+        source.append("\nCOUT = ").append(carry);
+        return source.toString();
+    }
+
+    private static Map<String, String> fourByFourMultiplierSignals() {
+        Map<String, String> signals = new LinkedHashMap<>();
+        for (int multiplierBit = 0; multiplierBit < 4; multiplierBit++) {
+            for (int multiplicandBit = 0; multiplicandBit < 4; multiplicandBit++) {
+                signals.put("P" + multiplicandBit + multiplierBit,
+                        "A" + multiplicandBit + " & B" + multiplierBit);
+            }
+        }
+        List<List<String>> rows = List.of(
+                List.of("P00", "P10", "P20", "P30", "0", "0", "0", "0"),
+                List.of("0", "P01", "P11", "P21", "P31", "0", "0", "0"),
+                List.of("0", "0", "P02", "P12", "P22", "P32", "0", "0"),
+                List.of("0", "0", "0", "P03", "P13", "P23", "P33", "0"));
+        List<String> sumBits = rows.getFirst();
+        for (int stage = 1; stage <= 3; stage++) {
+            List<String> addend = rows.get(stage);
+            List<String> nextSum = new ArrayList<>(8);
+            String carry = "0";
+            for (int bit = 0; bit < 8; bit++) {
+                String left = sumBits.get(bit);
+                String right = addend.get(bit);
+                String propagate = "PR" + stage + "_" + bit;
+                String sum = "SS" + stage + "_" + bit;
+                signals.put(propagate, left + " ^ " + right);
+                if (bit == 0) {
+                    String firstCarry = "CS" + stage + "_1";
+                    signals.put(firstCarry, propagate + " & 0");
+                    signals.put(sum, propagate);
+                    carry = firstCarry;
+                } else if (bit < 7) {
+                    String generate = "GN" + stage + "_" + bit;
+                    String nextCarry = "CS" + stage + "_" + (bit + 1);
+                    signals.put(generate, left + " & " + right);
+                    signals.put(nextCarry, generate + " | (" + propagate + " & " + carry + ")");
+                    signals.put(sum, propagate + " ^ " + carry);
+                    carry = nextCarry;
+                } else {
+                    signals.put(sum, propagate + " ^ " + carry);
+                }
+                nextSum.add(sum);
+            }
+            sumBits = List.copyOf(nextSum);
+        }
+        return signals;
+    }
+
+    private static List<Output> fourByFourMultiplierOutputs() {
+        List<Output> outputs = new ArrayList<>();
+        for (int bit = 0; bit < 8; bit++) outputs.add(new Output("Y" + bit, "SS3_" + bit));
+        return List.copyOf(outputs);
+    }
+
+    private static Map<Map<String, Boolean>, Map<String, Value>> truthRowsByInputs(TruthTable table) {
+        Map<Map<String, Boolean>, Map<String, Value>> result = new LinkedHashMap<>();
+        for (TruthTable.Row row : table.rows()) {
+            Map<String, Boolean> inputs = new LinkedHashMap<>();
+            for (int index = 0; index < table.inputNames().size(); index++) {
+                inputs.put(table.inputNames().get(index), row.inputValue(index));
+            }
+            Map<String, Value> outputs = new LinkedHashMap<>();
+            for (int index = 0; index < table.outputNames().size(); index++) {
+                outputs.put(table.outputNames().get(index), row.outputValues().get(index));
+            }
+            result.put(Map.copyOf(inputs), Map.copyOf(outputs));
+        }
+        return result;
+    }
+
+    @Test
+    void fourBitRippleAdderUsesOrderedGeneratePropagateAndCarrySignalsAndMatchesFlatCircuit()
+            throws Exception {
+        String raw = answerWithSignals(bitAdderInputs(), fourBitRippleOutputs(),
+                fourBitRippleSignals(), rippleAdderSpec());
+        ScriptedProvider provider = new ScriptedProvider(raw);
+
+        AiCircuitService.Result result = service(provider).generate("Build a 4-bit ripple-carry adder.");
+        TruthTable flat = TruthTableGenerator.generate(
+                ExpressionCompiler.compile(flatFourBitRippleAdder(), false, true).netlist());
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(12, result.signals().size());
+        assertEquals(truthRowsByInputs(flat), truthRowsByInputs(result.truthTable()));
+        assertEquals(List.of("G0", "G1", "G2", "G3", "P0", "P1", "P2", "P3", "C1", "C2", "C3", "C4"),
+                result.signals().stream().map(expression -> expression.name()).toList());
+    }
+
+    @Test
+    void fourByFourMultiplierWithPartialProductSignalsPassesExecutableSpec() throws Exception {
+        List<String> inputs = List.of("A3", "A2", "A1", "A0", "B3", "B2", "B1", "B0");
+        String raw = answerWithSignals(inputs, fourByFourMultiplierOutputs(),
+                fourByFourMultiplierSignals(), multiplierSpec());
+        ScriptedProvider provider = new ScriptedProvider(raw);
+
+        AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(103, result.signals().size());
+        assertEquals(256, result.truthTable().rows().size());
+    }
+
+    @Test
+    void signalDependencyMustReferOnlyToInputsAndEarlierSignals() throws Exception {
+        Map<String, String> forward = new LinkedHashMap<>();
+        forward.put("C2", "C1 ^ A");
+        forward.put("C1", "A & A");
+        Map<String, String> ordered = new LinkedHashMap<>();
+        ordered.put("C1", "A & A");
+        ordered.put("C2", "C1 ^ A");
+        ScriptedProvider provider = new ScriptedProvider(
+                answerWithSignals(List.of("A"), List.of(new Output("F", "C2")), forward, null),
+                answerWithSignals(List.of("A"), List.of(new Output("F", "C2")), ordered, null));
+
+        AiCircuitService.Result result = service(provider).generate("Build an intermediate-signal chain.");
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(2, provider.calls);
+        assertTrue(String.join("\\n", provider.conversations.get(1).stream()
+                .map(Turn::text).toList()).contains("references signal 'C1' before it is defined"));
+    }
+
+    @Test
+    void unusedIntermediateSignalsProduceNonFatalWarnings() throws Exception {
+        Map<String, String> signals = new LinkedHashMap<>();
+        signals.put("USED", "A ^ B");
+        signals.put("UNUSED", "A & B");
+        ScriptedProvider provider = new ScriptedProvider(answerWithSignals(
+                List.of("A", "B"), List.of(new Output("F", "USED")), signals, null));
+
+        AiCircuitService.Result result = service(provider).generate("Build a circuit using a named signal.");
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertTrue(result.attemptLog().stream()
+                .anyMatch(line -> line.contains("Warning: Signal 'UNUSED' is unused")));
+    }
+
+    @Test
+    void noSignalsLeavesThePreviouslyCompiledNetlistUnchanged() throws Exception {
+        AiCircuitService.Result result = service(new ScriptedProvider(andAnswer("")))
+                .generate("Build a two-input AND gate with inputs A and B.");
+        var expected = ExpressionCompiler.compile("F = A & B", false, true).netlist();
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertTrue(result.signals().isEmpty());
+        assertEquals(expected, result.netlist());
+    }
+
+    @Test
+    void signalCountAndIndividualExpressionLengthLimitsAreEnforced() throws Exception {
+        Map<String, String> tooManySignals = new LinkedHashMap<>();
+        for (int index = 0; index <= AiCircuitLimits.MAX_SIGNALS; index++) {
+            tooManySignals.put("S" + index, "A");
+        }
+        ScriptedProvider signalsProvider = new ScriptedProvider(answerWithSignals(
+                List.of("A"), List.of(new Output("F", "A")), tooManySignals, null));
+        AiCircuitService.Result signalsResult = service(signalsProvider).generate("Build a circuit.");
+        assertEquals(AiCircuitService.Status.UNVERIFIED, signalsResult.status());
+        assertTrue(String.join("\\n", signalsResult.attemptLog()).contains(
+                "signals has " + (AiCircuitLimits.MAX_SIGNALS + 1) + " entries; maximum is "
+                        + AiCircuitLimits.MAX_SIGNALS));
+
+        ScriptedProvider expressionProvider = new ScriptedProvider(answer(
+                List.of("A"), List.of(new Output("F", "A".repeat(
+                        AiCircuitLimits.MAX_EXPRESSION_LENGTH + 1)))));
+        AiCircuitService.Result expressionResult = service(expressionProvider).generate("Build a circuit.");
+        assertEquals(AiCircuitService.Status.UNVERIFIED, expressionResult.status());
+        assertTrue(String.join("\\n", expressionResult.attemptLog()).contains(
+                "split the formula into named signals"));
     }
 
     @Test
@@ -427,14 +694,17 @@ class AiCircuitServiceTest {
 
     @Test
     void circuitsOverFourHundredGatesAreRejectedBeforeLayout() throws Exception {
-        StringBuilder expression = new StringBuilder("A");
-        String[] variables = {"B", "C", "D", "E", "F", "G", "H", "I", "J", "A"};
-        for (int index = 0; index < 401; index++) {
-            expression.append(" ^ ").append(variables[index % variables.length]);
+        List<String> inputs = List.of("A", "B", "C", "D", "E", "F", "G", "H", "I", "J");
+        Map<String, String> signals = new LinkedHashMap<>();
+        signals.put("S0", "A ^ B ^ C ^ D ^ E ^ F ^ G ^ H ^ I ^ J");
+        for (int index = 1; index < 60; index++) {
+            signals.put("S" + index,
+                    "S" + (index - 1) + " ^ A ^ B ^ C ^ D ^ E ^ F ^ G ^ H");
         }
-        assertTrue(expression.length() <= AiCircuitLimits.MAX_EXPRESSION_TEXT);
-        List<String> inputs = List.of("A","B","C","D","E","F","G","H","I","J");
-        String raw = answer(inputs, List.of(new Output("Result", expression.toString())), "");
+        String raw = answerWithSignals(inputs,
+                List.of(new Output("Result", "S59")), signals, null);
+        assertTrue(signals.values().stream()
+                .allMatch(expression -> expression.length() <= AiCircuitLimits.MAX_EXPRESSION_LENGTH));
         AiCircuitService.Result result = service(new ScriptedProvider(raw))
                 .generate("Build a large logic network.");
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
@@ -445,9 +715,13 @@ class AiCircuitServiceTest {
 
     @Test
     void totalExpressionTextOverThreeThousandIsRejected() throws Exception {
-        String oversized = "A".repeat(AiCircuitLimits.MAX_EXPRESSION_TEXT + 1);
-        ScriptedProvider provider = new ScriptedProvider(
-                answer(List.of("A"), List.of(new Output("F", oversized)), ""));
+        List<Output> outputs = new ArrayList<>();
+        String legalExpression = "A" + " OR A".repeat(55);
+        assertTrue(legalExpression.length() <= AiCircuitLimits.MAX_EXPRESSION_LENGTH);
+        for (int index = 0; index < 12; index++) {
+            outputs.add(new Output("O" + index, legalExpression));
+        }
+        ScriptedProvider provider = new ScriptedProvider(answer(List.of("A"), outputs));
         AiCircuitService.Result result = service(provider).generate("Build a circuit from this description.");
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
         assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("total expression text exceeds "

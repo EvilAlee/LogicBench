@@ -33,8 +33,11 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
@@ -61,6 +64,7 @@ public final class AiCircuitDialog extends JDialog {
     private final JButton cancelButton = new JButton("Cancel");
     private final JButton placeButton = new JButton("Place circuit");
     private final JButton testConnectionButton = new JButton("Test connection");
+    private final JButton copyExpressionsButton = new JButton("Copy expressions");
     private final JCheckBox optimizeInvertingGates =
             new JCheckBox("Optimize with NAND/NOR/XNOR", true);
     private final JTextArea expectedRows = new JTextArea(2, 64);
@@ -131,8 +135,11 @@ public final class AiCircuitDialog extends JDialog {
 
         expressionsArea.setEditable(false);
         expressionsArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-        expressionsArea.setLineWrap(false);
-        JScrollPane expressionScroll = new JScrollPane(expressionsArea);
+        expressionsArea.setLineWrap(true);
+        expressionsArea.setWrapStyleWord(true);
+        JScrollPane expressionScroll = new JScrollPane(expressionsArea,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         expressionScroll.setBorder(BorderFactory.createTitledBorder("Expressions"));
 
         truthTable.setFillsViewportHeight(true);
@@ -147,8 +154,13 @@ public final class AiCircuitDialog extends JDialog {
         statusBadge.setOpaque(true);
         statusBadge.setBackground(new Color(235, 235, 235));
         statusBadge.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+        JPanel resultActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        copyExpressionsButton.setEnabled(false);
+        copyExpressionsButton.addActionListener(event -> copyExpressions());
+        resultActions.add(copyExpressionsButton);
         resultHeader.add(statusBadge, BorderLayout.WEST);
         resultHeader.add(summary, BorderLayout.CENTER);
+        resultHeader.add(resultActions, BorderLayout.EAST);
         resultPanel.add(resultHeader, BorderLayout.NORTH);
         JSplitPane detailSplit = new JSplitPane(
                 JSplitPane.VERTICAL_SPLIT, expressionScroll, tableScroll);
@@ -267,6 +279,7 @@ public final class AiCircuitDialog extends JDialog {
         generateButton.setText("Generate");
         placeButton.setEnabled(false);
         expressionsArea.setText("");
+        copyExpressionsButton.setEnabled(false);
         tableModel.setTable(null);
         summary.setText(" ");
         statusBadge.setText("READY");
@@ -295,7 +308,8 @@ public final class AiCircuitDialog extends JDialog {
             displaySummary += " — " + status + " via " + config.redact(result.answeredBy());
         }
         summary.setText(config.redact(displaySummary));
-        expressionsArea.setText(formatExpressions(result.expressions()));
+        expressionsArea.setText(formatExpressions(result.signals(), result.expressions()));
+        copyExpressionsButton.setEnabled(!expressionsArea.getText().isBlank());
         tableModel.setTable(result.truthTable());
         if (result.fromCache()) {
             statusBadge.setText("FROM CACHE");
@@ -323,14 +337,60 @@ public final class AiCircuitDialog extends JDialog {
         }
     }
 
-    private String formatExpressions(List<NamedExpression> expressions) {
-        StringBuilder text = new StringBuilder();
-        for (NamedExpression expression : expressions) {
-            if (!text.isEmpty()) text.append('\n');
-            text.append(expression.name()).append(" = ")
-                    .append(formatExpression(expression.expression()));
+    private String formatExpressions(
+            List<NamedExpression> signals, List<NamedExpression> outputs) {
+        return config.redact(String.join("\n",
+                formattedExpressionLines(signals, outputs,
+                        Math.max(1, expressionsArea.getColumns()))));
+    }
+
+    static List<String> formattedExpressionLines(
+            List<NamedExpression> signals, List<NamedExpression> outputs, int width) {
+        List<String> lines = new ArrayList<>();
+        for (NamedExpression signal : signals) {
+            lines.add(signal.name() + " := " + formatExpression(signal.expression()));
         }
-        return config.redact(text.toString());
+        for (NamedExpression output : outputs) {
+            lines.add(output.name() + " = " + formatExpression(output.expression()));
+        }
+        return wrapExpressionLines(String.join("\n", lines), width);
+    }
+
+    static List<String> wrapExpressionLines(String source, int width) {
+        Objects.requireNonNull(source, "source");
+        if (width < 1) throw new IllegalArgumentException("width must be positive");
+        List<String> wrapped = new ArrayList<>();
+        for (String paragraph : source.split("\\n", -1)) {
+            String remaining = paragraph;
+            while (remaining.length() > width) {
+                int split = remaining.lastIndexOf(' ', width);
+                if (split <= 0) split = width;
+                wrapped.add(remaining.substring(0, split));
+                remaining = remaining.substring(split).stripLeading();
+            }
+            wrapped.add(remaining);
+        }
+        return List.copyOf(wrapped);
+    }
+
+    private void copyExpressions() {
+        if (currentResult == null) return;
+        List<String> lines = new ArrayList<>();
+        for (NamedExpression signal : currentResult.signals()) {
+            lines.add(signal.name() + " := " + formatExpression(signal.expression()));
+        }
+        for (NamedExpression output : currentResult.expressions()) {
+            lines.add(output.name() + " = " + formatExpression(output.expression()));
+        }
+        String text = config.redact(String.join("\n", lines));
+        if (text.isBlank()) return;
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new StringSelection(text), null);
+            appendLog("Expressions copied to clipboard.");
+        } catch (RuntimeException exception) {
+            appendLog("Could not access the system clipboard: " + safeMessage(exception));
+        }
     }
 
     private static String formatExpression(Expression expression) {

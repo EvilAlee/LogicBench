@@ -53,7 +53,8 @@ public final class AiCircuitService {
             List<String> attemptLog,
             boolean fromCache,
             String answeredBy,
-            List<String> modelAttempts) {
+            List<String> modelAttempts,
+            List<NamedExpression> signals) {
         public Result {
             if (attemptCount < 0) throw new IllegalArgumentException("attemptCount must not be negative");
             Objects.requireNonNull(status, "status");
@@ -63,6 +64,16 @@ public final class AiCircuitService {
             attemptLog = List.copyOf(attemptLog == null ? List.of() : attemptLog);
             answeredBy = answeredBy == null ? "" : answeredBy;
             modelAttempts = List.copyOf(modelAttempts == null ? List.of() : modelAttempts);
+            signals = List.copyOf(signals == null ? List.of() : signals);
+        }
+
+        public Result(int attemptCount, Status status, String summary,
+                      List<NamedExpression> expressions, Netlist netlist,
+                      SchematicLayout.LayoutResult layout, TruthTable truthTable,
+                      List<String> mismatchingRows, List<String> attemptLog,
+                      boolean fromCache, String answeredBy, List<String> modelAttempts) {
+            this(attemptCount, status, summary, expressions, netlist, layout, truthTable,
+                    mismatchingRows, attemptLog, fromCache, answeredBy, modelAttempts, List.of());
         }
 
         public Result(int attemptCount, Status status, String summary,
@@ -71,7 +82,7 @@ public final class AiCircuitService {
                       List<String> mismatchingRows, List<String> attemptLog,
                       boolean fromCache) {
             this(attemptCount, status, summary, expressions, netlist, layout, truthTable,
-                    mismatchingRows, attemptLog, fromCache, "", List.of());
+                    mismatchingRows, attemptLog, fromCache, "", List.of(), List.of());
         }
     }
 
@@ -202,11 +213,11 @@ public final class AiCircuitService {
         JsonObject ruleExpr = new JsonObject();
         ruleExpr.addProperty("type", "STRING");
         ruleProperties.add("out", ruleOut);
-        ruleProperties.add("expr", ruleExpr);
+        ruleProperties.add("expression", ruleExpr);
         JsonObject ruleItem = new JsonObject();
         ruleItem.addProperty("type", "OBJECT");
         ruleItem.add("properties", ruleProperties);
-        ruleItem.add("required", stringArray("out", "expr"));
+        ruleItem.add("required", stringArray("out", "expression"));
         ruleItem.addProperty("additionalProperties", false);
         JsonObject rules = new JsonObject();
         rules.addProperty("type", "ARRAY");
@@ -249,46 +260,49 @@ public final class AiCircuitService {
     /** Short model instruction; verification comes from code, never model-claimed rows. */
     public static String systemPrompt() {
         return """
-                You write Boolean circuits. Return ONLY JSON for the supplied schema:
-                summary, inputs, outputs, optional signals, optional spec. Never output a
-                truth table. Use only declared primary inputs. Limits: 10 inputs, 16 outputs,
-                400 gates, 3000 total expression characters, 16 spec rules; user rows max 64.
+                You design digital logic circuits. Reply with JSON only, shaped as {summary, inputs, outputs, signals, spec}.
+                inputs: single-bit pin names.
+                outputs: list of {name, expression} for ONLY the pins the user asked for.
+                signals: ordered list of {name, expression} for every intermediate value (propagate, generate, carries, partial products).
+                A signal may use inputs and EARLIER signals only. Reuse earlier signals: never expand an earlier carry inside a later formula; write C2 from C1 and C3 from C2.
+                Output expressions use inputs and signals. Every expression is at most 300 characters.
+                Operators: & | ^ ! parentheses and the words NAND NOR XNOR.
+                Default to ripple carry for adders (each carry from the previous carry).
+                If the user explicitly asks for carry lookahead, write each carry directly from P, G and CIN using named product signals.
+                spec: {buses: {A: [A3,A2,A1,A0]}, rules: [{out, expression}]} using integer arithmetic over bus names, for example S = A + B + CIN, and it must cover every output.
 
-                Expressions use identifiers [A-Za-z][A-Za-z0-9_]*, constants 0/1, parentheses,
-                prefix !, ~, NOT, postfix ', AND &, *, AND, NAND, XOR ^, XNOR, OR |, +, NOR.
-                NAND, NOR and XNOR are operator words. Outputs use {name, expression};
-                internal named signals use {name, expression} in signals and compile as
-                name := expression. Forward references between signals are allowed.
-                List every primary input exactly once; do not list internal signals as inputs.
+                Additional response limits: at most 10 inputs, 16 outputs, 160 signals, 400 gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
 
-                Add an executable spec for arithmetic, comparison, selection, parity, counting
-                and decoders. Omit spec for irregular logic whose behavior is not compactly
-                described by integer rules. A spec is {buses:{bus:[pins...]},rules:[{out,expr}]};
-                bus pins are MSB first, and every output pin must be covered. A pin not grouped
-                in buses is its own one-bit bus. Specs use decimal integer arithmetic and
-                bitwise expressions; they are checked against every engine input combination.
-                The circuit expressions and the spec are both independently checked.
-
-                Example 1 — 2-bit adder with carry-in:
-                {"summary":"2-bit adder","inputs":["A1","A0","B1","B0","CIN"],
-                 "signals":[{"name":"C1","expression":"(A0 & B0) | (A0 & CIN) | (B0 & CIN)"}],
+                Example 1 — 4-bit ripple-carry adder:
+                {"summary":"4-bit ripple adder","inputs":["A3","A2","A1","A0","B3","B2","B1","B0","CIN"],
+                 "signals":[
+                  {"name":"G0","expression":"A0 & B0"},{"name":"G1","expression":"A1 & B1"},
+                  {"name":"G2","expression":"A2 & B2"},{"name":"G3","expression":"A3 & B3"},
+                  {"name":"P0","expression":"A0 ^ B0"},{"name":"P1","expression":"A1 ^ B1"},
+                  {"name":"P2","expression":"A2 ^ B2"},{"name":"P3","expression":"A3 ^ B3"},
+                  {"name":"C1","expression":"G0 | (P0 & CIN)"},
+                  {"name":"C2","expression":"G1 | (P1 & C1)"},
+                  {"name":"C3","expression":"G2 | (P2 & C2)"},
+                  {"name":"C4","expression":"G3 | (P3 & C3)"}],
                  "outputs":[
-                  {"name":"S0","expression":"A0 ^ B0 ^ CIN"},
-                  {"name":"S1","expression":"A1 ^ B1 ^ C1"},
-                  {"name":"COUT","expression":"(A1 & B1) | (A1 & C1) | (B1 & C1)"}],
-                 "spec":{"buses":{"A":["A1","A0"],"B":["B1","B0"],"S":["S1","S0"]},
-                         "rules":[{"out":"S","expr":"A + B + CIN"},
-                                  {"out":"COUT","expr":"(A + B + CIN) >> 2"}]}}
+                  {"name":"S0","expression":"P0 ^ CIN"},{"name":"S1","expression":"P1 ^ C1"},
+                  {"name":"S2","expression":"P2 ^ C2"},{"name":"S3","expression":"P3 ^ C3"},
+                  {"name":"COUT","expression":"C4"}],
+                 "spec":{"buses":{"A":["A3","A2","A1","A0"],"B":["B3","B2","B1","B0"],"S":["S3","S2","S1","S0"]},
+                         "rules":[{"out":"S","expression":"A + B + CIN"},
+                                  {"out":"COUT","expression":"(A + B + CIN) >> 4}]}}
 
-                Example 2 — 2-to-4 decoder with enable:
-                {"summary":"enabled decoder","inputs":["A1","A0","E"],
-                 "outputs":[
-                  {"name":"D0","expression":"E & NOT A1 & NOT A0"},
-                  {"name":"D1","expression":"E & NOT A1 & A0"},
-                  {"name":"D2","expression":"E & A1 & NOT A0"},
-                  {"name":"D3","expression":"E & A1 & A0"}],
-                 "spec":{"buses":{"A":["A1","A0"],"D":["D3","D2","D1","D0"]},
-                         "rules":[{"out":"D","expr":"E << A"}]}}
+                Example 2 — 4x4 multiplier partial-product signal fragment:
+                {"signals":[
+                 {"name":"P00","expression":"A0 & B0"},{"name":"P10","expression":"A1 & B0"},
+                 {"name":"P20","expression":"A2 & B0"},{"name":"P30","expression":"A3 & B0"},
+                 {"name":"P01","expression":"A0 & B1"},{"name":"P11","expression":"A1 & B1"},
+                 {"name":"P21","expression":"A2 & B1"},{"name":"P31","expression":"A3 & B1"},
+                 {"name":"P02","expression":"A0 & B2"},{"name":"P12","expression":"A1 & B2"},
+                 {"name":"P22","expression":"A2 & B2"},{"name":"P32","expression":"A3 & B2"},
+                 {"name":"P03","expression":"A0 & B3"},{"name":"P13","expression":"A1 & B3"},
+                 {"name":"P23","expression":"A2 & B3"},{"name":"P33","expression":"A3 & B3"}]}
+                Continue these partial products with ordered carry-save/ripple sum and carry signals, then output Y0 through Y7. The multiplier spec uses buses A=[A3,A2,A1,A0], B=[B3,B2,B1,B0], Y=[Y7,Y6,Y5,Y4,Y3,Y2,Y1,Y0] and rule {out:Y, expression:"A * B"}.
                 """;
     }
 
@@ -313,7 +327,7 @@ public final class AiCircuitService {
 
     /**
      * Generates a circuit with optional caller-supplied expected rows.
-     * Provider transport, model retry/fallback and cache-fallback policy are unchanged.
+     * Provider transport and model retry/fallback policy are unchanged.
      */
     public Result generate(
             String description, boolean cacheOnly, boolean invertingGates,
@@ -707,12 +721,19 @@ public final class AiCircuitService {
                           String answeredBy, List<String> modelAttempts) {
         List<String> failures = new ArrayList<>(attempt.errors());
         failures.addAll(attempt.mismatchRows());
+        List<NamedExpression> signals = new ArrayList<>();
+        if (attempt.answer() != null) {
+            for (int index = 0; index < attempt.answer().signalNames().size(); index++) {
+                signals.add(new NamedExpression(attempt.answer().signalNames().get(index),
+                        ExpressionParser.parse(attempt.answer().signalExpressions().get(index))));
+            }
+        }
         return new Result(attempts, status,
                 attempt.answer() == null ? "" : provider.redact(attempt.answer().summary()),
                 attempt.compilation() == null ? List.of() : attempt.compilation().expressions(),
                 attempt.compilation() == null ? null : attempt.compilation().netlist(),
                 attempt.layout(), attempt.truthTable(), failures, log, fromCache,
-                answeredBy, modelAttempts);
+                answeredBy, modelAttempts, signals);
     }
 
     private Attempt validate(String raw, boolean invertingGates, String expectedRowsText) {
@@ -840,7 +861,8 @@ public final class AiCircuitService {
         }
 
         List<String> structuralFailures = structuralErrors(engineTable);
-        List<String> warnings = structuralWarnings(compilation.netlist(), engineTable);
+        List<String> warnings = new ArrayList<>(structuralWarnings(compilation.netlist(), engineTable));
+        warnings.addAll(unusedSignalWarnings(answer));
         if (!structuralFailures.isEmpty()) {
             return new Attempt(answer, compilation, placed, engineTable, List.of(),
                     structuralFailures, warnings,
@@ -900,6 +922,34 @@ public final class AiCircuitService {
             if (errors.size() >= 8) break;
         }
         return List.copyOf(errors);
+    }
+
+    private static List<String> unusedSignalWarnings(Answer answer) {
+        if (answer.signalNames().isEmpty()) return List.of();
+        Map<String, String> expressionsBySignal = new LinkedHashMap<>();
+        for (int index = 0; index < answer.signalNames().size(); index++) {
+            expressionsBySignal.put(answer.signalNames().get(index),
+                    answer.signalExpressions().get(index));
+        }
+        Set<String> reachable = new LinkedHashSet<>();
+        List<String> pending = new ArrayList<>();
+        for (String expression : answer.expressionTexts()) {
+            pending.addAll(ExpressionParser.parse(expression).variables());
+        }
+        for (int index = 0; index < pending.size(); index++) {
+            String dependency = pending.get(index);
+            String expression = expressionsBySignal.get(dependency);
+            if (expression != null && reachable.add(dependency)) {
+                pending.addAll(ExpressionParser.parse(expression).variables());
+            }
+        }
+        List<String> warnings = new ArrayList<>();
+        for (String signal : answer.signalNames()) {
+            if (!reachable.contains(signal)) {
+                warnings.add("Signal '" + signal + "' is unused; remove it or reference it from an output.");
+            }
+        }
+        return List.copyOf(warnings);
     }
 
     private static List<String> structuralWarnings(Netlist netlist, TruthTable table) {
@@ -1150,6 +1200,7 @@ public final class AiCircuitService {
             requireName(name, "output name");
             if (!seenOutputs.add(name)) throw new IllegalArgumentException("duplicate output name: " + name);
             if (expression.isBlank()) throw new IllegalArgumentException("expression for " + name + " is empty");
+            requireExpressionLength(expression, "output '" + name + "'");
             totalExpressionLength += expression.length();
             outputNames.add(name);
             outputExpressions.add(expression);
@@ -1161,6 +1212,10 @@ public final class AiCircuitService {
         JsonElement signalsElement = root.get("signals");
         if (signalsElement != null) {
             if (!signalsElement.isJsonArray()) throw new IllegalArgumentException("signals must be an array");
+            if (signalsElement.getAsJsonArray().size() > AiCircuitLimits.MAX_SIGNALS) {
+                throw new IllegalArgumentException("signals has " + signalsElement.getAsJsonArray().size()
+                        + " entries; maximum is " + AiCircuitLimits.MAX_SIGNALS);
+            }
             for (JsonElement item : signalsElement.getAsJsonArray()) {
                 if (!item.isJsonObject()) throw new IllegalArgumentException("each signal must be an object");
                 JsonObject signal = item.getAsJsonObject();
@@ -1173,6 +1228,7 @@ public final class AiCircuitService {
                     throw new IllegalArgumentException("signal name conflicts with output: " + name);
                 }
                 if (expression.isBlank()) throw new IllegalArgumentException("expression for signal " + name + " is empty");
+                requireExpressionLength(expression, "signal '" + name + "'");
                 totalExpressionLength += expression.length();
                 signalNames.add(name);
                 signalExpressions.add(expression);
@@ -1183,10 +1239,42 @@ public final class AiCircuitService {
                 throw new IllegalArgumentException("signal name conflicts with declared input: " + name);
             }
         }
-        for (String name : outputNames) {
-            if (seenInputs.contains(name)) {
-                // Output labels may legally equal an input name; the engine signal namespace is separate.
-                continue;
+
+        Set<String> allSignals = new LinkedHashSet<>(signalNames);
+        Set<String> availableSignalInputs = new LinkedHashSet<>(seenInputs);
+        for (int index = 0; index < signalNames.size(); index++) {
+            String signalName = signalNames.get(index);
+            String signalExpression = signalExpressions.get(index);
+            try {
+                for (String dependency : ExpressionParser.parse(signalExpression).variables()) {
+                    if (!availableSignalInputs.contains(dependency)) {
+                        if (allSignals.contains(dependency)) {
+                            throw new IllegalArgumentException("signal '" + signalName
+                                    + "' references signal '" + dependency
+                                    + "' before it is defined; signals may use declared inputs and earlier signals only");
+                        }
+                        throw new IllegalArgumentException("signal '" + signalName
+                                + "' references undeclared name '" + dependency
+                                + "'; signals may use declared inputs and earlier signals only");
+                    }
+                }
+            } catch (io.github.evilalee.gatelab.synth.ParseException ignored) {
+                // Syntax feedback with parser position is produced by validate().
+            }
+            availableSignalInputs.add(signalName);
+        }
+        for (int index = 0; index < outputNames.size(); index++) {
+            String outputName = outputNames.get(index);
+            try {
+                for (String dependency : ExpressionParser.parse(outputExpressions.get(index)).variables()) {
+                    if (!seenInputs.contains(dependency) && !allSignals.contains(dependency)) {
+                        throw new IllegalArgumentException("output '" + outputName
+                                + "' references undeclared name '" + dependency
+                                + "'; output expressions may use declared inputs and signals only");
+                    }
+                }
+            } catch (io.github.evilalee.gatelab.synth.ParseException ignored) {
+                // Syntax feedback with parser position is produced by validate().
             }
         }
         if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
@@ -1214,10 +1302,23 @@ public final class AiCircuitService {
                     throw new IllegalArgumentException("spec.rules[" + index + "] must be an object");
                 }
                 JsonObject rule = ruleElement.getAsJsonObject();
-                requireExactKeys(rule, Set.of("out", "expr"), "spec.rules[" + index + "]");
+                Set<String> keys = new LinkedHashSet<>(rule.keySet());
+                boolean legacyExpression = keys.equals(Set.of("out", "expr"));
+                boolean currentExpression = keys.equals(Set.of("out", "expression"));
+                if (!legacyExpression && !currentExpression) {
+                    throw new IllegalArgumentException("spec.rules[" + index
+                            + "] must contain exactly out and expression");
+                }
                 requireString(rule.get("out"), "spec.rules[" + index + "].out");
-                String specExpression = requireString(rule.get("expr"),
-                        "spec.rules[" + index + "].expr");
+                String specExpression = requireString(
+                        rule.get(currentExpression ? "expression" : "expr"),
+                        "spec.rules[" + index + "].expression");
+                requireExpressionLength(specExpression,
+                        "spec rule '" + rule.get("out").getAsString() + "'");
+                if (currentExpression) {
+                    rule.add("expr", rule.get("expression").deepCopy());
+                    rule.remove("expression");
+                }
                 totalExpressionLength += specExpression.length();
             }
             if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
@@ -1229,6 +1330,14 @@ public final class AiCircuitService {
         return new Answer(summary, List.copyOf(inputs), List.copyOf(outputNames),
                 List.copyOf(signalNames), List.copyOf(signalExpressions),
                 List.copyOf(outputExpressions), specification);
+    }
+
+    private static void requireExpressionLength(String expression, String label) {
+        if (expression.length() > AiCircuitLimits.MAX_EXPRESSION_LENGTH) {
+            throw new IllegalArgumentException(label + " exceeds "
+                    + AiCircuitLimits.MAX_EXPRESSION_LENGTH
+                    + " characters; split the formula into named signals");
+        }
     }
 
     private static void requireExactKeys(JsonObject object, Set<String> expected, String label) {
