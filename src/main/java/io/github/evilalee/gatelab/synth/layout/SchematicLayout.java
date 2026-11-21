@@ -174,6 +174,30 @@ public final class SchematicLayout {
     private record ChannelSignal(int channel, String signal) {
     }
 
+    private enum FeedbackOrdering {
+        DRIVER_BARYCENTER,
+        REVERSED_DRIVER_BARYCENTER,
+        CONSUMER_BARYCENTER,
+        DAG_SWEEPS
+    }
+
+    private record LayoutMeasurements(
+            int width, int height, long area, long wireLength) {
+        String display() {
+            return width + "x" + height + " area=" + area + " wire=" + wireLength;
+        }
+    }
+
+    private record CompactCandidate(
+            LayoutResult result,
+            FeedbackOrdering ordering,
+            LayoutMeasurements measurements) {
+        String description() {
+            return "selected compact ordering=" + ordering
+                    + " " + measurements.display();
+        }
+    }
+
     private record PinKey(String componentId, String pinId) {
     }
 
@@ -259,8 +283,9 @@ public final class SchematicLayout {
             if (forceCompactFailure) {
                 throw new IllegalStateException("forced compact failure (test hook)");
             }
+            CompactCandidate candidate = bestCompactCandidate(extraction, 1);
             return new FeedbackLayoutRun(
-                    build(extraction.dagNetlist(), 1, extraction), false, "");
+                    candidate.result(), false, candidate.description());
         } catch (RuntimeException failure) {
             firstFailure = failure;
         }
@@ -271,8 +296,9 @@ public final class SchematicLayout {
                 throw new IllegalStateException(
                         "forced doubled-spacing compact failure (test hook)");
             }
+            CompactCandidate candidate = bestCompactCandidate(extraction, 2);
             return new FeedbackLayoutRun(
-                    build(extraction.dagNetlist(), 2, extraction), false, "");
+                    candidate.result(), false, candidate.description());
         } catch (RuntimeException failure) {
             retryFailure = failure;
         }
@@ -310,6 +336,77 @@ public final class SchematicLayout {
                 legacy.gateComponentIds());
     }
 
+    /**
+     * Builds every deterministic feedback-ordering variant. Each call to build()
+     * runs the production overlap and Connectivity.analyze self-checks; failed
+     * variants are excluded rather than repaired or scored. The best valid
+     * candidate is selected by full schematic bounding-box area, then Manhattan
+     * wire length, with enum order as a stable final tie-breaker.
+     */
+    private CompactCandidate bestCompactCandidate(
+            FeedbackCircuitExtractor.Extraction extraction, int spacingFactor) {
+        List<CompactCandidate> valid = new ArrayList<>();
+        List<RuntimeException> failures = new ArrayList<>();
+        for (FeedbackOrdering ordering : FeedbackOrdering.values()) {
+            try {
+                LayoutResult result = build(
+                        extraction.dagNetlist(), spacingFactor, extraction, ordering);
+                valid.add(new CompactCandidate(
+                        result, ordering, measureLayout(result.schematic())));
+            } catch (RuntimeException failure) {
+                failures.add(new IllegalStateException(
+                        "ordering " + ordering + " failed at spacing factor "
+                                + spacingFactor + ": " + failure.getMessage(),
+                        failure));
+            }
+        }
+        if (valid.isEmpty()) {
+            IllegalStateException failure = new IllegalStateException(
+                    "No valid compact feedback ordering at spacing factor "
+                            + spacingFactor + " (" + failures.size()
+                            + " deterministic variants tried)");
+            failures.forEach(failure::addSuppressed);
+            throw failure;
+        }
+
+        valid.sort(Comparator
+                .comparingLong((CompactCandidate candidate) ->
+                        candidate.measurements().area())
+                .thenComparingLong(candidate -> candidate.measurements().wireLength())
+                .thenComparing(candidate -> candidate.ordering().ordinal()));
+        return valid.getFirst();
+    }
+
+    private static LayoutMeasurements measureLayout(Schematic schematic) {
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        for (PlacedComponent component : schematic.components()) {
+            GateGeometry.Bounds bounds = worldBounds(schematic, component);
+            minX = Math.min(minX, bounds.x());
+            minY = Math.min(minY, bounds.y());
+            maxX = Math.max(maxX, bounds.x() + bounds.width());
+            maxY = Math.max(maxY, bounds.y() + bounds.height());
+        }
+        long wireLength = 0L;
+        for (WireSegment wire : schematic.wires()) {
+            minX = Math.min(minX, Math.min(wire.x1(), wire.x2()));
+            minY = Math.min(minY, Math.min(wire.y1(), wire.y2()));
+            maxX = Math.max(maxX, Math.max(wire.x1(), wire.x2()));
+            maxY = Math.max(maxY, Math.max(wire.y1(), wire.y2()));
+            wireLength += Math.abs(wire.x2() - wire.x1())
+                    + Math.abs(wire.y2() - wire.y1());
+        }
+        if (minX == Integer.MAX_VALUE) {
+            return new LayoutMeasurements(0, 0, 0L, wireLength);
+        }
+        int width = maxX - minX;
+        int height = maxY - minY;
+        return new LayoutMeasurements(
+                width, height, (long) width * height, wireLength);
+    }
+
     private static IllegalStateException compactFailure(
             RuntimeException firstFailure, RuntimeException retryFailure) {
         Set<String> involved = new TreeSet<>();
@@ -330,6 +427,14 @@ public final class SchematicLayout {
     private LayoutResult build(
             Netlist netlist, int spacingFactor,
             FeedbackCircuitExtractor.Extraction feedback) {
+        return build(netlist, spacingFactor, feedback, FeedbackOrdering.DRIVER_BARYCENTER);
+    }
+
+    private LayoutResult build(
+            Netlist netlist,
+            int spacingFactor,
+            FeedbackCircuitExtractor.Extraction feedback,
+            FeedbackOrdering feedbackOrdering) {
         Map<String, Integer> depthBySignal = new LinkedHashMap<>();
         netlist.inputs().forEach(name -> depthBySignal.put(name, 0));
 
@@ -472,9 +577,24 @@ public final class SchematicLayout {
         if (feedback == null) {
             orderColumns(columns);
             assignInputColumn(inputColumnNodes, rowGap);
+        } else if (feedbackOrdering == FeedbackOrdering.DAG_SWEEPS) {
+            // This candidate deliberately reuses the ordinary four-pass
+            // neighbor ordering. The production DAG path remains unchanged;
+            // any feedback topology it invalidates is discarded by the
+            // candidate self-check before selection.
+            orderColumns(columns);
+            assignFeedbackInputColumns(inputColumnNodes, rowGap);
         } else {
             assignFeedbackInputColumns(inputColumnNodes, rowGap);
-            orderFeedbackColumns(columns);
+            switch (feedbackOrdering) {
+                case DRIVER_BARYCENTER -> orderFeedbackColumns(columns);
+                case REVERSED_DRIVER_BARYCENTER ->
+                        orderFeedbackColumns(columns, true);
+                case CONSUMER_BARYCENTER ->
+                        orderFeedbackColumnsByConsumers(columns, routeSteps);
+                case DAG_SWEEPS -> throw new IllegalStateException(
+                        "DAG sweep ordering is handled before input seeding");
+            }
         }
         optimizeVerticalPositions(
                 columns, outputNodes, routeSteps, rowGap, feedback != null);
@@ -805,12 +925,43 @@ public final class SchematicLayout {
     }
 
     private static void orderFeedbackColumns(List<List<Node>> columns) {
+        orderFeedbackColumns(columns, false);
+    }
+
+    private static void orderFeedbackColumns(
+            List<List<Node>> columns, boolean reverseDriverOrder) {
+        for (int column = 1; column < columns.size(); column++) {
+            List<Node> layer = columns.get(column);
+            Comparator<Node> comparator =
+                    Comparator.comparingDouble(SchematicLayout::driverBarycenter)
+                            .thenComparing(SchematicLayout::nodeTieBreakId);
+            layer.sort(reverseDriverOrder
+                    ? comparator.reversed()
+                    : comparator);
+        }
+    }
+
+    private static void orderFeedbackColumnsByConsumers(
+            List<List<Node>> columns, List<RouteStep> routeSteps) {
         for (int column = 1; column < columns.size(); column++) {
             List<Node> layer = columns.get(column);
             layer.sort(Comparator
-                    .comparingDouble(SchematicLayout::driverBarycenter)
+                    .comparingDouble((Node node) ->
+                            consumerBarycenter(node, routeSteps))
                     .thenComparing(SchematicLayout::nodeTieBreakId));
         }
+    }
+
+    private static double consumerBarycenter(Node node, List<RouteStep> routeSteps) {
+        long total = 0L;
+        int count = 0;
+        for (RouteStep step : routeSteps) {
+            if (step.source() == node) {
+                total += targetPinY(step);
+                count++;
+            }
+        }
+        return count == 0 ? node.y : total / (double) count;
     }
 
     private static double driverBarycenter(Node node) {
