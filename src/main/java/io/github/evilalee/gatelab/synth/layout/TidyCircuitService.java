@@ -143,7 +143,7 @@ public final class TidyCircuitService {
             components.add(new PlacedComponent(
                     component.id(), component.typeId(), component.x(), component.y(),
                     Facing.EAST, component.attributes(),
-                    labelsByNewId.getOrDefault(component.id(), "")));
+                    labelsByNewId.getOrDefault(component.id(), component.label())));
         }
 
         Schematic replacement = new Schematic(definitions);
@@ -187,7 +187,7 @@ public final class TidyCircuitService {
             components.add(new PlacedComponent(
                     component.id(), component.typeId(), component.x(), component.y(),
                     Facing.EAST, component.attributes(),
-                    labelsByNewId.getOrDefault(component.id(), "")));
+                    labelsByNewId.getOrDefault(component.id(), component.label())));
         }
 
         Schematic replacement = new Schematic(definitions);
