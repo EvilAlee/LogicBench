@@ -259,28 +259,12 @@ class CircuitDescriberTest {
             SchematicCompiler.SimulationResult rebuiltResult,
             List<PlacedComponent> outputs,
             SchematicLayout.LayoutResult layout,
-            String context,
-            Schematic original,
-            String expressionText) {
+            String context) {
         for (PlacedComponent output : outputs) {
             String rebuiltId = layout.outputComponentIds().get(output.label());
             assertNotNull(rebuiltId, "exported expression omitted output " + output.label());
             Value originalValue = originalResult.outputValues().get(output.id());
             Value rebuiltValue = rebuiltResult.outputValues().get(rebuiltId);
-            if (originalValue != rebuiltValue) {
-                System.err.println("CircuitDescriber feedback mismatch: " + context
-                        + ", output=" + output.label() + ", original=" + originalValue
-                        + ", rebuilt=" + rebuiltValue);
-                System.err.println("Exported expression text:\\n" + expressionText);
-                System.err.println("Original sources: " + original.components().stream()
-                        .filter(component -> component.typeId().equals("input")
-                                || component.typeId().equals("clock"))
-                        .map(component -> component.label() + "="
-                                + (component.typeId().equals("clock")
-                                        ? original.clockValue(component.id())
-                                        : original.inputValue(component.id())))
-                        .toList());
-            }
             assertEquals(originalValue, rebuiltValue,
                     context + ": different output value for " + output.label());
         }

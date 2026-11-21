@@ -50,9 +50,20 @@ public final class CircuitDescriber {
             List<PlacedComponent> outputs) {
     }
 
-    private record GraphSource(
-            Netlist netlist,
-            Map<String, String> componentIds) {
+    private record SignalMappings(
+            Map<String, String> inputs,
+            Map<String, String> outputs,
+            Map<String, String> gates,
+            Map<String, String> constants) {
+        private SignalMappings {
+            inputs = Map.copyOf(Objects.requireNonNull(inputs, "inputs"));
+            outputs = Map.copyOf(Objects.requireNonNull(outputs, "outputs"));
+            gates = Map.copyOf(Objects.requireNonNull(gates, "gates"));
+            constants = Map.copyOf(Objects.requireNonNull(constants, "constants"));
+        }
+    }
+
+    private record GraphSource(Netlist netlist, SignalMappings mappings) {
     }
 
     private record StrongComponent(List<String> gateIds) {
@@ -90,8 +101,8 @@ public final class CircuitDescriber {
             FeedbackCircuitExtractor.Extraction extraction = feedback.orElseThrow();
             source = new GraphSource(
                     extraction.sourceNetlist(),
-                    componentIds(extraction.inputComponentIds(),
-                            extraction.clockComponentIds(),
+                    new SignalMappings(
+                            merged(extraction.inputComponentIds(), extraction.clockComponentIds()),
                             extraction.outputComponentIds(),
                             extraction.gateComponentIds(),
                             extraction.constantComponentIds()));
@@ -105,10 +116,11 @@ public final class CircuitDescriber {
             Map<String, String> constants = constantIdsForDag(dagCopy, extraction.netlist());
             source = new GraphSource(
                     extraction.netlist(),
-                    componentIds(extraction.inputComponentIds(), Map.of(),
-                            extraction.outputComponentIds(), gateIds, constants));
+                    new SignalMappings(
+                            extraction.inputComponentIds(), extraction.outputComponentIds(),
+                            gateIds, constants));
         }
-        return describeGraph(source.netlist(), source.componentIds());
+        return describeGraph(source.netlist(), source.mappings());
     }
 
     /** Describes a netlist directly; its original signal ids are retained in the component map. */
@@ -116,30 +128,17 @@ public final class CircuitDescriber {
         Objects.requireNonNull(netlist, "netlist");
         requireGateLimit(netlist.gates().size());
 
-        Set<String> used = new LinkedHashSet<>();
-        Map<String, String> inputNames = new LinkedHashMap<>();
-        Map<String, String> outputNames = new LinkedHashMap<>();
-        Map<String, String> componentIds = new LinkedHashMap<>();
-
-        for (String input : netlist.inputs()) {
-            String name = uniqueName(sanitizeIdentifier(input), used);
-            inputNames.put(input, name);
-            componentIds.put(name, input);
-        }
-        for (Netlist.Output output : netlist.outputs()) {
-            String name = uniqueName(sanitizeIdentifier(output.name()), used);
-            outputNames.put(output.name(), name);
-            componentIds.put(name, output.name());
-        }
-        for (Netlist.Gate gate : netlist.gates()) {
-            componentIds.putIfAbsent(gate.id(), gate.id());
-        }
-
-        return describeGraph(netlist, componentIds, inputNames, outputNames);
+        Map<String, String> inputIds = new LinkedHashMap<>();
+        netlist.inputs().forEach(input -> inputIds.put(input, input));
+        Map<String, String> outputIds = new LinkedHashMap<>();
+        netlist.outputs().forEach(output -> outputIds.put(output.name(), output.name()));
+        Map<String, String> gateIds = new LinkedHashMap<>();
+        netlist.gates().forEach(gate -> gateIds.put(gate.id(), gate.id()));
+        return describeGraph(netlist,
+                new SignalMappings(inputIds, outputIds, gateIds, Map.of()));
     }
 
-    private static Description describeGraph(
-            Netlist netlist, Map<String, String> sourceComponentIds) {
+    private static Description describeGraph(Netlist netlist, SignalMappings mappings) {
         Map<String, String> inputNames = new LinkedHashMap<>();
         Map<String, String> outputNames = new LinkedHashMap<>();
         Set<String> used = new LinkedHashSet<>();
@@ -149,14 +148,6 @@ public final class CircuitDescriber {
         for (Netlist.Output output : netlist.outputs()) {
             outputNames.put(output.name(), uniqueName(sanitizeIdentifier(output.name()), used));
         }
-        return describeGraph(netlist, sourceComponentIds, inputNames, outputNames);
-    }
-
-    private static Description describeGraph(
-            Netlist netlist,
-            Map<String, String> sourceComponentIds,
-            Map<String, String> inputNames,
-            Map<String, String> outputNames) {
         Map<String, Netlist.Gate> gatesById = new LinkedHashMap<>();
         for (Netlist.Gate gate : netlist.gates()) {
             gatesById.put(gate.id(), gate);
@@ -210,39 +201,14 @@ public final class CircuitDescriber {
         }
 
         Map<String, String> emittedComponentIds = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : inputNames.entrySet()) {
-            putMapped(emittedComponentIds, entry.getValue(),
-                    sourceComponentIds.getOrDefault(entry.getValue(), entry.getKey()));
-        }
-        // Preserve the exact original component mapping where a signal was renamed.
-        for (Map.Entry<String, String> entry : inputNames.entrySet()) {
-            String oldSignal = entry.getKey();
-            String newSignal = entry.getValue();
-            String componentId = sourceComponentIds.get(oldSignal);
-            if (componentId != null) {
-                emittedComponentIds.put(newSignal, componentId);
-            }
-        }
-        for (Map.Entry<String, String> entry : outputNames.entrySet()) {
-            String componentId = sourceComponentIds.get(entry.getValue());
-            if (componentId == null) {
-                componentId = sourceComponentIds.get(entry.getKey());
-            }
-            if (componentId != null) {
-                emittedComponentIds.put(entry.getValue(), componentId);
-            }
-        }
-        for (Map.Entry<String, String> entry : internalNames.entrySet()) {
-            String componentId = sourceComponentIds.get(entry.getKey());
-            if (componentId != null) {
-                emittedComponentIds.put(entry.getValue(), componentId);
-            }
-        }
-        if (sourceComponentIds.containsKey("0")) {
-            emittedComponentIds.putIfAbsent("0", sourceComponentIds.get("0"));
-        }
-        if (sourceComponentIds.containsKey("1")) {
-            emittedComponentIds.putIfAbsent("1", sourceComponentIds.get("1"));
+        inputNames.forEach((original, emitted) ->
+                putMapped(emittedComponentIds, emitted, mappings.inputs().get(original)));
+        outputNames.forEach((original, emitted) ->
+                putMapped(emittedComponentIds, emitted, mappings.outputs().get(original)));
+        internalNames.forEach((gateId, emitted) ->
+                putMapped(emittedComponentIds, emitted, mappings.gates().get(gateId)));
+        for (String literal : List.of("0", "1")) {
+            putMapped(emittedComponentIds, literal, mappings.constants().get(literal));
         }
 
         StringBuilder text = new StringBuilder();
@@ -264,18 +230,10 @@ public final class CircuitDescriber {
         return new Description(text.toString(), emittedComponentIds);
     }
 
-    private static Map<String, String> componentIds(
-            Map<String, String> inputs,
-            Map<String, String> clocks,
-            Map<String, String> outputs,
-            Map<String, String> gates,
-            Map<String, String> constants) {
-        Map<String, String> result = new LinkedHashMap<>();
-        inputs.forEach(result::put);
-        clocks.forEach(result::put);
-        outputs.forEach(result::put);
-        gates.forEach(result::put);
-        constants.forEach(result::putIfAbsent);
+    private static Map<String, String> merged(
+            Map<String, String> first, Map<String, String> second) {
+        Map<String, String> result = new LinkedHashMap<>(first);
+        second.forEach(result::put);
         return result;
     }
 
