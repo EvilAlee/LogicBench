@@ -101,8 +101,12 @@ class CanvasPanelInstanceSelectionTest {
         assertOutputHigh(canvas, fixture.probeId());
 
         Point centre = screen(canvas, instance.x() + 50, instance.y() + 20);
+        long recomputesBeforeSelection = canvas.simulationRecomputeCount();
         click(canvas, centre);
         assertEquals(List.of(instance.id()), canvas.selectedInstanceIds());
+        assertEquals(recomputesBeforeSelection, canvas.simulationRecomputeCount(),
+                "selection alone must not rebuild or settle the simulation");
+        assertOutputHigh(canvas, fixture.probeId());
         Point moved = screen(canvas, instance.x() + 70, instance.y() + 40);
         press(canvas, centre, 0);
         drag(canvas, moved);
