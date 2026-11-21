@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.ai;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -78,36 +79,32 @@ class AiCircuitServiceTest {
     }
 
     @Test
-    void wrongFirstTruthTableIsCorrectedOnSecondAttemptWithConcreteFeedback() throws Exception {
-        ScriptedProvider provider = new ScriptedProvider(andAnswer("0000"), andAnswer("0001"));
+    void modelClaimedTruthTableIsIgnoredAndAnAnswerWithoutSpecIsBuilt() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer("0000"));
         AiCircuitService.Result result = service(provider).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
-        assertEquals(2, result.attemptCount());
-        assertEquals(2, provider.calls);
-        assertTrue(provider.conversations.get(1).stream()
-                .anyMatch(turn -> turn.text().contains("A=1 B=1: F claimed 0, circuit gives 1")));
-        assertTrue(provider.conversations.get(1).stream()
-                .anyMatch(turn -> turn.text().contains(andAnswer("0000"))));
-        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("Verified 4/4 rows")));
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(1, result.attemptCount());
+        assertEquals(1, provider.calls);
+        assertNotNull(result.truthTable());
+        assertTrue(result.attemptLog().stream()
+                .anyMatch(line -> line.contains("no independent check")));
+        assertFalse(AiCircuitService.responseSchema().getAsJsonObject("properties")
+                .has("truthTable"));
     }
 
     @Test
-    void threeFailuresReturnTheAttemptWithFewestMismatchingRows() throws Exception {
+    void legacyClaimedRowsDoNotCauseRetriesOrAFalseVerification() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(
-                andAnswer("0000"), andAnswer("1111"), andAnswer("0000"));
+                andAnswer("0000"), andAnswer("1111"), andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
-        assertEquals(3, result.attemptCount());
-        assertEquals(3, provider.calls);
-        assertEquals(1, result.mismatchingRows().size());
-        assertTrue(result.mismatchingRows().getFirst().contains("A=1 B=1"));
-        assertEquals("F", result.expressions().getFirst().name());
-        assertNotNull(result.netlist());
-        assertNotNull(result.truthTable());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(1, result.attemptCount());
+        assertEquals(1, provider.calls);
+        assertTrue(result.mismatchingRows().isEmpty());
     }
 
     @Test
@@ -122,7 +119,7 @@ class AiCircuitServiceTest {
         AiCircuitService.Result result = service(provider, null, delays).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertEquals(1, result.attemptCount());
         assertEquals(2, calls[0]);
         assertEquals(List.of(2_000L), delays);
@@ -142,7 +139,7 @@ class AiCircuitServiceTest {
 
         AiCircuitService.Result result = service(provider, cache, delays).generate(description);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
         assertEquals(0, result.attemptCount());
         assertEquals(3, calls[0]);
@@ -222,7 +219,7 @@ class AiCircuitServiceTest {
         AiCircuitService.Result result = service(provider, null, new ArrayList<>()).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertEquals(1, result.attemptCount());
         assertEquals("working-model", result.answeredBy());
         assertEquals(List.of("missing-model", "working-model"), calls);
@@ -262,7 +259,7 @@ class AiCircuitServiceTest {
         AiCircuitService.Result result = service(provider, null, new ArrayList<>()).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertEquals(2, result.attemptCount());
         assertEquals(1, missingCalls[0]);
         assertEquals(2, workingCalls[0]);
@@ -381,62 +378,64 @@ class AiCircuitServiceTest {
         AiCircuitService.Result result = service(provider).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(provider.conversations.get(1).stream()
                 .anyMatch(turn -> turn.text().contains("parse error at position 3")));
     }
 
     @Test
     void inputAndOutputSchemaLimitsAreRejected() throws Exception {
-        List<String> sevenInputs = List.of("A", "B", "C", "D", "E", "F", "G");
-        String tooManyInputs = answer(sevenInputs,
-                List.of(new Output("Fout", "A&B&C&D&E&F&G")), "0".repeat(128));
+        List<String> elevenInputs = List.of(
+                "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K");
+        String tooManyInputs = answer(elevenInputs,
+                List.of(new Output("Fout", "A&B&C&D&E&F&G&H&I&J&K")), "");
         ScriptedProvider inputProvider = new ScriptedProvider(tooManyInputs);
         AiCircuitService.Result inputResult = service(inputProvider).generate("Please build a circuit.");
         assertEquals(AiCircuitService.Status.UNVERIFIED, inputResult.status());
-        assertTrue(inputResult.attemptLog().stream().anyMatch(line -> line.contains("maximum is 6")));
+        assertTrue(inputResult.attemptLog().stream().anyMatch(
+                line -> line.contains("maximum is " + AiCircuitLimits.MAX_INPUTS)));
 
-        List<Output> nineOutputs = new ArrayList<>();
-        String[] tables = new String[9];
-        for (int index = 0; index < 9; index++) {
-            nineOutputs.add(new Output("O" + index, "A"));
-            tables[index] = "01";
+        List<Output> seventeenOutputs = new ArrayList<>();
+        String[] tables = new String[17];
+        for (int index = 0; index < 17; index++) {
+            seventeenOutputs.add(new Output("O" + index, "A"));
+            tables[index] = "";
         }
         ScriptedProvider outputProvider = new ScriptedProvider(
-                answer(List.of("A"), nineOutputs, tables));
+                answer(List.of("A"), seventeenOutputs, tables));
         AiCircuitService.Result outputResult = service(outputProvider).generate("Please build a circuit.");
         assertEquals(AiCircuitService.Status.UNVERIFIED, outputResult.status());
-        assertTrue(outputResult.attemptLog().stream().anyMatch(line -> line.contains("maximum is 8")));
+        assertTrue(outputResult.attemptLog().stream().anyMatch(
+                line -> line.contains("maximum is " + AiCircuitLimits.MAX_OUTPUTS)));
     }
 
     @Test
-    void circuitsOverTwoHundredGatesAreRejectedBeforeLayout() throws Exception {
+    void circuitsOverFourHundredGatesAreRejectedBeforeLayout() throws Exception {
         StringBuilder expression = new StringBuilder("A");
-        char[] variables = {'B', 'C', 'D', 'E', 'F', 'A'};
-        char[] operators = {'^'};
-        for (int index = 0; index < 249; index++) {
-            expression.append(' ').append(operators[index % operators.length])
-                    .append(' ').append(variables[index % variables.length]);
+        String[] variables = {"B", "C", "D", "E", "F", "G", "H", "I", "J", "A"};
+        for (int index = 0; index < 401; index++) {
+            expression.append(" ^ ").append(variables[index % variables.length]);
         }
-        assertTrue(expression.length() <= AiCircuitService.MAX_EXPRESSION_LENGTH);
-        List<String> inputs = List.of("A", "B", "C", "D", "E", "F");
-        String raw = answer(inputs, List.of(new Output("Result", expression.toString())),
-                "0".repeat(64));
-        ScriptedProvider provider = new ScriptedProvider(raw);
-        AiCircuitService.Result result = service(provider).generate("Build a large logic network.");
+        assertTrue(expression.length() <= AiCircuitLimits.MAX_EXPRESSION_TEXT);
+        List<String> inputs = List.of("A","B","C","D","E","F","G","H","I","J");
+        String raw = answer(inputs, List.of(new Output("Result", expression.toString())), "");
+        AiCircuitService.Result result = service(new ScriptedProvider(raw))
+                .generate("Build a large logic network.");
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
-        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("maximum is 200")));
+        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains(
+                "maximum is " + AiCircuitLimits.MAX_GATES)));
         assertNull(result.layout());
     }
 
     @Test
-    void expressionLengthOverOneThousandIsRejectedByTheSchemaValidator() throws Exception {
-        String oversized = "A".repeat(AiCircuitService.MAX_EXPRESSION_LENGTH + 1);
+    void totalExpressionTextOverThreeThousandIsRejected() throws Exception {
+        String oversized = "A".repeat(AiCircuitLimits.MAX_EXPRESSION_TEXT + 1);
         ScriptedProvider provider = new ScriptedProvider(
-                answer(List.of("A"), List.of(new Output("F", oversized)), "01"));
+                answer(List.of("A"), List.of(new Output("F", oversized)), ""));
         AiCircuitService.Result result = service(provider).generate("Build a circuit from this description.");
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
-        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("exceeds 1000 characters")));
+        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("total expression text exceeds "
+                + AiCircuitLimits.MAX_EXPRESSION_TEXT + " characters")));
     }
 
     @Test
@@ -448,48 +447,46 @@ class AiCircuitServiceTest {
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
         assertEquals(0, result.attemptCount());
         assertEquals(0, provider.calls);
-        assertTrue(result.attemptLog().getFirst().contains("parses as expression text"));
+        assertTrue(result.attemptLog().getFirst().contains("exceeds AI circuit limits"));
     }
 
     @Test
-    void parsableExpressionDescriptionSkipsTheProviderEntirely() throws Exception {
+    void parsableExpressionWithoutIndependentRowsIsBuiltLocally() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate("F = A & B");
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertEquals(0, result.attemptCount());
         assertEquals(0, provider.calls);
         assertTrue(result.attemptLog().getFirst().contains("skipped AI"));
     }
 
-    private static String twoBitAdderAnswer(List<String> inputOrder, boolean corruptS0) {
-        StringBuilder s0 = new StringBuilder();
-        StringBuilder s1 = new StringBuilder();
-        StringBuilder carry = new StringBuilder();
-        for (int row = 0; row < (1 << inputOrder.size()); row++) {
-            Map<String, Integer> assignment = new LinkedHashMap<>();
-            for (int index = 0; index < inputOrder.size(); index++) {
-                assignment.put(inputOrder.get(index),
-                        (row >>> (inputOrder.size() - 1 - index)) & 1);
-            }
-            int a0 = assignment.get("A0");
-            int a1 = assignment.get("A1");
-            int b0 = assignment.get("B0");
-            int b1 = assignment.get("B1");
-            int sum = (a1 * 2 + a0) + (b1 * 2 + b0);
-            int sum0 = sum & 1;
-            if (corruptS0 && a0 == 0 && b0 == 0 && a1 == 0 && b1 == 1) {
-                sum0 = 1 - sum0;
-            }
-            s0.append(sum0);
-            s1.append((sum >>> 1) & 1);
-            carry.append((sum >>> 2) & 1);
-        }
-        return answer(inputOrder, List.of(
+    private static String twoBitAdderAnswer(List<String> inputOrder, boolean corruptSpec) {
+        String raw = answer(inputOrder, List.of(
                 new Output("S0", "A0 ^ B0"),
                 new Output("S1", "A1 ^ B1 ^ (A0 & B0)"),
-                new Output("C2", "A1 & B1 | A1 & A0 & B0 | B1 & A0 & B0")),
-                s0.toString(), s1.toString(), carry.toString());
+                new Output("C2", "A1 & B1 | A1 & A0 & B0 | B1 & A0 & B0")), "");
+        JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+        root.remove("truthTable");
+        JsonObject spec = new JsonObject();
+        JsonObject buses = new JsonObject();
+        JsonArray a = new JsonArray(); a.add("A1"); a.add("A0");
+        JsonArray b = new JsonArray(); b.add("B1"); b.add("B0");
+        JsonArray sum = new JsonArray(); sum.add("S1"); sum.add("S0");
+        buses.add("A", a); buses.add("B", b); buses.add("S", sum);
+        spec.add("buses", buses);
+        JsonArray rules = new JsonArray();
+        JsonObject sumRule = new JsonObject();
+        sumRule.addProperty("out", "S");
+        sumRule.addProperty("expr", corruptSpec ? "A + B + 1" : "A + B");
+        rules.add(sumRule);
+        JsonObject carryRule = new JsonObject();
+        carryRule.addProperty("out", "C2");
+        carryRule.addProperty("expr", "(A + B) >> 2");
+        rules.add(carryRule);
+        spec.add("rules", rules);
+        root.add("spec", spec);
+        return root.toString();
     }
 
     @Test
@@ -535,9 +532,9 @@ class AiCircuitServiceTest {
             assertEquals(AiCircuitService.Status.UNVERIFIED, result.status(), inputs.toString());
             String log = String.join("\\n", result.attemptLog());
             if (inputs.size() == 3) {
-                assertTrue(log.contains("missing="), log);
+                assertTrue(log.contains("B1"), log);
             } else if (inputs.size() == 5 && inputs.getLast().equals("EXTRA")) {
-                assertTrue(log.contains("extra="), log);
+                assertTrue(log.contains("EXTRA"), log);
             } else {
                 assertTrue(log.contains("duplicate input name"), log);
             }
@@ -565,7 +562,7 @@ class AiCircuitServiceTest {
     }
 
     @Test
-    void permutedTwoBitAdderWrongBitProducesNamedAssignmentFeedback() throws Exception {
+    void wrongExecutableSpecProducesDecimalBusFeedbackAndRetries() throws Exception {
         List<String> declaredOrder = List.of("A1", "A0", "B1", "B0");
         ScriptedProvider provider = new ScriptedProvider(
                 twoBitAdderAnswer(declaredOrder, true),
@@ -575,13 +572,58 @@ class AiCircuitServiceTest {
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(2, result.attemptCount());
-        String retryConversation = String.join("\\n", provider.conversations.get(1).stream()
+        String retryConversation = String.join("\n", provider.conversations.get(1).stream()
                 .map(Turn::text).toList());
         assertTrue(retryConversation.contains(
-                "A0=0 B0=0 A1=0 B1=1: S0 claimed 1, circuit gives 0"));
-        String instruction = "Rows in your table are interpreted using the order of YOUR inputs array.";
-        assertTrue(retryConversation.contains(instruction));
-        assertEquals(retryConversation.indexOf(instruction), retryConversation.lastIndexOf(instruction));
+                "A=0 B=1: S spec 3, circuit 1. Either side may be wrong."));
+        assertFalse(retryConversation.contains("truthTable"));
     }
+
+    @Test
+    void expectedRowsVerifyWhenCorrectAndFailWithNamedLineErrorsWhenWrong() throws Exception {
+        ScriptedProvider passProvider = new ScriptedProvider(andAnswer("0000"));
+        AiCircuitService.Result pass = service(passProvider).generate(
+                "Build a two-input AND gate with inputs A and B.", false, false,
+                "A=1 B=1 -> F=1\nA=0 B=0 -> F=0");
+        assertEquals(AiCircuitService.Status.VERIFIED, pass.status());
+
+        ScriptedProvider failProvider = new ScriptedProvider(andAnswer("0001"));
+        AiCircuitService.Result fail = service(failProvider).generate(
+                "Build a two-input AND gate with inputs A and B.", false, false,
+                "A=1 B=1 -> F=0");
+        assertEquals(AiCircuitService.Status.UNVERIFIED, fail.status());
+        assertTrue(fail.mismatchingRows().stream().anyMatch(
+                line -> line.contains("Expected row line 1") && line.contains("F expected 0, circuit 1")));
+    }
+
+    @Test
+    void expectedRowParseErrorsNameTheLineAndUnknownSignal() throws Exception {
+        AiCircuitService.Result result = service(new ScriptedProvider(andAnswer("0001"))).generate(
+                "Build a two-input AND gate with inputs A and B.", false, false,
+                "A=1 TYPO=0 -> F=1");
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(result.mismatchingRows().stream().anyMatch(
+                line -> line.contains("Expected row line 1") && line.contains("TYPO")));
+    }
+
+    @Test
+    void modelAnswerWithFeedbackCycleIsStillRejectedAsCombinationalAiOutput() throws Exception {
+        String cyclic = answer(List.of("Qn", "Q"), List.of(
+                new Output("Q", "NOT Qn"),
+                new Output("Qn", "NOT Q")), "");
+        ScriptedProvider provider = new ScriptedProvider(cyclic);
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Build a cross-coupled latch with outputs Q and Qn.");
+
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(provider.calls > 0);
+        assertTrue(result.attemptLog().stream()
+                .anyMatch(line -> line.contains("Expression compilation failed")
+                        && line.contains("raw feedback is disabled")));
+        assertNull(result.layout());
+        assertNull(result.truthTable());
+    }
+
 
 }
