@@ -51,7 +51,8 @@ public final class FeedbackCircuitExtractor {
             Map<String, String> inputComponentIds,
             Map<String, String> clockComponentIds,
             Map<String, String> outputComponentIds,
-            Map<String, String> gateComponentIds) {
+            Map<String, String> gateComponentIds,
+            Map<String, String> constantComponentIds) {
         public Extraction {
             Objects.requireNonNull(dagNetlist, "dagNetlist");
             feedbackEdges = List.copyOf(Objects.requireNonNull(feedbackEdges, "feedbackEdges"));
@@ -62,6 +63,18 @@ public final class FeedbackCircuitExtractor {
             clockComponentIds = immutableMap(clockComponentIds);
             outputComponentIds = immutableMap(outputComponentIds);
             gateComponentIds = immutableMap(gateComponentIds);
+            constantComponentIds = immutableMap(constantComponentIds);
+        }
+
+        public Extraction(
+                Netlist dagNetlist,
+                List<FeedbackEdge> feedbackEdges,
+                Map<String, String> inputComponentIds,
+                Map<String, String> clockComponentIds,
+                Map<String, String> outputComponentIds,
+                Map<String, String> gateComponentIds) {
+            this(dagNetlist, feedbackEdges, inputComponentIds, clockComponentIds,
+                    outputComponentIds, gateComponentIds, Map.of());
         }
 
         public Set<String> feedbackInputSignals() {
@@ -112,6 +125,7 @@ public final class FeedbackCircuitExtractor {
         Map<String, PlacedComponent> byId = new LinkedHashMap<>();
         List<PlacedComponent> inputs = new ArrayList<>();
         List<PlacedComponent> clocks = new ArrayList<>();
+        List<PlacedComponent> constants = new ArrayList<>();
         List<PlacedComponent> outputs = new ArrayList<>();
         List<PlacedComponent> gates = new ArrayList<>();
 
@@ -120,6 +134,7 @@ public final class FeedbackCircuitExtractor {
             switch (component.typeId()) {
                 case "input" -> inputs.add(component);
                 case "clock" -> clocks.add(component);
+                case "constant" -> constants.add(component);
                 case "output" -> outputs.add(component);
                 default -> {
                     GateOperator operator;
@@ -166,6 +181,17 @@ public final class FeedbackCircuitExtractor {
         Map<String, String> inputIds = reverseNames(inputNames);
         Map<String, String> clockIds = reverseNames(clockNames);
         Map<String, String> outputIds = reverseNames(outputNames);
+        Map<String, String> constantSignals = new LinkedHashMap<>();
+        Map<String, String> constantIds = new LinkedHashMap<>();
+        for (PlacedComponent constant : constants) {
+            String signal = switch (constant.label()) {
+                case "0", "1" -> constant.label();
+                default -> throw new IllegalArgumentException(
+                        "Constant source " + constant.id() + " must be labeled 0 or 1.");
+            };
+            constantSignals.put(constant.id(), signal);
+            constantIds.putIfAbsent(signal, constant.id());
+        }
 
         Map<String, String> gateSignals = new LinkedHashMap<>();
         Map<String, String> gateIds = new LinkedHashMap<>();
@@ -217,6 +243,7 @@ public final class FeedbackCircuitExtractor {
             String signal = switch (component.typeId()) {
                 case "input" -> inputNames.get(component.id());
                 case "clock" -> clockNames.get(component.id());
+                case "constant" -> constantSignals.get(component.id());
                 default -> gateSignals.get(component.id());
             };
             if (signal == null) {
@@ -268,10 +295,12 @@ public final class FeedbackCircuitExtractor {
         List<GateInputEdge> backEdges = new ArrayList<>();
         List<PlacedComponent> rootSources = new ArrayList<>(inputs);
         rootSources.addAll(clocks);
+        rootSources.addAll(constants);
         rootSources.sort(Comparator.comparing(PlacedComponent::id));
         Map<String, String> sourceSignalByComponent = new HashMap<>();
         inputNames.forEach((id, name) -> sourceSignalByComponent.put(id, name));
         clockNames.forEach((id, name) -> sourceSignalByComponent.put(id, name));
+        sourceSignalByComponent.putAll(constantSignals);
         for (PlacedComponent source : rootSources) {
             String signal = sourceSignalByComponent.get(source.id());
             for (GateInputEdge edge : consumersBySource.getOrDefault(signal, List.of())) {
@@ -300,8 +329,9 @@ public final class FeedbackCircuitExtractor {
         }
 
         List<String> primarySignals = new ArrayList<>();
-        rootSources.forEach(source ->
-                primarySignals.add(sourceSignalByComponent.get(source.id())));
+        rootSources.stream()
+                .filter(source -> !source.typeId().equals("constant"))
+                .forEach(source -> primarySignals.add(sourceSignalByComponent.get(source.id())));
         primarySignals.addAll(feedbackEdges.stream()
                 .map(FeedbackEdge::placeholderSignal).toList());
 
@@ -323,7 +353,7 @@ public final class FeedbackCircuitExtractor {
         gateSignals.forEach((componentId, signal) -> gateComponentIds.put(signal, componentId));
         return Optional.of(new Extraction(
                 dagNetlist, feedbackEdges, inputIds, clockIds,
-                outputIds, gateComponentIds));
+                outputIds, gateComponentIds, constantIds));
     }
 
     /**

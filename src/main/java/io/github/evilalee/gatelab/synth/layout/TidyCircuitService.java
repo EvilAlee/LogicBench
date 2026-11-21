@@ -73,7 +73,9 @@ public final class TidyCircuitService {
         }
         List<GateDef> library = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
         if (original.components().stream().noneMatch(component ->
-                !component.typeId().equals("input") && !component.typeId().equals("output"))) {
+                !component.typeId().equals("input")
+                        && !component.typeId().equals("output")
+                        && !component.typeId().equals("constant"))) {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
@@ -129,6 +131,10 @@ public final class TidyCircuitService {
         });
         extraction.gateComponentIds().forEach((signal, oldId) -> {
             String newId = layout.gateComponentIds().get(signal);
+            newToOldIds.put(newId, oldId);
+        });
+        extraction.constantComponentIds().forEach((signal, oldId) -> {
+            String newId = layout.constantComponentIds().get(signal);
             newToOldIds.put(newId, oldId);
         });
 
