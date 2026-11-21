@@ -254,28 +254,26 @@ public final class SchematicLayout {
                     legacyLayout(extraction), true, "legacy layout selected for comparison");
         }
 
-        LayoutCheckException firstFailure;
+        RuntimeException firstFailure;
         try {
             if (forceCompactFailure) {
-                throw new LayoutCheckException(
-                        "forced compact failure (test hook)", List.of("forced compact failure"));
+                throw new IllegalStateException("forced compact failure (test hook)");
             }
             return new FeedbackLayoutRun(
                     build(extraction.dagNetlist(), 1, extraction), false, "");
-        } catch (LayoutCheckException failure) {
+        } catch (RuntimeException failure) {
             firstFailure = failure;
         }
 
-        LayoutCheckException retryFailure;
+        RuntimeException retryFailure;
         try {
             if (forceCompactFailure) {
-                throw new LayoutCheckException(
-                        "forced doubled-spacing compact failure (test hook)",
-                        List.of("forced compact failure"));
+                throw new IllegalStateException(
+                        "forced doubled-spacing compact failure (test hook)");
             }
             return new FeedbackLayoutRun(
                     build(extraction.dagNetlist(), 2, extraction), false, "");
-        } catch (LayoutCheckException failure) {
+        } catch (RuntimeException failure) {
             retryFailure = failure;
         }
 
@@ -313,13 +311,17 @@ public final class SchematicLayout {
     }
 
     private static IllegalStateException compactFailure(
-            LayoutCheckException firstFailure, LayoutCheckException retryFailure) {
-        Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
-        involved.addAll(retryFailure.involvedNets);
-        String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
+            RuntimeException firstFailure, RuntimeException retryFailure) {
+        Set<String> involved = new TreeSet<>();
+        if (firstFailure instanceof LayoutCheckException checkFailure) {
+            involved.addAll(checkFailure.involvedNets);
+        }
+        if (retryFailure instanceof LayoutCheckException checkFailure) {
+            involved.addAll(checkFailure.involvedNets);
+        }
+        String names = involved.isEmpty() ? "none reported" : String.join(", ", involved);
         return new IllegalStateException(
-                "Feedback compact layout failed its connectivity self-check after one "
-                        + "doubled-spacing retry. Involved nets: " + names
+                "Feedback compact layout failed both compact attempts. Involved nets: " + names
                         + ". First failure: " + firstFailure.getMessage()
                         + "; retry failure: " + retryFailure.getMessage(),
                 retryFailure);
