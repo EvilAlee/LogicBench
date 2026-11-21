@@ -9,6 +9,7 @@
     { "id": "not",    "svg": "svg/not.svg",    "width": 30, "height": 20, "inputs": [ {"x":0,"y":10} ], "output": {"x":30,"y":10} },
     { "id": "buffer", "svg": "svg/buffer.svg", "width": 20, "height": 20, "inputs": [ {"x":0,"y":10} ], "output": {"x":20,"y":10} },
     { "id": "input",  "svg": "svg/input.svg",  "width": 20, "height": 20, "inputs": [], "output": {"x":20,"y":10} },
+    { "id": "constant", "svg": "svg/input.svg", "width": 20, "height": 20, "inputs": [], "output": {"x":20,"y":10} },
     { "id": "clock",  "svg": "svg/clock.svg",  "width": 20, "height": 20, "inputs": [], "output": {"x":20,"y":10} },
     { "id": "output", "svg": "svg/output.svg", "width": 20, "height": 20, "inputs": [ {"x":0,"y":10} ], "output": null }
   ]

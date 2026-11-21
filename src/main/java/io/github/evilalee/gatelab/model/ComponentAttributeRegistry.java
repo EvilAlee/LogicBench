@@ -32,6 +32,7 @@ public final class ComponentAttributeRegistry {
             Map.entry("not", List.of(FACING, SIZE)),
             Map.entry("buffer", List.of(FACING, SIZE)),
             Map.entry("input", List.of(FACING)),
+            Map.entry("constant", List.of(FACING)),
             Map.entry("output", List.of(FACING)),
             Map.entry("clock", List.of(FACING)));
 

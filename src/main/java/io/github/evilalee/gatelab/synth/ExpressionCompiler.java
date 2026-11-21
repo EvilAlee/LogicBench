@@ -322,6 +322,18 @@ public final class ExpressionCompiler {
         };
     }
 
+    private static boolean containsConstant(Expression expression) {
+        return switch (expression) {
+            case Expression.Constant ignored -> true;
+            case Expression.Variable ignored -> false;
+            case Expression.Unary unary -> containsConstant(unary.operand());
+            case Expression.Binary binary ->
+                    containsConstant(binary.left()) || containsConstant(binary.right());
+            case Expression.PartCall call -> call.arguments().stream()
+                    .anyMatch(ExpressionCompiler::containsConstant);
+        };
+    }
+
     private static void collectClockNames(Expression expression, Set<String> names) {
         switch (expression) {
             case Expression.Constant ignored -> {
@@ -494,7 +506,9 @@ public final class ExpressionCompiler {
         }
 
         private Pin signalForExpression(Expression expression) {
-            return switch (expression) {
+            Expression normalized = containsConstant(expression)
+                    ? Builder.simplify(expression) : expression;
+            return switch (normalized) {
                 case Expression.Constant constant -> constantPin(constant.value());
                 case Expression.Variable variable -> assignments.containsKey(variable.name())
                         ? signalForAssignment(variable.name())
