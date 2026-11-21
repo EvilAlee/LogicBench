@@ -471,8 +471,12 @@ public final class SchematicLayout {
             orderColumns(columns);
             assignInputColumn(inputColumnNodes, rowGap);
         } else {
+            // Keep the feedback graph's existing cut edges, but use the same
+            // forward/backward neighbor ordering as the DAG layout before the
+            // per-column input seed. The feedback-aware pin-row checks and
+            // final compaction remain enabled below.
+            orderColumns(columns);
             assignFeedbackInputColumns(inputColumnNodes, rowGap);
-            orderFeedbackColumns(columns);
         }
         optimizeVerticalPositions(
                 columns, outputNodes, routeSteps, rowGap, feedback != null);
@@ -789,16 +793,11 @@ public final class SchematicLayout {
         for (Node node : inputNodes) {
             byColumn.computeIfAbsent(node.column, ignored -> new ArrayList<>()).add(node);
         }
+        // Relocated input/clock nodes occupy multiple columns in a feedback
+        // layout. Reuse the DAG input packing exactly, independently per column,
+        // instead of applying a second kind/signal-specific row seeding scheme.
         for (List<Node> nodes : byColumn.values()) {
-            nodes.sort(Comparator.comparing((Node node) -> node.kind.name())
-                    .thenComparing(node -> node.signal));
-            int tallest = nodes.stream()
-                    .mapToInt(node -> nodeBottomOffset(node) - nodeTopOffset(node))
-                    .max().orElse(DUMMY_SLOT_HEIGHT);
-            int pitch = roundUpToGrid(tallest + rowGap);
-            for (int index = 0; index < nodes.size(); index++) {
-                nodes.get(index).y = index * pitch;
-            }
+            assignInputColumn(nodes, rowGap);
         }
     }
 
