@@ -174,6 +174,17 @@ public final class SchematicLayout {
     private record ChannelSignal(int channel, String signal) {
     }
 
+    private enum CycleBreakOrdering {
+        SOURCE_EXTRACTION,
+        INPUT_ROOTED_ASCENDING,
+        INPUT_ROOTED_DESCENDING,
+        INPUT_ROOTED_REVERSED_CONSUMERS
+    }
+
+    private record LayoutGateInputEdge(
+            String sourceSignal, String targetGate, int targetInputIndex) {
+    }
+
     private enum FeedbackOrdering {
         DRIVER_BARYCENTER,
         REVERSED_DRIVER_BARYCENTER,
@@ -191,11 +202,12 @@ public final class SchematicLayout {
 
     private record CompactCandidate(
             LayoutResult result,
+            CycleBreakOrdering cycleBreak,
             FeedbackOrdering ordering,
             LayoutMeasurements measurements) {
         String description() {
-            return "selected compact ordering=" + ordering
-                    + " " + measurements.display();
+            return "selected compact cycleBreak=" + cycleBreak
+                    + " ordering=" + ordering + " " + measurements.display();
         }
     }
 
@@ -348,17 +360,32 @@ public final class SchematicLayout {
             FeedbackCircuitExtractor.Extraction extraction, int spacingFactor) {
         List<CompactCandidate> valid = new ArrayList<>();
         List<RuntimeException> failures = new ArrayList<>();
-        for (FeedbackOrdering ordering : FeedbackOrdering.values()) {
+        for (CycleBreakOrdering cycleBreak : CycleBreakOrdering.values()) {
+            FeedbackCircuitExtractor.Extraction candidateExtraction;
             try {
-                LayoutResult result = build(
-                        extraction.dagNetlist(), spacingFactor, extraction, ordering);
-                valid.add(new CompactCandidate(
-                        result, ordering, measureLayout(result.schematic())));
+                candidateExtraction = cycleBreak == CycleBreakOrdering.SOURCE_EXTRACTION
+                        ? extraction
+                        : inputRootedExtraction(extraction, cycleBreak);
             } catch (RuntimeException failure) {
                 failures.add(new IllegalStateException(
-                        "ordering " + ordering + " failed at spacing factor "
-                                + spacingFactor + ": " + failure.getMessage(),
+                        "cycle-break " + cycleBreak + " failed: " + failure.getMessage(),
                         failure));
+                continue;
+            }
+            for (FeedbackOrdering ordering : FeedbackOrdering.values()) {
+                try {
+                    LayoutResult result = build(candidateExtraction.dagNetlist(),
+                            spacingFactor, candidateExtraction, ordering);
+                    valid.add(new CompactCandidate(
+                            result, cycleBreak, ordering,
+                            measureLayout(result.schematic())));
+                } catch (RuntimeException failure) {
+                    failures.add(new IllegalStateException(
+                            "cycle-break " + cycleBreak + " / ordering " + ordering
+                                    + " failed at spacing factor " + spacingFactor + ": "
+                                    + failure.getMessage(),
+                            failure));
+                }
             }
         }
         if (valid.isEmpty()) {
@@ -374,8 +401,138 @@ public final class SchematicLayout {
                 .comparingLong((CompactCandidate candidate) ->
                         candidate.measurements().area())
                 .thenComparingLong(candidate -> candidate.measurements().wireLength())
+                .thenComparing(candidate -> candidate.cycleBreak().ordinal())
                 .thenComparing(candidate -> candidate.ordering().ordinal()));
         return valid.getFirst();
+    }
+
+    /**
+     * Builds an alternate DAG by cutting DFS back edges reached from primary
+     * input/clock roots. Different deterministic root/consumer orders expose
+     * alternative valid cut sets without modifying the source netlist. The
+     * resulting Extraction reconstructs the exact same source graph.
+     */
+    private static FeedbackCircuitExtractor.Extraction inputRootedExtraction(
+            FeedbackCircuitExtractor.Extraction original,
+            CycleBreakOrdering ordering) {
+        Netlist source = original.sourceNetlist();
+        Map<String, Netlist.Gate> gatesById = new LinkedHashMap<>();
+        for (Netlist.Gate gate : source.gates()) {
+            gatesById.put(gate.id(), gate);
+        }
+
+        Map<String, List<LayoutGateInputEdge>> consumersBySource = new LinkedHashMap<>();
+        for (Netlist.Gate gate : source.gates()) {
+            for (int inputIndex = 0; inputIndex < gate.inputs().size(); inputIndex++) {
+                consumersBySource.computeIfAbsent(
+                        gate.inputs().get(inputIndex), ignored -> new ArrayList<>())
+                        .add(new LayoutGateInputEdge(
+                                gate.inputs().get(inputIndex), gate.id(), inputIndex));
+            }
+        }
+        Comparator<LayoutGateInputEdge> consumerOrder =
+                Comparator.comparing(LayoutGateInputEdge::targetGate)
+                        .thenComparingInt(LayoutGateInputEdge::targetInputIndex);
+        if (ordering == CycleBreakOrdering.INPUT_ROOTED_REVERSED_CONSUMERS) {
+            consumerOrder = consumerOrder.reversed();
+        }
+        consumersBySource.values().forEach(edges -> edges.sort(consumerOrder));
+
+        List<String> roots = new ArrayList<>(source.inputs());
+        roots.sort(String::compareTo);
+        if (ordering == CycleBreakOrdering.INPUT_ROOTED_DESCENDING) {
+            roots.sort(Comparator.reverseOrder());
+        }
+
+        Map<String, Integer> state = new HashMap<>();
+        List<LayoutGateInputEdge> backEdges = new ArrayList<>();
+        for (String root : roots) {
+            for (LayoutGateInputEdge edge
+                    : consumersBySource.getOrDefault(root, List.of())) {
+                visitLayoutEdge(edge, consumersBySource, state, backEdges);
+            }
+        }
+
+        // Expression graphs may contain a closed feedback group with no path
+        // from an input/clock. Visit any remaining gates deterministically so
+        // removing DFS back edges still leaves a DAG for every gate.
+        List<String> remainingRoots = new ArrayList<>(gatesById.keySet());
+        remainingRoots.sort(String::compareTo);
+        if (ordering == CycleBreakOrdering.INPUT_ROOTED_DESCENDING) {
+            remainingRoots.sort(Comparator.reverseOrder());
+        }
+        for (String gateId : remainingRoots) {
+            if (state.getOrDefault(gateId, 0) == 0) {
+                visitLayoutGate(gateId, consumersBySource, state, backEdges);
+            }
+        }
+        if (backEdges.isEmpty()) {
+            throw new IllegalStateException(
+                    "alternate input-rooted DFS did not find a feedback back edge");
+        }
+
+        Set<String> reservedSignals = new HashSet<>(source.inputs());
+        reservedSignals.addAll(gatesById.keySet());
+        source.outputs().stream().map(Netlist.Output::name).forEach(reservedSignals::add);
+        Map<String, Map<Integer, String>> placeholdersByTarget = new HashMap<>();
+        List<FeedbackCircuitExtractor.FeedbackEdge> feedbackEdges = new ArrayList<>();
+        int feedbackNumber = 1;
+        for (LayoutGateInputEdge edge : backEdges) {
+            String placeholder;
+            do {
+                placeholder = "LayoutFeedback" + feedbackNumber++;
+            } while (!reservedSignals.add(placeholder));
+            placeholdersByTarget.computeIfAbsent(edge.targetGate(), ignored -> new HashMap<>())
+                    .put(edge.targetInputIndex(), placeholder);
+            feedbackEdges.add(new FeedbackCircuitExtractor.FeedbackEdge(
+                    edge.sourceSignal(), edge.targetGate(),
+                    edge.targetInputIndex(), placeholder));
+        }
+
+        List<String> dagInputs = new ArrayList<>(source.inputs());
+        feedbackEdges.stream().map(FeedbackCircuitExtractor.FeedbackEdge::placeholderSignal)
+                .forEach(dagInputs::add);
+        List<Netlist.Gate> dagGates = new ArrayList<>();
+        for (Netlist.Gate gate : source.gates()) {
+            List<String> inputs = new ArrayList<>(gate.inputs());
+            Map<Integer, String> replacements = placeholdersByTarget.get(gate.id());
+            if (replacements != null) {
+                replacements.forEach(inputs::set);
+            }
+            dagGates.add(new Netlist.Gate(gate.id(), gate.type(), inputs));
+        }
+
+        Netlist dag = new Netlist(dagInputs, source.outputs(), dagGates);
+        return new FeedbackCircuitExtractor.Extraction(
+                dag, feedbackEdges,
+                original.inputComponentIds(), original.clockComponentIds(),
+                original.outputComponentIds(), original.gateComponentIds());
+    }
+
+    private static void visitLayoutEdge(
+            LayoutGateInputEdge edge,
+            Map<String, List<LayoutGateInputEdge>> consumersBySource,
+            Map<String, Integer> state,
+            List<LayoutGateInputEdge> backEdges) {
+        int targetState = state.getOrDefault(edge.targetGate(), 0);
+        if (targetState == 1) {
+            backEdges.add(edge);
+        } else if (targetState == 0) {
+            visitLayoutGate(edge.targetGate(), consumersBySource, state, backEdges);
+        }
+    }
+
+    private static void visitLayoutGate(
+            String gateId,
+            Map<String, List<LayoutGateInputEdge>> consumersBySource,
+            Map<String, Integer> state,
+            List<LayoutGateInputEdge> backEdges) {
+        state.put(gateId, 1);
+        for (LayoutGateInputEdge edge
+                : consumersBySource.getOrDefault(gateId, List.of())) {
+            visitLayoutEdge(edge, consumersBySource, state, backEdges);
+        }
+        state.put(gateId, 2);
     }
 
     private static LayoutMeasurements measureLayout(Schematic schematic) {
