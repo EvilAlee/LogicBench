@@ -243,13 +243,20 @@ public final class AiCircuitService {
     /** When cacheOnly is true, no provider request is made. */
     public Result generate(String description, boolean cacheOnly)
             throws IOException, InterruptedException {
+        return generate(description, cacheOnly, true);
+    }
+
+    /** AI generation enables deterministic inverting-gate mapping by default. */
+    public Result generate(
+            String description, boolean cacheOnly, boolean invertingGates)
+            throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
         String safeDescription = provider.redact(description);
         List<String> log = new ArrayList<>();
 
         ExpressionCompiler.Compilation local = null;
         try {
-            local = ExpressionCompiler.compile(description, false);
+            local = ExpressionCompiler.compile(description, false, invertingGates);
         } catch (RuntimeException notExpressionText) {
             if (isExpressionSource(description)) {
                 log.add("Description parses as expression text but cannot be compiled: "
@@ -292,7 +299,7 @@ public final class AiCircuitService {
         }
 
         if (cacheOnly) {
-            Result cached = cachedResult(safeDescription, log, "Using", 0);
+            Result cached = cachedResult(safeDescription, log, "Using", 0, invertingGates);
             if (cached != null) return cached;
             log.add("AI unavailable: cache-only mode is enabled and no valid cached answer exists.");
             return new Result(0, Status.UNAVAILABLE,
@@ -316,7 +323,8 @@ public final class AiCircuitService {
                 allModelAttempts.addAll(failure.modelAttempts());
                 String reason = provider.redact(unavailableReason(failure));
                 String notice = provider.redact(cachedNotice(failure));
-                Result fallback = cachedResult(safeDescription, log, notice, attemptNumber - 1);
+                Result fallback = cachedResult(safeDescription, log, notice, attemptNumber - 1,
+                        invertingGates);
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
@@ -329,7 +337,7 @@ public final class AiCircuitService {
 
             String safeRaw = provider.redact(response.raw());
             conversation.add(new Turn(Turn.Role.MODEL, safeRaw));
-            Attempt current = validate(safeRaw);
+            Attempt current = validate(safeRaw, invertingGates);
             if (best == null || current.score() < best.score()
                     || (current.score() == best.score()
                         && current.errors().size() < best.errors().size())) {
@@ -557,10 +565,11 @@ public final class AiCircuitService {
     }
 
     private Result cachedResult(
-            String description, List<String> log, String prefix, int attemptCount) {
+            String description, List<String> log, String prefix, int attemptCount,
+            boolean invertingGates) {
         if (cache == null) return null;
         for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
-            Attempt cachedAttempt = validate(provider.redact(hit.answerJson()));
+            Attempt cachedAttempt = validate(provider.redact(hit.answerJson()), invertingGates);
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
             if (cachedAttempt.errors().isEmpty()) {
                 int rows = cachedAttempt.truthTable().rows().size();
@@ -595,7 +604,7 @@ public final class AiCircuitService {
                 answeredBy, modelAttempts);
     }
 
-    private Attempt validate(String raw) {
+    private Attempt validate(String raw, boolean invertingGates) {
         Answer answer;
         try {
             answer = parseAnswer(raw);
@@ -644,7 +653,7 @@ public final class AiCircuitService {
 
         ExpressionCompiler.Compilation compilation;
         try {
-            compilation = ExpressionCompiler.compile(source.toString(), false);
+            compilation = ExpressionCompiler.compile(source.toString(), false, invertingGates);
         } catch (RuntimeException exception) {
             return new Attempt(answer, null, null, null, List.of(),
                     List.of("Expression compilation failed: " + safeParseMessage(exception)));

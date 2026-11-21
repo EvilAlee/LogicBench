@@ -12,6 +12,7 @@ import io.github.evilalee.gatelab.synth.TruthTable;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -60,6 +61,9 @@ public final class AiCircuitDialog extends JDialog {
     private final JButton cancelButton = new JButton("Cancel");
     private final JButton placeButton = new JButton("Place circuit");
     private final JButton testConnectionButton = new JButton("Test connection");
+    private final JCheckBox optimizeInvertingGates =
+            new JCheckBox("Optimize with NAND/NOR/XNOR", true);
+    private final JTextArea expectedRows = new JTextArea(2, 64);
 
     private SwingWorker<?, ?> activeWorker;
     private AiCircuitService.Result currentResult;
@@ -91,6 +95,11 @@ public final class AiCircuitDialog extends JDialog {
             @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
             @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
         });
+        expectedRows.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
+        });
         JScrollPane descriptionScroll = new JScrollPane(description);
         descriptionScroll.setBorder(BorderFactory.createTitledBorder("Circuit description"));
         top.add(descriptionScroll, BorderLayout.CENTER);
@@ -101,7 +110,17 @@ public final class AiCircuitDialog extends JDialog {
         setupHelp.setForeground(new Color(145, 88, 0));
         keyPanel.add(keyStatus, BorderLayout.NORTH);
         keyPanel.add(setupHelp, BorderLayout.CENTER);
-        top.add(keyPanel, BorderLayout.SOUTH);
+        keyPanel.add(optimizeInvertingGates, BorderLayout.EAST);
+        expectedRows.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        expectedRows.setLineWrap(false);
+        JScrollPane expectedRowsScroll = new JScrollPane(expectedRows);
+        expectedRowsScroll.setPreferredSize(new Dimension(500, 58));
+        expectedRowsScroll.setBorder(
+                BorderFactory.createTitledBorder("Expected rows (optional)"));
+        JPanel topFooter = new JPanel(new BorderLayout(4, 4));
+        topFooter.add(expectedRowsScroll, BorderLayout.CENTER);
+        topFooter.add(keyPanel, BorderLayout.SOUTH);
+        top.add(topFooter, BorderLayout.SOUTH);
         add(top, BorderLayout.NORTH);
 
         logArea.setEditable(false);
@@ -205,7 +224,7 @@ public final class AiCircuitDialog extends JDialog {
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
-                return service.generate(prompt, cacheOnly);
+                return service.generate(prompt, cacheOnly, optimizeInvertingGates.isSelected());
             }
 
             @Override

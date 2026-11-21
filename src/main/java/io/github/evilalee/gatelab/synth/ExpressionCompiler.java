@@ -138,6 +138,15 @@ public final class ExpressionCompiler {
      * opt-in; cycles contained by a DLATCH/DFF/TFF/JKFF call are always valid.
      */
     public static Compilation compile(String source, boolean allowRawFeedback) {
+        return compile(source, allowRawFeedback, false);
+    }
+
+    /**
+     * Compiles expressions and optionally applies semantics-preserving inverting-gate mapping.
+     * The mapper is opt-in so the default netlist stays byte-for-byte stable.
+     */
+    public static Compilation compile(
+            String source, boolean allowRawFeedback, boolean invertingGates) {
         Objects.requireNonNull(source, "source");
         List<Statement> statements = splitStatements(source);
         if (statements.isEmpty()) {
@@ -270,6 +279,9 @@ public final class ExpressionCompiler {
         }
         Netlist netlist = new Netlist(
                 List.copyOf(variables), outputs, builder.gates());
+        if (invertingGates) {
+            netlist = InvertingGateMapper.optimize(netlist);
+        }
         return new Compilation(netlist, expressions, reusedOutputNames);
     }
 
