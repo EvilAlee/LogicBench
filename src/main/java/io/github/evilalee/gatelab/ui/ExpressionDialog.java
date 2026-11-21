@@ -43,10 +43,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /** Live expression editor and engine-backed truth-table preview. */
 public final class ExpressionDialog extends JDialog {
     private static final int TABLE_INPUT_LIMIT = 10;
+    private static final Pattern LIBRARY_CALL_PATTERN = Pattern.compile(
+            "(?i)\\b(?!NOT\\b|AND\\b|NAND\\b|XOR\\b|XNOR\\b|OR\\b|NOR\\b)"
+                    + "[A-Za-z][A-Za-z0-9_]*\\s*\\(");
     private static final String FEEDBACK_PREVIEW_NOTE =
             "Feedback circuit: connections verified, behaviour not simulated. Truth table not shown.";
     static final String SEQUENTIAL_STATUS =
@@ -170,7 +174,11 @@ public final class ExpressionDialog extends JDialog {
         truthTable.setEnabled(true);
         tableScroll.setVisible(true);
         try {
-            ComponentExpressionCompiler.CompileOption option = expandSequentialParts.isSelected()
+            boolean containsLibraryCall =
+                    containsLibraryComponentCall(expressionText.getText());
+            boolean useLegacyCompiler = expandSequentialParts.isSelected() || !containsLibraryCall;
+            optimizeInvertingGates.setEnabled(useLegacyCompiler);
+            ComponentExpressionCompiler.CompileOption option = useLegacyCompiler
                     ? ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION
                     : ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES;
             ComponentExpressionCompiler.Compilation compilation =
@@ -305,14 +313,18 @@ public final class ExpressionDialog extends JDialog {
                 canvas.replaceWithGeneratedCircuit(generated);
                 canvas.setStatusMessage(feedback
                         ? FEEDBACK_PREVIEW_NOTE
-                        : expandSequentialParts.isSelected()
-                                ? "Generated using legacy gate expansion"
+                        : currentCompilation.legacyCompilation().isPresent()
+                                ? "Generated using the gate-level expression compiler"
                                 : "Generated with boxed component calls");
             }
             dispose();
         } catch (IllegalArgumentException | IllegalStateException exception) {
             showError(exception.getMessage());
         }
+    }
+
+    static boolean containsLibraryComponentCall(String source) {
+        return LIBRARY_CALL_PATTERN.matcher(Objects.requireNonNull(source, "source")).find();
     }
 
     static String outputReuseHint(ExpressionCompiler.Compilation compilation) {

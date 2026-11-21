@@ -9,6 +9,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ExpressionDialogTest {
     @Test
+    void detectsLibraryCallsButNotBooleanOperatorParentheses() {
+        assertFalse(ExpressionDialog.containsLibraryComponentCall(
+                "F = NOT (A & B) | (C NAND D)"));
+        assertTrue(ExpressionDialog.containsLibraryComponentCall(
+                "Q = DFF(D, CLK)"));
+        assertTrue(ExpressionDialog.containsLibraryComponentCall(
+                "U0 := FA(A, B, CIN)\\nS = U0.S"));
+    }
+
+    @Test
     void reusedOutputAssignmentShowsTheExactNonBlockingHint() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
                 "S0C = A & B\nF = S0C | C");

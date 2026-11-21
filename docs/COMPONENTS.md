@@ -127,13 +127,17 @@ counts report the ordered input-port names, and unknown output selectors report
 the instance's valid output pins. A multi-output call without a primary output
 cannot be used directly as a scalar value.
 
+Pure Boolean expressions without library calls retain the existing gate-netlist
+compiler and its NAND/NOR/XNOR optimization option. When a library call is
+present, the dialog uses the instance-aware compiler by default.
+
 Sequential library calls such as `DFF(D, CLK)`, `TFF(T, CLK)`,
-`JKFF(J, K, CLK)`, and `DLATCH(D, EN)` also create boxes by default in the
-typed dialog. The explicit **Expand sequential calls as gates (legacy)** option
-retains the previous `SequentialParts` gate-expansion behavior. This option is
-for compatibility with the original expression compiler path; it is not the
-default. Feedback through a boxed sequential component is represented by the
-instance's named output selectors and remains part of the schematic graph.
+`JKFF(J, K, CLK)`, and `DLATCH(D, EN)` create boxes by default. The explicit
+**Expand sequential calls as gates (legacy)** option switches those sequential
+calls to the previous `SequentialParts` gate-expansion behavior. The optimization
+checkbox applies to the gate-netlist path only. Feedback through a boxed
+sequential component is represented by the instance's named output selectors
+and remains part of the schematic graph.
 
 The resulting schematic is simulated through `SchematicCompiler`, which
 recursively flattens boxes into the engine circuit and preserves hierarchical
