@@ -67,6 +67,10 @@ public final class TidyCircuitService {
 
     public static TidyResult tidy(Schematic original, Collection<GateDef> definitions) {
         Objects.requireNonNull(original, "original");
+        if (!original.componentInstances().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Tidy circuit does not support component instances.");
+        }
         List<GateDef> library = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
         if (original.components().stream().noneMatch(component ->
                 !component.typeId().equals("input") && !component.typeId().equals("output"))) {
