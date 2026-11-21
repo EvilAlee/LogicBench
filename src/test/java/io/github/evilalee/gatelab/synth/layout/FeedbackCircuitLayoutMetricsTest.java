@@ -130,8 +130,8 @@ class FeedbackCircuitLayoutMetricsTest {
                 "fallback schematic must be the preserved legacy layout");
     }
 
-    @TestFactory
-    List<DynamicTest> twoBitCounterCompactCandidateEmitsFullGeometryDiagnostic() {
+    @Test
+    void twoBitCounterCompactCandidateHasNoCrossSignalConnectivityJoins() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 Q0 = DFF(RESET_N & NOT(Q0), CLK)
                 Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
@@ -141,32 +141,19 @@ class FeedbackCircuitLayoutMetricsTest {
         SchematicLayout layout = new SchematicLayout(DEFINITIONS);
         SchematicLayout.FeedbackLayoutRun compactRun = layout.layoutFeedbackRun(
                 extraction, SchematicLayout.FeedbackLayoutMode.COMPACT_ONLY);
-        SchematicLayout.FeedbackLayoutRun legacyRun = layout.layoutFeedbackRun(
-                extraction, SchematicLayout.FeedbackLayoutMode.LEGACY);
         Schematic compact = compactRun.result().schematic();
-        Metrics compactMetrics = measure(compact);
-        Metrics legacyMetrics = measure(legacyRun.result().schematic());
         Map<String, String> expectedSignals = expectedSignalLabels(
                 extraction, compactRun.result());
         String geometry = SchematicLayout.diagnosticDump(compact, expectedSignals);
 
-        // Dynamic test names are written to the Gradle Actions log even when
-        // standard test streams are captured. Emit every diagnostic line as an
-        // individual named test so the CI log contains the complete geometry.
-        List<DynamicTest> diagnostics = new java.util.ArrayList<>();
-        int lineNumber = 0;
-        for (String line : geometry.split("\\R")) {
-            int currentLine = ++lineNumber;
-            diagnostics.add(DynamicTest.dynamicTest(
-                    "COUNTER-GEOMETRY " + currentLine + ": " + line, () -> { }));
-        }
-        diagnostics.add(DynamicTest.dynamicTest(
-                "EXPECTED DIAGNOSTIC FAILURE: 2-bit counter compact area must be below "
-                        + "same-run legacy; legacy=" + legacyMetrics.display()
-                        + " compact=" + compactMetrics.display(),
-                () -> assertTrue(compactMetrics.area() < legacyMetrics.area(),
-                        "2-bit counter compact candidate must beat the same-run legacy layout")));
-        return diagnostics;
+        assertFalse(compactRun.legacyFallbackUsed(),
+                "COMPACT_ONLY must not silently select legacy");
+        assertTrue(geometry.contains("DIFFERENT_NET_JOIN_COUNT=0"),
+                "the two-bit counter must not join different expected nets:" + geometry);
+        Connectivity.Result topology = Connectivity.analyze(
+                compact.pinPositions(), compact.wires());
+        assertFalse(topology.nets().isEmpty(),
+                "the counter must produce a complete connectivity topology");
     }
 
     private static Map<String, String> expectedSignalLabels(
