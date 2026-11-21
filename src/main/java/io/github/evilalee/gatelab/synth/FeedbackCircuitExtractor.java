@@ -120,6 +120,16 @@ public final class FeedbackCircuitExtractor {
      * visited by component id and then target pin index.
      */
     public static Optional<Extraction> extract(Schematic schematic) {
+        return extract(schematic, false);
+    }
+
+    /** Expression export also preserves feedback components with no primary source path. */
+    static Optional<Extraction> extractForExpression(Schematic schematic) {
+        return extract(schematic, true);
+    }
+
+    private static Optional<Extraction> extract(
+            Schematic schematic, boolean includeUnrootedGateCycles) {
         Objects.requireNonNull(schematic, "schematic");
         List<PlacedComponent> components = schematic.components();
         Map<String, PlacedComponent> byId = new LinkedHashMap<>();
@@ -305,6 +315,20 @@ public final class FeedbackCircuitExtractor {
             String signal = sourceSignalByComponent.get(source.id());
             for (GateInputEdge edge : consumersBySource.getOrDefault(signal, List.of())) {
                 visit(edge, consumersBySource, state, backEdges);
+            }
+        }
+        if (includeUnrootedGateCycles) {
+            // Export expressions even for self-feedback without any primary Input/Clock path.
+            for (PlacedComponent gate : gates) {
+                String signal = gateSignals.get(gate.id());
+                if (state.getOrDefault(signal, 0) != 0) {
+                    continue;
+                }
+                state.put(signal, 1);
+                for (GateInputEdge edge : consumersBySource.getOrDefault(signal, List.of())) {
+                    visit(edge, consumersBySource, state, backEdges);
+                }
+                state.put(signal, 2);
             }
         }
 

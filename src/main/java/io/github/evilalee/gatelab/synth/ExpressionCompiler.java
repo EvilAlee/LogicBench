@@ -923,8 +923,14 @@ public final class ExpressionCompiler {
                 signal = name;
             } else if (expression instanceof Expression.Variable variable) {
                 String input = signalForExpression(variable);
-                gates.add(new Netlist.Gate(name, GateOperator.BUFFER, List.of(input)));
-                signal = name;
+                if (assignment.kind() == AssignmentKind.OUTPUT && !input.equals(name)) {
+                    // An Output is a probe, not another logic gate. Preserve the signal alias
+                    // directly so feedback simulation has the same gate-to-gate timing.
+                    signal = input;
+                } else {
+                    gates.add(new Netlist.Gate(name, GateOperator.BUFFER, List.of(input)));
+                    signal = name;
+                }
             } else {
                 signal = signalForExpression(expression);
             }
