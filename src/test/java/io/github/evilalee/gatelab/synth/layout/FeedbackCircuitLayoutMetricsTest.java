@@ -19,6 +19,9 @@ import org.junit.jupiter.api.TestFactory;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import io.github.evilalee.gatelab.synth.Netlist;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -125,6 +128,70 @@ class FeedbackCircuitLayoutMetricsTest {
         assertEquals(SchematicSnapshot.capture(expectedLegacy),
                 SchematicSnapshot.capture(forced.result().schematic()),
                 "fallback schematic must be the preserved legacy layout");
+    }
+
+    @Test
+    void twoBitCounterCompactCandidateEmitsFullGeometryDiagnostic() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                Q0 = DFF(RESET_N & NOT(Q0), CLK)
+                Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
+                """, false);
+        FeedbackCircuitExtractor.Extraction extraction =
+                compilation.feedbackExtraction().orElseThrow();
+        SchematicLayout layout = new SchematicLayout(DEFINITIONS);
+
+        // COMPACT_ONLY still performs its normal doubled-spacing retry, but never
+        // substitutes the legacy layout. Any self-check failure includes the same
+        // Connectivity.analyze topology plus the full geometry dump.
+        SchematicLayout.FeedbackLayoutRun compactRun = layout.layoutFeedbackRun(
+                extraction, SchematicLayout.FeedbackLayoutMode.COMPACT_ONLY);
+        SchematicLayout.FeedbackLayoutRun legacyRun = layout.layoutFeedbackRun(
+                extraction, SchematicLayout.FeedbackLayoutMode.LEGACY);
+        Schematic compact = compactRun.result().schematic();
+        Metrics compactMetrics = measure(compact);
+        Metrics legacyMetrics = measure(legacyRun.result().schematic());
+        Map<String, String> expectedSignals = expectedSignalLabels(
+                extraction, compactRun.result());
+        String geometry = SchematicLayout.diagnosticDump(compact, expectedSignals);
+
+        assertTrue(compactMetrics.area() < legacyMetrics.area(),
+                "2-bit counter compact candidate must beat the same-run legacy layout. "
+                        + "legacy=" + legacyMetrics.display()
+                        + " compact=" + compactMetrics.display()
+                        + geometry);
+    }
+
+    private static Map<String, String> expectedSignalLabels(
+            FeedbackCircuitExtractor.Extraction extraction,
+            SchematicLayout.LayoutResult result) {
+        Netlist netlist = extraction.sourceNetlist();
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (String input : netlist.inputs()) {
+            String id = result.inputComponentIds().get(input);
+            if (id == null) {
+                id = result.clockComponentIds().get(input);
+            }
+            if (id != null) {
+                labels.put(SchematicLayout.diagnosticPinKey(id, "out"), input);
+            }
+        }
+        for (Map.Entry<String, String> constant : result.constantComponentIds().entrySet()) {
+            labels.put(SchematicLayout.diagnosticPinKey(constant.getValue(), "out"),
+                    constant.getKey());
+        }
+        for (Netlist.Gate gate : netlist.gates()) {
+            String id = result.gateComponentIds().get(gate.id());
+            labels.put(SchematicLayout.diagnosticPinKey(id, "out"), gate.id());
+            for (int inputIndex = 0; inputIndex < gate.inputs().size(); inputIndex++) {
+                labels.put(SchematicLayout.diagnosticPinKey(id, "in" + inputIndex),
+                        gate.inputs().get(inputIndex));
+            }
+        }
+        for (Netlist.Output output : netlist.outputs()) {
+            String id = result.outputComponentIds().get(output.name());
+            labels.put(SchematicLayout.diagnosticPinKey(id, "in0"), output.source());
+        }
+        return labels;
     }
 
     @Test

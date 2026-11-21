@@ -1442,6 +1442,268 @@ public final class SchematicLayout {
                 bounds.width(), bounds.height());
     }
 
+    /**
+     * Stable pin key shared by production self-check diagnostics and tests.
+     */
+    static String diagnosticPinKey(String componentId, String pinId) {
+        return componentId + "::" + pinId;
+    }
+
+    /**
+     * Dumps the actual Connectivity.analyze partition together with all wire
+     * segments and geometric events that can join different expected signals.
+     * Lane/track indices are the exact grid coordinates of vertical/horizontal
+     * runs, so the diagnostic remains meaningful after route normalization.
+     */
+    static String diagnosticDump(
+            Schematic schematic, Map<String, String> expectedSignalsByPin) {
+        Objects.requireNonNull(schematic, "schematic");
+        Objects.requireNonNull(expectedSignalsByPin, "expectedSignalsByPin");
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        return diagnosticDump(schematic, expectedSignalsByPin, topology);
+    }
+
+    private static String diagnosticDump(
+            Schematic schematic,
+            Map<String, String> expectedSignalsByPin,
+            Connectivity.Result topology) {
+        StringBuilder report = new StringBuilder();
+        report.append("\n--- COMPACT LAYOUT GEOMETRY DIAGNOSTIC ---\n");
+        report.append("COMPONENT RECTANGLES (world coordinates):\n");
+        for (PlacedComponent component : schematic.components().stream()
+                .sorted(Comparator.comparing(PlacedComponent::id)).toList()) {
+            GateGeometry.Bounds bounds = worldBounds(schematic, component);
+            report.append("  ").append(component.id()).append(" type=")
+                    .append(component.typeId()).append(" rect=[x=").append(bounds.x())
+                    .append(", y=").append(bounds.y()).append(", width=")
+                    .append(bounds.width()).append(", height=").append(bounds.height())
+                    .append("]\n");
+        }
+
+        List<Connectivity.Net> nets = topology.nets();
+        int joinCount = 0;
+        report.append("CONNECTIVITY NETS (Connectivity.analyze):\n");
+        for (int netIndex = 0; netIndex < nets.size(); netIndex++) {
+            Connectivity.Net net = nets.get(netIndex);
+            List<Connectivity.PinPosition> pins = net.pins().stream()
+                    .sorted(Comparator.comparing(Connectivity.PinPosition::componentId)
+                            .thenComparing(Connectivity.PinPosition::pinId))
+                    .toList();
+            List<WireSegment> segments = net.segments().stream()
+                    .sorted(Comparator.comparingInt(WireSegment::x1)
+                            .thenComparingInt(WireSegment::y1)
+                            .thenComparingInt(WireSegment::x2)
+                            .thenComparingInt(WireSegment::y2))
+                    .toList();
+            Set<String> signalSet = new TreeSet<>();
+            for (Connectivity.PinPosition pin : pins) {
+                String signal = expectedSignalsByPin.get(
+                        diagnosticPinKey(pin.componentId(), pin.pinId()));
+                if (signal != null) {
+                    signalSet.add(signal);
+                }
+            }
+            List<String> signals = List.copyOf(signalSet);
+            report.append("  NET ").append(netIndex).append(" expectedSignals=")
+                    .append(signals).append(" pins=").append(pins.size())
+                    .append(" segments=").append(segments.size()).append("\n");
+            for (Connectivity.PinPosition pin : pins) {
+                report.append("    PIN ").append(pin.componentId()).append('.')
+                        .append(pin.pinId()).append(" signal=")
+                        .append(expectedSignalsByPin.getOrDefault(
+                                diagnosticPinKey(pin.componentId(), pin.pinId()), "UNMAPPED"))
+                        .append(" at (").append(pin.x()).append(",").append(pin.y())
+                        .append(")\n");
+            }
+            for (WireSegment segment : segments) {
+                report.append("    ").append(describeDiagnosticSegment(segment)).append("\n");
+            }
+            if (signals.size() < 2) {
+                continue;
+            }
+
+            int beforeNetJoins = joinCount;
+            for (int first = 0; first < segments.size(); first++) {
+                for (int second = first + 1; second < segments.size(); second++) {
+                    WireSegment a = segments.get(first);
+                    WireSegment b = segments.get(second);
+                    for (GeometryJoin join : diagnosticSegmentJoins(a, b)) {
+                        for (int aSignal = 0; aSignal < signals.size(); aSignal++) {
+                            for (int bSignal = aSignal + 1; bSignal < signals.size(); bSignal++) {
+                                report.append("    DIFFERENT-NET JOIN netA=")
+                                        .append(signals.get(aSignal)).append(" netB=")
+                                        .append(signals.get(bSignal)).append(" rule=")
+                                        .append(join.rule()).append(" point=(")
+                                        .append(join.point().x()).append(',')
+                                        .append(join.point().y()).append(") segmentA=")
+                                        .append(describeDiagnosticSegment(a))
+                                        .append(" segmentB=").append(describeDiagnosticSegment(b))
+                                        .append("\n");
+                                joinCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (Connectivity.PinPosition pin : pins) {
+                String pinSignal = expectedSignalsByPin.get(
+                        diagnosticPinKey(pin.componentId(), pin.pinId()));
+                if (pinSignal == null) {
+                    continue;
+                }
+                Connectivity.Point point = new Connectivity.Point(pin.x(), pin.y());
+                for (WireSegment interior : segments) {
+                    if (!diagnosticStrictlyContains(interior, point)) {
+                        continue;
+                    }
+                    List<WireSegment> stubs = segments.stream()
+                            .filter(candidate -> candidate != interior)
+                            .filter(candidate -> diagnosticIsEndpoint(candidate, point))
+                            .toList();
+                    if (stubs.isEmpty()) {
+                        report.append("    DIFFERENT-NET JOIN netA=").append(pinSignal)
+                                .append(" netB=").append(firstDifferentSignal(signals, pinSignal))
+                                .append(" rule=PIN_ON_WIRE_INTERIOR point=(")
+                                .append(point.x()).append(',').append(point.y())
+                                .append(") segmentA=PIN-STUB(").append(pin.componentId())
+                                .append('.').append(pin.pinId()).append(" at ")
+                                .append(point.x()).append(',').append(point.y())
+                                .append("; no explicit stub segment) segmentB=")
+                                .append(describeDiagnosticSegment(interior)).append("\n");
+                        joinCount++;
+                    } else {
+                        for (WireSegment stub : stubs) {
+                            report.append("    DIFFERENT-NET JOIN netA=").append(pinSignal)
+                                    .append(" netB=").append(firstDifferentSignal(signals, pinSignal))
+                                    .append(" rule=PIN_ON_WIRE_INTERIOR point=(")
+                                    .append(point.x()).append(',').append(point.y())
+                                    .append(") segmentA=").append(describeDiagnosticSegment(stub))
+                                    .append(" segmentB=").append(describeDiagnosticSegment(interior))
+                                    .append("\n");
+                            joinCount++;
+                        }
+                    }
+                }
+            }
+
+            for (int first = 0; first < pins.size(); first++) {
+                Connectivity.PinPosition a = pins.get(first);
+                String aSignal = expectedSignalsByPin.get(
+                        diagnosticPinKey(a.componentId(), a.pinId()));
+                for (int second = first + 1; second < pins.size(); second++) {
+                    Connectivity.PinPosition b = pins.get(second);
+                    String bSignal = expectedSignalsByPin.get(
+                            diagnosticPinKey(b.componentId(), b.pinId()));
+                    if (a.x() == b.x() && a.y() == b.y()
+                            && aSignal != null && bSignal != null && !aSignal.equals(bSignal)) {
+                        report.append("    DIFFERENT-NET JOIN netA=").append(aSignal)
+                                .append(" netB=").append(bSignal)
+                                .append(" rule=PIN_COORDINATE_COINCIDENCE point=(")
+                                .append(a.x()).append(',').append(a.y())
+                                .append(") segmentA=PIN-STUB(").append(a.componentId()).append('.')
+                                .append(a.pinId()).append(") segmentB=PIN-STUB(")
+                                .append(b.componentId()).append('.').append(b.pinId()).append(")\n");
+                        joinCount++;
+                    }
+                }
+            }
+
+            if (joinCount == beforeNetJoins) {
+                report.append("    DIFFERENT-NET JOIN could not be attributed to a pair "
+                        + "of listed primitives; merged expected signal groups=")
+                        .append(signals).append("\n");
+                joinCount++;
+            }
+        }
+
+        report.append("DIFFERENT_NET_JOIN_COUNT=").append(joinCount).append("\n");
+        if (joinCount == 0) {
+            report.append("DIFFERENT_NET_JOINS: none; each Connectivity.analyze net "
+                    + "contains at most one expected netlist signal.\n");
+        }
+        report.append("--- END GEOMETRY DIAGNOSTIC ---");
+        return report.toString();
+    }
+
+    private record GeometryJoin(Connectivity.Point point, String rule) {
+    }
+
+    private static String firstDifferentSignal(List<String> signals, String signal) {
+        return signals.stream().filter(candidate -> !candidate.equals(signal))
+                .findFirst().orElse("UNKNOWN-OTHER-NET");
+    }
+
+    private static String describeDiagnosticSegment(WireSegment segment) {
+        int grid = PlacedComponent.GRID_SPACING;
+        if (segment.isHorizontal()) {
+            return "H trackIndex=" + (segment.y1() / grid) + " coords=("
+                    + segment.x1() + "," + segment.y1() + ")->("
+                    + segment.x2() + "," + segment.y2() + ")";
+        }
+        return "V laneIndex=" + (segment.x1() / grid) + " coords=("
+                + segment.x1() + "," + segment.y1() + ")->("
+                + segment.x2() + "," + segment.y2() + ")";
+    }
+
+    private static List<GeometryJoin> diagnosticSegmentJoins(
+            WireSegment first, WireSegment second) {
+        Map<Connectivity.Point, String> joins = new LinkedHashMap<>();
+        List<Connectivity.Point> firstEndpoints = List.of(
+                new Connectivity.Point(first.x1(), first.y1()),
+                new Connectivity.Point(first.x2(), first.y2()));
+        List<Connectivity.Point> secondEndpoints = List.of(
+                new Connectivity.Point(second.x1(), second.y1()),
+                new Connectivity.Point(second.x2(), second.y2()));
+        for (Connectivity.Point point : firstEndpoints) {
+            if (diagnosticContains(second, point)) {
+                joins.put(point, diagnosticJoinRule(first, second, point));
+            }
+        }
+        for (Connectivity.Point point : secondEndpoints) {
+            if (diagnosticContains(first, point)) {
+                joins.put(point, diagnosticJoinRule(first, second, point));
+            }
+        }
+        return joins.entrySet().stream()
+                .map(entry -> new GeometryJoin(entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    private static String diagnosticJoinRule(
+            WireSegment first, WireSegment second, Connectivity.Point point) {
+        boolean firstInterior = diagnosticStrictlyContains(first, point);
+        boolean secondInterior = diagnosticStrictlyContains(second, point);
+        if (first.isHorizontal() == second.isHorizontal()) {
+            return firstInterior || secondInterior
+                    ? "ENDPOINT_ON_WIRE_INTERIOR" : "COLLINEAR_OVERLAP_OR_TOUCH";
+        }
+        return firstInterior || secondInterior ? "T_JUNCTION" : "ENDPOINT_TOUCH";
+    }
+
+    private static boolean diagnosticContains(
+            WireSegment segment, Connectivity.Point point) {
+        if (segment.isHorizontal()) {
+            return point.y() == segment.y1()
+                    && point.x() >= segment.x1() && point.x() <= segment.x2();
+        }
+        return point.x() == segment.x1()
+                && point.y() >= segment.y1() && point.y() <= segment.y2();
+    }
+
+    private static boolean diagnosticStrictlyContains(
+            WireSegment segment, Connectivity.Point point) {
+        return diagnosticContains(segment, point)
+                && !diagnosticIsEndpoint(segment, point);
+    }
+
+    private static boolean diagnosticIsEndpoint(
+            WireSegment segment, Connectivity.Point point) {
+        return (segment.x1() == point.x() && segment.y1() == point.y())
+                || (segment.x2() == point.x() && segment.y2() == point.y());
+    }
+
     private static void checkConnectivity(
             Netlist netlist,
             Schematic schematic,
@@ -1501,9 +1763,13 @@ public final class SchematicLayout {
         }
 
         if (!involved.isEmpty()) {
+            Map<String, String> diagnosticSignals = new LinkedHashMap<>();
+            expected.forEach((pin, signal) -> diagnosticSignals.put(
+                    diagnosticPinKey(pin.componentId(), pin.pinId()), signal));
             throw new LayoutCheckException(
                     "different netlist signals were joined or one signal was split: "
-                            + String.join(", ", involved),
+                            + String.join(", ", involved)
+                            + diagnosticDump(schematic, diagnosticSignals, topology),
                     involved);
         }
 
