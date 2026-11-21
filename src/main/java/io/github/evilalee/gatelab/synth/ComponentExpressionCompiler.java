@@ -918,8 +918,11 @@ public final class ComponentExpressionCompiler {
             }
             GateDef definition = visualDefinition(node);
             node.visualDefinition = definition;
+            String label = node.kind == NodeKind.CONSTANT
+                    ? (node.constantValue ? "1" : "0")
+                    : node.sourceName == null ? "" : node.sourceName;
             PlacedComponent component = placedAtTopLeft(
-                    node.id, definition, node.x, node.y, node.sourceName == null ? "" : node.sourceName);
+                    node.id, definition, node.x, node.y, label);
             schematic.add(component);
             GateGeometry.Bounds bounds = GateGeometry.bounds(definition, Facing.EAST);
             node.bounds = new GateGeometry.Bounds(
