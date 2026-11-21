@@ -85,7 +85,7 @@ public final class CircuitDescriber {
         Schematic normalized = copyWithNames(schematic, names.byComponentId(), false);
 
         GraphSource source;
-        var feedback = FeedbackCircuitExtractor.extract(normalized);
+        var feedback = FeedbackCircuitExtractor.extractForExpression(normalized);
         if (feedback.isPresent()) {
             FeedbackCircuitExtractor.Extraction extraction = feedback.orElseThrow();
             source = new GraphSource(
