@@ -808,11 +808,6 @@ public final class Schematic {
         return List.copyOf(components);
     }
 
-    /** Returns all black-box instances in paint/insertion order. */
-    public List<ComponentInstance> componentInstances() {
-        return List.copyOf(componentInstances);
-    }
-
     /** Number of successful schematic mutations; queries never change this value. */
     public long modificationCount() {
         return modificationCount;
