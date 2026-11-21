@@ -194,26 +194,118 @@ public final class SchematicLayout {
         }
     }
 
-    /** Builds a feedback-aware layout while keeping the ordinary DAG path unchanged. */
-    public LayoutResult layoutFeedback(FeedbackCircuitExtractor.Extraction extraction) {
-        Objects.requireNonNull(extraction, "extraction");
-        try {
-            return build(extraction.dagNetlist(), 1, extraction);
-        } catch (LayoutCheckException firstFailure) {
-            try {
-                return build(extraction.dagNetlist(), 2, extraction);
-            } catch (LayoutCheckException retryFailure) {
-                Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
-                involved.addAll(retryFailure.involvedNets);
-                String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
-                throw new IllegalStateException(
-                        "Feedback layout failed its connectivity self-check after one "
-                                + "doubled-spacing retry. Involved nets: " + names
-                                + ". First failure: " + firstFailure.getMessage()
-                                + "; retry failure: " + retryFailure.getMessage(),
-                        retryFailure);
-            }
+    enum FeedbackLayoutMode {
+        COMPACT_WITH_FALLBACK,
+        COMPACT_ONLY,
+        LEGACY
+    }
+
+    record FeedbackLayoutRun(
+            LayoutResult result,
+            boolean legacyFallbackUsed,
+            String fallbackReason) {
+        FeedbackLayoutRun {
+            Objects.requireNonNull(result, "result");
+            fallbackReason = Objects.requireNonNull(fallbackReason, "fallbackReason");
         }
+    }
+
+    /** Builds a feedback-aware layout, retaining the original main layout as a fallback. */
+    public LayoutResult layoutFeedback(FeedbackCircuitExtractor.Extraction extraction) {
+        return layoutFeedbackRun(
+                extraction, FeedbackLayoutMode.COMPACT_WITH_FALLBACK).result();
+    }
+
+    FeedbackLayoutRun layoutFeedbackRun(
+            FeedbackCircuitExtractor.Extraction extraction, FeedbackLayoutMode mode) {
+        return layoutFeedbackRun(extraction, mode, false);
+    }
+
+    /**
+     * Package-private failure injection keeps the compact-to-legacy fallback test
+     * deterministic without weakening or bypassing the production self-check.
+     */
+    FeedbackLayoutRun layoutFeedbackRun(
+            FeedbackCircuitExtractor.Extraction extraction,
+            FeedbackLayoutMode mode,
+            boolean forceCompactFailure) {
+        Objects.requireNonNull(extraction, "extraction");
+        Objects.requireNonNull(mode, "mode");
+
+        if (mode == FeedbackLayoutMode.LEGACY) {
+            return new FeedbackLayoutRun(
+                    legacyLayout(extraction), true, "legacy layout selected for comparison");
+        }
+
+        LayoutCheckException firstFailure;
+        try {
+            if (forceCompactFailure) {
+                throw new LayoutCheckException(
+                        "forced compact failure (test hook)", List.of("forced compact failure"));
+            }
+            return new FeedbackLayoutRun(
+                    build(extraction.dagNetlist(), 1, extraction), false, "");
+        } catch (LayoutCheckException failure) {
+            firstFailure = failure;
+        }
+
+        LayoutCheckException retryFailure;
+        try {
+            if (forceCompactFailure) {
+                throw new LayoutCheckException(
+                        "forced doubled-spacing compact failure (test hook)",
+                        List.of("forced compact failure"));
+            }
+            return new FeedbackLayoutRun(
+                    build(extraction.dagNetlist(), 2, extraction), false, "");
+        } catch (LayoutCheckException failure) {
+            retryFailure = failure;
+        }
+
+        if (mode == FeedbackLayoutMode.COMPACT_ONLY) {
+            throw compactFailure(firstFailure, retryFailure);
+        }
+
+        try {
+            LayoutResult legacy = legacyLayout(extraction);
+            return new FeedbackLayoutRun(
+                    legacy, true,
+                    "compact spacing 1 failed: " + firstFailure.getMessage()
+                            + "; compact spacing 2 failed: " + retryFailure.getMessage());
+        } catch (RuntimeException legacyFailure) {
+            throw new IllegalStateException(
+                    "Feedback layout failed both compact candidates and the legacy layout. "
+                            + "Compact spacing 1: " + firstFailure.getMessage()
+                            + "; compact spacing 2: " + retryFailure.getMessage()
+                            + "; legacy failure: " + legacyFailure.getMessage(),
+                    legacyFailure);
+        }
+    }
+
+    private LayoutResult legacyLayout(FeedbackCircuitExtractor.Extraction extraction) {
+        LegacySchematicLayout.LayoutResult legacy =
+                new LegacySchematicLayout(definitions).layoutFeedback(extraction);
+        return new LayoutResult(
+                legacy.schematic(),
+                legacy.inputComponentIds(),
+                legacy.outputComponentIds(),
+                legacy.constantComponentIds(),
+                legacy.dummyNodeCount(),
+                legacy.clockComponentIds(),
+                legacy.gateComponentIds());
+    }
+
+    private static IllegalStateException compactFailure(
+            LayoutCheckException firstFailure, LayoutCheckException retryFailure) {
+        Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
+        involved.addAll(retryFailure.involvedNets);
+        String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
+        return new IllegalStateException(
+                "Feedback compact layout failed its connectivity self-check after one "
+                        + "doubled-spacing retry. Involved nets: " + names
+                        + ". First failure: " + firstFailure.getMessage()
+                        + "; retry failure: " + retryFailure.getMessage(),
+                retryFailure);
     }
 
     private LayoutResult build(
