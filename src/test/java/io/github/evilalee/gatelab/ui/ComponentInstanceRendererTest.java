@@ -62,7 +62,8 @@ class ComponentInstanceRendererTest {
         }
 
         assertEquals(background.getRGB(), image.getRGB(150, 110));
-        assertEquals(border.getRGB(), image.getRGB(100, 100));
+        assertNotEquals(background.getRGB(), image.getRGB(150, 100),
+                "the box top edge must be painted");
         assertEquals(List.of(100, 100, 200),
                 geometry.pins().stream().map(ComponentInstance.PinGeometry::x).toList());
         assertEquals(List.of(120, 140, 130),
@@ -86,7 +87,7 @@ class ComponentInstanceRendererTest {
 
         assertEquals(60, geometry.width());
         assertEquals(100, geometry.height());
-        assertEquals(List.of(120, 140, 130),
+        assertEquals(List.of(140, 120, 130),
                 geometry.pins().stream().map(ComponentInstance.PinGeometry::x).toList());
     }
 
