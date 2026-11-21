@@ -686,6 +686,9 @@ public final class ComponentExpressionCompiler {
             int edgeBudget = nodes.stream().mapToInt(node -> node.inputs.size()).sum()
                     + outputs.size();
             int columnPitch = Math.max(440, 300 + edgeBudget * 20);
+            for (Node node : nodes) {
+                node.x = 100 + node.depth * columnPitch;
+            }
             int outputLeft = 100 + outputColumn * columnPitch;
             List<Edge> edges = buildEdges(producerBySignal, maxDepth, outputLeft);
             Map<Integer, Integer> outgoingCounts = new HashMap<>();
@@ -837,7 +840,7 @@ public final class ComponentExpressionCompiler {
                     boolean feedback = producer.depth >= node.depth
                             || feedbackInputs.contains(new FeedbackInput(node.id, index));
                     result.add(new Edge(signal, producer, producerOutputPin(producer, signal),
-                            node.id, pinName, node.depth, node.bounds.x(), feedback));
+                            node.id, pinName, node.depth, node.x, feedback));
                 }
             }
 
