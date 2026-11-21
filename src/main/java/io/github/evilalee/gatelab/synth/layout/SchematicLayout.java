@@ -39,6 +39,23 @@ import java.util.TreeSet;
  * failed connectivity self-check.
  */
 public final class SchematicLayout {
+    /*
+     * Spacing audit for the 10-unit schematic grid (all values are multiples
+     * of PlacedComponent.GRID_SPACING). Each fixed clearance is the minimum
+     * supported clearance plus one grid cell:
+     *
+     *   ROW_GAP              40 = 30 minimum pin-row separation + 10 safety
+     *   DUMMY_SLOT_HEIGHT    20 = 10 minimum dummy slot + 10 safety
+     *   TRUNK_START_MARGIN   20 = 10 minimum body clearance + 10 safety
+     *   TRUNK_PITCH          20 = 10 minimum distinct-track spacing + 10 safety
+     *   TRUNK_END_MARGIN     20 = 10 minimum body clearance + 10 safety
+     *
+     * Normal column gap is 20 + 20*trackCount: one start margin, one end
+     * margin, and one pitch per routed signal. Feedback-only gaps reserve
+     * 20*(sourceTracks + targetTracks + 2) for the same two margins and
+     * every dedicated source/target trunk. These are already at min + 1 cell;
+     * reducing them would violate the closed-lane clearance rule.
+     */
     private static final int ROW_GAP = 40;
     private static final int DUMMY_SLOT_HEIGHT = 20;
     private static final int TRUNK_START_MARGIN = 20;
