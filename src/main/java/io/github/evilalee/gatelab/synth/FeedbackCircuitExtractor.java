@@ -307,6 +307,19 @@ public final class FeedbackCircuitExtractor {
                 visit(edge, consumersBySource, state, backEdges);
             }
         }
+        // Also discover feedback components that have no primary Input/Clock path,
+        // such as a self-referencing inverter or a disconnected latch.
+        for (PlacedComponent gate : gates) {
+            String signal = gateSignals.get(gate.id());
+            if (state.getOrDefault(signal, 0) != 0) {
+                continue;
+            }
+            state.put(signal, 1);
+            for (GateInputEdge edge : consumersBySource.getOrDefault(signal, List.of())) {
+                visit(edge, consumersBySource, state, backEdges);
+            }
+            state.put(signal, 2);
+        }
 
         if (backEdges.isEmpty()) {
             return Optional.empty();
