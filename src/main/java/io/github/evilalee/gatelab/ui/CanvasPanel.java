@@ -196,8 +196,7 @@ public final class CanvasPanel extends JPanel {
     public CanvasPanel(boolean galleryMode) {
         this.galleryMode = galleryMode;
         this.gateLibrary = GateLibrary.load();
-        this.componentLibrary = ComponentLibrary.load(gateLibrary.all(),
-                ComponentLibrary.defaultUserDirectory());
+        this.componentLibrary = ComponentLibrary.load();
         this.gateRenderer = new GateRenderer(gateLibrary);
         this.schematic = new Schematic(gateLibrary.all());
         this.schematic.addChangeListener(schematicSimulationListener);
