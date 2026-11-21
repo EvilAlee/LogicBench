@@ -178,7 +178,9 @@ public final class SchematicLayout {
         SOURCE_EXTRACTION,
         INPUT_ROOTED_ASCENDING,
         INPUT_ROOTED_DESCENDING,
-        INPUT_ROOTED_REVERSED_CONSUMERS
+        INPUT_ROOTED_REVERSED_CONSUMERS,
+        INPUT_ROOTED_HIGH_FANOUT_FIRST,
+        INPUT_ROOTED_LOW_FANOUT_FIRST
     }
 
     private record LayoutGateInputEdge(
@@ -442,6 +444,17 @@ public final class SchematicLayout {
         roots.sort(String::compareTo);
         if (ordering == CycleBreakOrdering.INPUT_ROOTED_DESCENDING) {
             roots.sort(Comparator.reverseOrder());
+        } else if (ordering == CycleBreakOrdering.INPUT_ROOTED_HIGH_FANOUT_FIRST) {
+            roots.sort(Comparator
+                    .comparingInt((String signal) ->
+                            consumersBySource.getOrDefault(signal, List.of()).size())
+                    .reversed()
+                    .thenComparing(String::compareTo));
+        } else if (ordering == CycleBreakOrdering.INPUT_ROOTED_LOW_FANOUT_FIRST) {
+            roots.sort(Comparator
+                    .comparingInt((String signal) ->
+                            consumersBySource.getOrDefault(signal, List.of()).size())
+                    .thenComparing(String::compareTo));
         }
 
         Map<String, Integer> state = new HashMap<>();
