@@ -275,6 +275,11 @@ public final class Main {
             updateTidyEnabled.run();
         });
         circuit.add(tidy);
+        circuit.addSeparator();
+        JMenuItem createComponent = new JMenuItem("Create component from circuit...");
+        createComponent.addActionListener(event ->
+                CreateComponentDialog.showDialog(frame, canvas));
+        circuit.add(createComponent);
         menuBar.add(circuit);
 
         JMenu edit = new JMenu("Edit");
@@ -747,6 +752,16 @@ public final class Main {
         tree.expandPath(new TreePath(pins.getPath()));
         tree.expandPath(new TreePath(builtIn.getPath()));
         tree.expandPath(new TreePath(myComponents.getPath()));
+        javax.swing.tree.DefaultTreeModel componentTreeModel =
+                (javax.swing.tree.DefaultTreeModel) tree.getModel();
+        canvas.setComponentLibraryChangedListener(() -> {
+            myComponents.removeAllChildren();
+            canvas.componentLibrary().userDefinitions().forEach(definition ->
+                    myComponents.add(new DefaultMutableTreeNode(new ComponentTreeItem(
+                            "component:" + definition.name(), definition.name()))));
+            componentTreeModel.reload(myComponents);
+            tree.expandPath(new TreePath(myComponents.getPath()));
+        });
         tree.addTreeSelectionListener(event -> {
             TreePath path = tree.getSelectionPath();
             enterAddModeForPath(canvas, path);

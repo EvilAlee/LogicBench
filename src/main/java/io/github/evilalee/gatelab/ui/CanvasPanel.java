@@ -131,6 +131,7 @@ public final class CanvasPanel extends JPanel {
     private final Runnable schematicSimulationListener = this::schematicChanged;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private final List<Consumer<Schematic>> schematicListeners = new ArrayList<>();
+    private Runnable componentLibraryChangedListener = () -> { };
     private Runnable signalHistoryClearListener = () -> { };
     private Runnable signalSampleListener = () -> { };
     private SimulationResult simulationResult;
@@ -239,6 +240,16 @@ public final class CanvasPanel extends JPanel {
     /** The built-in and user-defined component catalogue used by the explorer. */
     public ComponentLibrary componentLibrary() {
         return componentLibrary;
+    }
+
+    /** Installs the explorer refresh callback used after a definition is saved. */
+    public void setComponentLibraryChangedListener(Runnable listener) {
+        componentLibraryChangedListener = listener == null ? () -> { } : listener;
+    }
+
+    /** Notifies the explorer that the in-memory user library has changed. */
+    public void notifyComponentLibraryChanged() {
+        componentLibraryChangedListener.run();
     }
 
     /** Receives the current and every subsequently installed schematic. */
