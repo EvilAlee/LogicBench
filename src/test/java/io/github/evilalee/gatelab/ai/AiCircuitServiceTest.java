@@ -479,8 +479,12 @@ class AiCircuitServiceTest {
         assertEquals(1, provider.calls);
         assertEquals(103, result.signals().size());
         assertEquals(256, result.truthTable().rows().size());
-        assertEquals(inputs, result.netlist().inputs(),
+        assertEquals(inputs.size(), result.netlist().inputs().size(),
                 "literal constants must not count as declared primary inputs");
+        assertTrue(result.netlist().inputs().containsAll(inputs),
+                "all declared primary inputs must remain in the input list");
+        assertTrue(result.layout().constantComponentIds().containsKey("0"),
+                "the literal zero must be represented as a fixed source");
         assertFalse(result.layout().schematic().components().stream()
                 .anyMatch(component -> component.typeId().equals("input")
                         && component.label().equals("0")),

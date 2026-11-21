@@ -225,7 +225,7 @@ class SchematicLayoutTest {
     }
 
     @Test
-    void constantsUseLabeledInputComponentsAndKeepTheirInitialValues() {
+    void constantsUseFixedConstantComponentsAndKeepTheirLabels() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("Zero = 0\nOne = 1");
         SchematicLayout.LayoutResult placed = layout.layout(compilation.netlist());
@@ -234,9 +234,10 @@ class SchematicLayoutTest {
         assertEquals(Set.of("0", "1"), placed.constantComponentIds().keySet());
         for (Map.Entry<String, String> entry : placed.constantComponentIds().entrySet()) {
             PlacedComponent component = component(schematic, entry.getValue());
-            assertEquals("input", component.typeId());
+            assertEquals("constant", component.typeId());
             assertEquals(entry.getKey(), component.label());
-            assertEquals(entry.getKey().equals("1"), schematic.inputValue(component.id()));
+            assertThrows(IllegalArgumentException.class,
+                    () -> schematic.inputValue(component.id()));
         }
         assertTrue(SchematicExpressionVerifier.verify(compilation, placed).verified());
     }

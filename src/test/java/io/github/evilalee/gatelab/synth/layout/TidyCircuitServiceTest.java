@@ -225,7 +225,7 @@ class TidyCircuitServiceTest {
     }
 
     @Test
-    void tidiesExpressionGeneratedLiteralInputAndPreservesItsDisplayLabelAndValue() {
+    void tidiesExpressionGeneratedLiteralSourceAndPreservesItsFixedValue() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 F = A & B
                 Constant = 1
@@ -233,20 +233,22 @@ class TidyCircuitServiceTest {
         SchematicLayout.LayoutResult generated =
                 new SchematicLayout(DEFINITIONS).layout(compilation.netlist());
         PlacedComponent literal = generated.schematic().components().stream()
-                .filter(component -> component.typeId().equals("input")
+                .filter(component -> component.typeId().equals("constant")
                         && component.label().equals("1"))
                 .findFirst().orElseThrow();
-        assertTrue(generated.schematic().inputValue(literal.id()));
+        assertThrows(IllegalArgumentException.class,
+                () -> generated.schematic().inputValue(literal.id()));
 
         TidyCircuitService.TidyResult result =
                 TidyCircuitService.tidy(generated.schematic(), DEFINITIONS);
         assertFalse(result.equivalenceSkipped());
         assertEquals(8, result.verificationRows());
         PlacedComponent retainedLiteral = result.schematic().components().stream()
-                .filter(component -> component.typeId().equals("input")
+                .filter(component -> component.typeId().equals("constant")
                         && component.label().equals("1"))
                 .findFirst().orElseThrow();
-        assertTrue(result.schematic().inputValue(retainedLiteral.id()));
+        assertThrows(IllegalArgumentException.class,
+                () -> result.schematic().inputValue(retainedLiteral.id()));
     }
 
     @Test
