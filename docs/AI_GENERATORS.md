@@ -43,7 +43,7 @@ pin name, not by relying on that declaration order.
 - The decoder is active-high; when enabled, exactly Y_A is high. With enable=no,
   no EN pin is present and the decoder is always enabled.
 - Even parity sets PARITY=1 when the number of high inputs is even; odd parity sets
-  it when that count is odd.
+  it when that count is odd. An unspecified parity mode is interpreted as even.
 - Majority asserts when at least half-plus-one inputs are high.
 - Gray conversion uses the standard binary-reflected Gray code.
 
@@ -65,3 +65,36 @@ interface; neither is made here.
 
 No engine, gates.json, SVG, schematic file field, or Swing code is changed by
 the generator package.
+
+
+## Deterministic phrase matching
+
+Template matching is enabled by default in the AI dialog. It runs after the direct
+expression shortcut and before cache/provider lookup. The matcher accepts only a complete
+recognized regular-circuit request, optionally preceded by a simple command such as
+"build", "make", or "create". Dimensions may be digits or the words one through eight.
+
+Examples include:
+
+| Phrase | Result |
+|---|---|
+| 4 bit adder / four bit adder | ripple_adder(n=4, carryIn=no) |
+| 4-bit adder with carry | ripple_adder(n=4, carryIn=yes) |
+| 4x4 multiplier / multiplier 4 by 4 | array_multiplier(n=4, m=4) |
+| 4 to 1 mux / 4:1 multiplexer | mux(k=2) |
+| 3 to 8 decoder | decoder(n=3, enable=no) |
+| 4 bit comparator | comparator(n=4) |
+| parity of 6 bits | parity(n=6, mode=even) |
+| 3 input majority | majority(n=3) |
+| 4 bit gray code to binary | gray_to_binary(n=4) |
+| 4 bit binary to gray | binary_to_gray(n=4) |
+
+The exact phrase "8 to 1 mux" is recognized but reports that it needs 11 independent
+single-bit inputs; it is not clamped to a smaller mux. Other recognized out-of-range
+requests likewise receive an explicit supported-range message. Requests with additional
+functional requirements, such as "4-bit adder with an alarm light" or "traffic light",
+do not match and continue to the normal AI provider path.
+
+The Regenerate action bypasses template matching as well as cache lookup, so the caller
+can explicitly force a live AI request. Turning off the Use templates checkbox also
+bypasses matching without disabling cache or provider generation.

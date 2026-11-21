@@ -4,12 +4,22 @@ import io.github.evilalee.gatelab.synth.ExpressionParser;
 import io.github.evilalee.gatelab.synth.NamedExpression;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.JCheckBox;
+
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiCircuitDialogFormattingTest {
+    @Test
+    void useTemplatesCheckboxDefaultsToSelected() {
+        JCheckBox checkbox = AiCircuitDialog.createUseTemplatesCheckbox();
+        assertTrue(checkbox.isSelected());
+        assertEquals("Use templates", checkbox.getText());
+    }
+
     @Test
     void displaysSignalsBeforeOutputsAndUsesInternalAssignmentSyntax() {
         List<NamedExpression> signals = List.of(

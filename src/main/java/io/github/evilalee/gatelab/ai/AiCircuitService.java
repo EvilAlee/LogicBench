@@ -12,6 +12,8 @@ import io.github.evilalee.gatelab.synth.NamedExpression;
 import io.github.evilalee.gatelab.synth.Netlist;
 import io.github.evilalee.gatelab.synth.TruthTable;
 import io.github.evilalee.gatelab.synth.TruthTableGenerator;
+import io.github.evilalee.gatelab.synth.generators.GeneratedCircuit;
+import io.github.evilalee.gatelab.synth.generators.TemplateMatcher;
 import io.github.evilalee.gatelab.synth.layout.SchematicExpressionVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 
@@ -339,6 +341,15 @@ public final class AiCircuitService {
     public Result generate(
             String description, boolean cacheOnly, boolean invertingGates,
             String expectedRowsText, boolean bypassCache) throws IOException, InterruptedException {
+        return generate(description, cacheOnly, invertingGates, expectedRowsText,
+                bypassCache, true);
+    }
+
+    /** Disables deterministic templates when the caller wants provider-only generation. */
+    public Result generate(
+            String description, boolean cacheOnly, boolean invertingGates,
+            String expectedRowsText, boolean bypassCache, boolean useTemplates)
+            throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
         expectedRowsText = expectedRowsText == null ? "" : expectedRowsText;
         String safeDescription = provider.redact(description);
@@ -404,6 +415,29 @@ public final class AiCircuitService {
                 log.add("Local expression build failed: " + safeParseMessage(exception));
                 return new Result(0, Status.UNVERIFIED, "Local expression could not be built.",
                         local.expressions(), local.netlist(), null, null, List.of(), log, false);
+            }
+        }
+
+        if (!bypassCache && useTemplates) {
+            TemplateMatcher.MatchResult templateMatch = TemplateMatcher.match(description);
+            if (templateMatch instanceof TemplateMatcher.Matched matched) {
+                GeneratedCircuit template = matched.circuit();
+                String label = templateLabel(template);
+                Attempt generated = validate(templateAnswerJson(template, label),
+                        invertingGates, expectedRowsText);
+                log.add("Matched deterministic " + template.generator() + " template.");
+                if (generated.passed() && generated.independentCheck()) {
+                    log.add("Verified the template against its integer specification.");
+                    return result(0, Status.VERIFIED, generated, log, false);
+                }
+                log.add("Generated template did not pass the common compilation/verification pipeline.");
+                return result(0, Status.UNVERIFIED, generated, log, false);
+            }
+            if (templateMatch instanceof TemplateMatcher.Unsupported unsupported) {
+                log.add("Template request is outside the supported range: " + unsupported.message());
+                return new Result(0, Status.UNVERIFIED,
+                        "Template request not supported: " + unsupported.message(),
+                        List.of(), null, null, null, List.of(), log, false);
             }
         }
 
@@ -503,6 +537,20 @@ public final class AiCircuitService {
         }
         return result(AiCircuitLimits.MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false,
                 bestAnsweredBy, allModelAttempts);
+    }
+
+    private static String templateLabel(GeneratedCircuit template) {
+        String parameters = template.params().entrySet().stream()
+                .map(entry -> entry.getKey() + "=" + entry.getValue())
+                .collect(java.util.stream.Collectors.joining(", "));
+        return "Template: " + template.generator() + "(" + parameters
+                + "), verified against its integer spec";
+    }
+
+    private static String templateAnswerJson(GeneratedCircuit template, String label) {
+        JsonObject answer = template.toJson();
+        answer.addProperty("summary", label);
+        return answer.toString();
     }
 
     /**

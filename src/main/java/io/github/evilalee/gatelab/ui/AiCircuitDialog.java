@@ -67,6 +67,7 @@ public final class AiCircuitDialog extends JDialog {
     private final JButton copyExpressionsButton = new JButton("Copy expressions");
     private final JCheckBox optimizeInvertingGates =
             new JCheckBox("Optimize with NAND/NOR/XNOR", true);
+    private final JCheckBox useTemplates = createUseTemplatesCheckbox();
     private final JTextArea expectedRows = new JTextArea(2, 64);
 
     private SwingWorker<?, ?> activeWorker;
@@ -114,7 +115,10 @@ public final class AiCircuitDialog extends JDialog {
         setupHelp.setForeground(new Color(145, 88, 0));
         keyPanel.add(keyStatus, BorderLayout.NORTH);
         keyPanel.add(setupHelp, BorderLayout.CENTER);
-        keyPanel.add(optimizeInvertingGates, BorderLayout.EAST);
+        JPanel generationOptions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        generationOptions.add(useTemplates);
+        generationOptions.add(optimizeInvertingGates);
+        keyPanel.add(generationOptions, BorderLayout.EAST);
         expectedRows.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         expectedRows.setLineWrap(false);
         JScrollPane expectedRowsScroll = new JScrollPane(expectedRows);
@@ -204,6 +208,10 @@ public final class AiCircuitDialog extends JDialog {
         setLocationRelativeTo(owner);
     }
 
+    static JCheckBox createUseTemplatesCheckbox() {
+        return new JCheckBox("Use templates", true);
+    }
+
     public static void showDialog(JFrame owner, CanvasPanel canvas, boolean cacheOnly) {
         AiCircuitDialog dialog = new AiCircuitDialog(owner, canvas, cacheOnly);
         dialog.setVisible(true);
@@ -235,13 +243,15 @@ public final class AiCircuitDialog extends JDialog {
         summary.setText("Generating and verifying...");
         appendLog("Starting generation.");
         boolean optimize = optimizeInvertingGates.isSelected();
+        boolean templates = useTemplates.isSelected();
         String rowText = expectedRows.getText();
         optimizeInvertingGates.setEnabled(false);
+        useTemplates.setEnabled(false);
         expectedRows.setEditable(false);
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
-                return service.generate(prompt, cacheOnly, optimize, rowText, bypassCache);
+                return service.generate(prompt, cacheOnly, optimize, rowText, bypassCache, templates);
             }
 
             @Override
@@ -250,6 +260,7 @@ public final class AiCircuitDialog extends JDialog {
                 generateButton.setEnabled(true);
                 description.setEditable(true);
                 optimizeInvertingGates.setEnabled(true);
+                useTemplates.setEnabled(true);
                 expectedRows.setEditable(true);
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {

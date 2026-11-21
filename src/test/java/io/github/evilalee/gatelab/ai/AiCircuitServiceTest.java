@@ -259,6 +259,52 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void recognizedTemplateIsVerifiedWithoutCallingTheProvider() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+        AiCircuitService.Result result = service(provider).generate("4-bit adder with carry");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(0, provider.calls);
+        assertEquals(9, result.truthTable().inputNames().size());
+        assertEquals(512, result.truthTable().rows().size());
+        assertTrue(result.summary().startsWith("Template: ripple_adder("));
+        assertTrue(result.summary().contains("verified against its integer spec"));
+    }
+
+    @Test
+    void regenerateBypassesTemplatesAndCallsTheProvider() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "4-bit adder", false, true, "", true);
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(1, provider.calls);
+    }
+
+    @Test
+    void disablingTemplatesRoutesRecognizedPhrasesToTheProvider() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "4-bit adder", false, true, "", false, false);
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(1, provider.calls);
+    }
+
+    @Test
+    void recognizedOutOfRangeTemplateProducesANamedMessageWithoutClamping() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+
+        AiCircuitService.Result result = service(provider).generate("5-bit adder");
+
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(result.summary().contains("supported: 1 to 4 bits"));
+        assertEquals(0, provider.calls);
+    }
+
+    @Test
     void fourBitRippleAdderUsesOrderedGeneratePropagateAndCarrySignalsAndMatchesFlatCircuit()
             throws Exception {
         String raw = answerWithSignals(bitAdderInputs(), fourBitRippleOutputs(),
