@@ -194,6 +194,7 @@ public final class ComponentExpressionCompiler {
         private final Map<String, Statement> assignments = new LinkedHashMap<>();
         private final Map<String, Integer> assignmentState = new HashMap<>();
         private final Map<String, String> assignmentSignals = new HashMap<>();
+        private final Map<String, String> signalAliases = new HashMap<>();
         private final Map<String, InstanceAlias> aliases = new LinkedHashMap<>();
         private final List<Node> nodes = new ArrayList<>();
         private final Map<String, Node> nodesById = new LinkedHashMap<>();
@@ -365,6 +366,9 @@ public final class ComponentExpressionCompiler {
                 assignmentSignals.put(name, reserved);
                 result = buildExpression(expression, reserved, false);
                 assignmentSignals.put(name, result);
+                if (!reserved.equals(result)) {
+                    remapSignal(reserved, result);
+                }
             }
             assignmentState.put(name, 2);
             if (result == null && statement.kind() == AssignmentKind.OUTPUT) {
@@ -468,7 +472,7 @@ public final class ComponentExpressionCompiler {
                     ComponentDefinition.Port port = inputPorts.get(index);
                     String signal = buildExpression(
                             call.arguments().get(index), null, port.isClock());
-                    node.inputs.add(signal);
+                    node.inputs.add(canonicalSignal(signal));
                 }
             } finally {
                 activeComponentCallDepth--;
@@ -543,6 +547,26 @@ public final class ComponentExpressionCompiler {
             }
             return new IllegalArgumentException(
                     "internal component " + name + " does not have a scalar output");
+        }
+
+        private String canonicalSignal(String signal) {
+            String current = signal;
+            Set<String> visited = new HashSet<>();
+            while (signalAliases.containsKey(current) && visited.add(current)) {
+                current = signalAliases.get(current);
+            }
+            return current;
+        }
+
+        private void remapSignal(String oldSignal, String newSignal) {
+            signalAliases.put(oldSignal, canonicalSignal(newSignal));
+            for (Node node : nodes) {
+                for (int index = 0; index < node.inputs.size(); index++) {
+                    if (node.inputs.get(index).equals(oldSignal)) {
+                        node.inputs.set(index, canonicalSignal(newSignal));
+                    }
+                }
+            }
         }
 
         private String inputSignal(String name, boolean clock) {
