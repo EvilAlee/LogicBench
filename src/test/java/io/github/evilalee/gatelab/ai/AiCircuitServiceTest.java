@@ -479,6 +479,17 @@ class AiCircuitServiceTest {
         assertEquals(1, provider.calls);
         assertEquals(103, result.signals().size());
         assertEquals(256, result.truthTable().rows().size());
+        assertEquals(inputs, result.netlist().inputs(),
+                "literal constants must not count as declared primary inputs");
+        assertFalse(result.layout().schematic().components().stream()
+                .anyMatch(component -> component.typeId().equals("input")
+                        && component.label().equals("0")),
+                "literal zero must not become a pokeable Input pin");
+        for (String constantId : result.layout().constantComponentIds().values()) {
+            assertEquals("constant", result.layout().schematic().components().stream()
+                    .filter(component -> component.id().equals(constantId))
+                    .findFirst().orElseThrow().typeId());
+        }
     }
 
     @Test
