@@ -133,9 +133,9 @@ class AiCircuitLargeSpecTest {
         signals.add(new Output("d6", "(r5 & t3) | (r5 & d5) | (t3 & d5)"));
         signals.add(new Output("s6", "d6"));
 
-        signals.add(new Output("P0", "s0"));
-        signals.add(new Output("P1", "s1"));
-        signals.add(new Output("P2", "s2"));
+        signals.add(new Output("v0", "s0"));
+        signals.add(new Output("v1", "s1"));
+        signals.add(new Output("v2", "s2"));
         signals.add(new Output("P3", "s3 ^ u0"));
         signals.add(new Output("e4", "s3 & u0"));
         signals.add(new Output("P4", "s4 ^ u1 ^ e4"));
