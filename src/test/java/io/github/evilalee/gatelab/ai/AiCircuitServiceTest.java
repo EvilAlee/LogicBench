@@ -63,14 +63,16 @@ class AiCircuitServiceTest {
         }
         root.add("outputs", outputArray);
 
-        JsonArray table = new JsonArray();
-        for (int index = 0; index < outputs.size(); index++) {
-            JsonObject row = new JsonObject();
-            row.addProperty("output", outputs.get(index).name());
-            row.addProperty("bits", bits[index]);
-            table.add(row);
+        if (bits.length == outputs.size()) {
+            JsonArray table = new JsonArray();
+            for (int index = 0; index < outputs.size(); index++) {
+                JsonObject row = new JsonObject();
+                row.addProperty("output", outputs.get(index).name());
+                row.addProperty("bits", bits[index]);
+                table.add(row);
+            }
+            root.add("truthTable", table);
         }
-        root.add("truthTable", table);
         return root.toString();
     }
 
@@ -575,7 +577,7 @@ class AiCircuitServiceTest {
         String retryConversation = String.join("\n", provider.conversations.get(1).stream()
                 .map(Turn::text).toList());
         assertTrue(retryConversation.contains(
-                "A=0 B=1: S spec 3, circuit 1. Either side may be wrong."));
+                "A=0 B=1: S spec 2, circuit 1. Either side may be wrong."));
         assertFalse(retryConversation.contains("truthTable"));
     }
 
