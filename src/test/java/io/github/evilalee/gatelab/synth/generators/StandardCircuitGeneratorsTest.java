@@ -146,7 +146,7 @@ class StandardCircuitGeneratorsTest {
             for (int index = 0; index < table.inputNames().size(); index++) {
                 inputValues.put(table.inputNames().get(index), row.inputValue(index));
             }
-            Map<String, Boolean> expected = spec.evaluate(inputValues).outputValues();
+            Map<String, Boolean> expected = spec.evaluate(inputValues).outputPins();
             for (int index = 0; index < table.outputNames().size(); index++) {
                 String output = table.outputNames().get(index);
                 Value actual = row.outputValues().get(index);
