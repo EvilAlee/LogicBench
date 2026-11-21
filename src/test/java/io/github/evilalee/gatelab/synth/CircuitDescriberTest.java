@@ -111,7 +111,7 @@ class CircuitDescriberTest {
     }
 
     @Test
-    void srLatchD latchAndGateLevelMasterSlaveDffMatchAcrossTwoHundredRandomSteps()
+    void srLatchDlatchAndGateLevelMasterSlaveDffMatchAcrossTwoHundredRandomSteps()
             throws Exception {
         Schematic srLatch = layout(ExpressionCompiler.compile("""
                 Q = NOT (R | Qn)
