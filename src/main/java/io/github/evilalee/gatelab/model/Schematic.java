@@ -38,12 +38,15 @@ public final class Schematic {
     private final Map<String, List<GateDef>> definitionsByFamily;
     private UndefinedInputMode undefinedInputMode = UndefinedInputMode.IGNORE;
     private final List<PlacedComponent> components = new ArrayList<>();
+    private final List<ComponentInstance> componentInstances = new ArrayList<>();
+    private final Map<String, ComponentDefinition> componentDefinitions = new LinkedHashMap<>();
     private final List<WireSegment> wires = new ArrayList<>();
     private final Map<String, Boolean> inputValues = new HashMap<>();
     private final Map<String, Boolean> clockValues = new HashMap<>();
     private final List<Runnable> changeListeners = new ArrayList<>();
     private long modificationCount;
     private long nextComponentNumber = 1;
+    private long nextInstanceNumber = 1;
 
     public Schematic(Collection<GateDef> definitions) {
         Objects.requireNonNull(definitions, "definitions");
@@ -113,6 +116,99 @@ public final class Schematic {
         notifyChanged();
     }
 
+    /** Registers an immutable definition used by one or more black-box instances. */
+    public void registerComponentDefinition(ComponentDefinition definition) {
+        Objects.requireNonNull(definition, "definition");
+        ComponentDefinition existing = componentDefinitions.get(definition.name());
+        if (existing != null && !existing.hash().equals(definition.hash())) {
+            throw new IllegalArgumentException(
+                    "conflicting embedded component definitions named " + definition.name());
+        }
+        if (existing == null) {
+            componentDefinitions.put(definition.name(), definition);
+        }
+    }
+
+    /** Adds a black-box placement and embeds the exact definition used by the document. */
+    public void addInstance(ComponentInstance instance, ComponentDefinition definition) {
+        Objects.requireNonNull(instance, "instance");
+        Objects.requireNonNull(definition, "definition");
+        if (!instance.definitionName().equals(definition.name())
+                || !instance.definitionHash().equals(definition.hash())) {
+            throw new IllegalArgumentException(
+                    "component instance definition/hash mismatch: " + instance.id());
+        }
+        if (containsId(instance.id())) {
+            throw new IllegalArgumentException("duplicate component id: " + instance.id());
+        }
+        instance.geometry(definition);
+        registerComponentDefinition(definition);
+        componentInstances.add(instance);
+        notifyChanged();
+    }
+
+    /** Allocates a stable U1, U2, ... instance id for the supplied definition. */
+    public ComponentInstance addInstance(
+            ComponentDefinition definition, int x, int y, Facing rotation) {
+        return addInstance(definition, "", x, y, rotation);
+    }
+
+    public ComponentInstance addInstance(
+            ComponentDefinition definition, String label, int x, int y, Facing rotation) {
+        Objects.requireNonNull(definition, "definition");
+        String id;
+        do {
+            id = "U" + nextInstanceNumber++;
+        } while (containsId(id));
+        ComponentInstance instance = new ComponentInstance(
+                definition.name(), definition.hash(), id, label, x, y, rotation);
+        addInstance(instance, definition);
+        return instance;
+    }
+
+    public List<ComponentInstance> componentInstances() {
+        return List.copyOf(componentInstances);
+    }
+
+    public Map<String, ComponentDefinition> componentDefinitions() {
+        return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(componentDefinitions));
+    }
+
+    public ComponentDefinition componentDefinitionFor(ComponentInstance instance) {
+        Objects.requireNonNull(instance, "instance");
+        ComponentDefinition definition = componentDefinitions.get(instance.definitionName());
+        if (definition == null) {
+            throw new IllegalArgumentException(
+                    "missing component definition: " + instance.definitionName());
+        }
+        if (!definition.hash().equals(instance.definitionHash())) {
+            throw new IllegalArgumentException(
+                    "component definition hash mismatch for " + instance.id()
+                            + ": expected " + instance.definitionHash()
+                            + ", found " + definition.hash());
+        }
+        return definition;
+    }
+
+    /** Returns an isolated document copy, including its embedded definitions and source state. */
+    public Schematic copy() {
+        Schematic copy = new Schematic(gateDefinitions());
+        copy.restoreSnapshot(SchematicSnapshot.capture(this));
+        copy.setUndefinedInputMode(undefinedInputMode);
+        for (PlacedComponent component : components) {
+            if (component.typeId().equals("input") && inputValue(component.id())) {
+                copy.setInputValue(component.id(), true);
+            } else if (component.typeId().equals("clock") && clockValue(component.id())) {
+                copy.setClockValue(component.id(), true);
+            }
+        }
+        return copy;
+    }
+
+    public List<GateDef> gateDefinitions() {
+        return definitionsByFamily.values().stream().flatMap(List::stream).toList();
+    }
+
     /** Returns the current effective value for an editable component attribute. */
     public String attributeValue(String id, String key) {
         PlacedComponent component = components.get(indexOf(id));
@@ -142,7 +238,7 @@ public final class Schematic {
         throw new IllegalArgumentException("unsupported attribute: " + key);
     }
 
-    /** Removes the component with this id; returns false when it is not present. */
+    /** Removes a placed component or black-box instance with this id. */
     public boolean remove(String id) {
         Objects.requireNonNull(id, "id");
         for (int index = 0; index < components.size(); index++) {
@@ -150,6 +246,13 @@ public final class Schematic {
                 components.remove(index);
                 inputValues.remove(id);
                 clockValues.remove(id);
+                notifyChanged();
+                return true;
+            }
+        }
+        for (int index = 0; index < componentInstances.size(); index++) {
+            if (componentInstances.get(index).id().equals(id)) {
+                componentInstances.remove(index);
                 notifyChanged();
                 return true;
             }
@@ -633,6 +736,8 @@ public final class Schematic {
     public void restoreSnapshot(SchematicSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
         List<PlacedComponent> replacementComponents = snapshot.components();
+        List<ComponentInstance> replacementInstances = snapshot.instances();
+        Map<String, ComponentDefinition> replacementDefinitions = snapshot.componentDefinitions();
         List<WireSegment> replacementWires = snapshot.wires();
         Set<String> replacementIds = new LinkedHashSet<>();
         for (PlacedComponent component : replacementComponents) {
@@ -643,7 +748,24 @@ public final class Schematic {
                 throw new IllegalArgumentException("duplicate component id: " + component.id());
             }
         }
-        if (components.equals(replacementComponents) && wires.equals(replacementWires)) {
+        for (ComponentDefinition definition : replacementDefinitions.values()) {
+            Objects.requireNonNull(definition, "component definition");
+        }
+        for (ComponentInstance instance : replacementInstances) {
+            if (!replacementIds.add(instance.id())) {
+                throw new IllegalArgumentException("duplicate component id: " + instance.id());
+            }
+            ComponentDefinition definition = replacementDefinitions.get(instance.definitionName());
+            if (definition == null || !definition.hash().equals(instance.definitionHash())) {
+                throw new IllegalArgumentException(
+                        "missing or mismatched component definition for " + instance.id());
+            }
+            instance.geometry(definition);
+        }
+        if (components.equals(replacementComponents)
+                && componentInstances.equals(replacementInstances)
+                && componentDefinitions.equals(replacementDefinitions)
+                && wires.equals(replacementWires)) {
             return;
         }
 
@@ -661,6 +783,10 @@ public final class Schematic {
 
         components.clear();
         components.addAll(replacementComponents);
+        componentInstances.clear();
+        componentInstances.addAll(replacementInstances);
+        componentDefinitions.clear();
+        componentDefinitions.putAll(replacementDefinitions);
         wires.clear();
         wires.addAll(replacementWires);
         inputValues.clear();
@@ -680,6 +806,11 @@ public final class Schematic {
     /** Returns an immutable snapshot in paint order (oldest first, newest on top). */
     public List<PlacedComponent> components() {
         return List.copyOf(components);
+    }
+
+    /** Returns all black-box instances in paint/insertion order. */
+    public List<ComponentInstance> componentInstances() {
+        return List.copyOf(componentInstances);
     }
 
     /** Number of successful schematic mutations; queries never change this value. */
@@ -997,6 +1128,9 @@ public final class Schematic {
                         component.x() + offset.x(), component.y() + offset.y()));
             }
         }
+        for (ComponentInstance instance : componentInstances) {
+            pins.addAll(instance.pinPositions(componentDefinitionFor(instance)));
+        }
         return List.copyOf(pins);
     }
 
@@ -1129,6 +1263,7 @@ public final class Schematic {
     }
 
     private boolean containsId(String id) {
-        return components.stream().anyMatch(component -> component.id().equals(id));
+        return components.stream().anyMatch(component -> component.id().equals(id))
+                || componentInstances.stream().anyMatch(instance -> instance.id().equals(id));
     }
 }
