@@ -3,6 +3,9 @@ package io.github.evilalee.gatelab.ai;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.synth.GateOperator;
+import io.github.evilalee.gatelab.synth.Netlist;
+import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -181,4 +184,41 @@ class AiCircuitLargeSpecTest {
         assertTrue(elapsed < 10_000_000_000L,
                 "4-bit adder and 4x4 multiplier should finish under 10 seconds");
     }
+    @Test
+    void measuresLayoutForTheMaximumTenInputSixteenOutputFourHundredGateNetlist() {
+        List<String> inputs = List.of("A", "B", "C", "D", "E", "F", "G", "H", "I", "J");
+        GateOperator[] operators = {
+                GateOperator.AND, GateOperator.OR, GateOperator.NAND, GateOperator.NOR,
+                GateOperator.XOR, GateOperator.XNOR, GateOperator.NOT, GateOperator.BUFFER
+        };
+        List<Netlist.Gate> gates = new ArrayList<>();
+        String previous = "A";
+        for (int index = 0; index < AiCircuitLimits.MAX_GATES; index++) {
+            GateOperator operator = operators[index % operators.length];
+            List<String> gateInputs = operator.inputCount() == 1
+                    ? List.of(previous)
+                    : List.of(previous, inputs.get(1 + index % (inputs.size() - 1)));
+            String id = "g" + index;
+            gates.add(new Netlist.Gate(id, operator, gateInputs));
+            previous = id;
+        }
+        List<Netlist.Output> outputs = new ArrayList<>();
+        for (int index = 0; index < AiCircuitLimits.MAX_OUTPUTS; index++) {
+            outputs.add(new Netlist.Output("O" + index,
+                    "g" + (AiCircuitLimits.MAX_GATES - AiCircuitLimits.MAX_OUTPUTS + index)));
+        }
+        Netlist largestAllowed = new Netlist(inputs, outputs, gates);
+        assertEquals(10, largestAllowed.inputs().size());
+        assertEquals(16, largestAllowed.outputs().size());
+        assertEquals(400, largestAllowed.gates().size());
+
+        long started = System.nanoTime();
+        SchematicLayout.LayoutResult placed =
+                new SchematicLayout(GateLibrary.load().all()).layout(largestAllowed);
+        long elapsed = System.nanoTime() - started;
+        assertNotNull(placed);
+        System.out.printf("Maximum-limit 10-input/16-output/400-gate layout: %.1f ms%n",
+                elapsed / 1_000_000.0);
+    }
+
 }
