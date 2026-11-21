@@ -900,9 +900,10 @@ public final class AiCircuitService {
             }
         }
         for (int index = 0; index < table.outputNames().size(); index++) {
-            Value first = table.rows().getFirst().outputValues().get(index);
+            int outputIndex = index;
+            Value first = table.rows().getFirst().outputValues().get(outputIndex);
             boolean constant = table.rows().stream()
-                    .allMatch(row -> row.outputValues().get(index) == first);
+                    .allMatch(row -> row.outputValues().get(outputIndex) == first);
             if (constant) warnings.add("Output '" + table.outputNames().get(index)
                     + "' is constant at " + first + ".");
         }
