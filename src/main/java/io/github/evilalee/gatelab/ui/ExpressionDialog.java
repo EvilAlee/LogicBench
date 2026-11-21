@@ -1,8 +1,11 @@
 package io.github.evilalee.gatelab.ui;
 
+import io.github.evilalee.gatelab.io.ComponentLibrary;
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.synth.ComponentExpressionCompiler;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.ParseException;
 import io.github.evilalee.gatelab.synth.TruthTable;
@@ -35,7 +38,10 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /** Live expression editor and engine-backed truth-table preview. */
@@ -56,8 +62,9 @@ public final class ExpressionDialog extends JDialog {
     private final JButton generateButton = new JButton("Generate");
     private final JCheckBox optimizeInvertingGates =
             new JCheckBox("Optimize with NAND/NOR/XNOR", false);
-    private ExpressionCompiler.Compilation currentCompilation;
-    private SchematicLayout.LayoutResult currentLayout;
+    private final JCheckBox expandSequentialParts =
+            new JCheckBox("Expand sequential calls as gates (legacy)", false);
+    private ComponentExpressionCompiler.Compilation currentCompilation;
 
     private ExpressionDialog(JFrame owner, CanvasPanel canvas, String initialText) {
         super(owner, "From expression", ModalityType.APPLICATION_MODAL);
@@ -83,9 +90,11 @@ public final class ExpressionDialog extends JDialog {
         expressionPanel.add(expressionScroll, BorderLayout.CENTER);
         JPanel expressionControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         expressionControls.add(optimizeInvertingGates);
+        expressionControls.add(expandSequentialParts);
         expressionControls.add(statusLine);
         expressionPanel.add(expressionControls, BorderLayout.SOUTH);
         optimizeInvertingGates.addActionListener(event -> updatePreview());
+        expandSequentialParts.addActionListener(event -> updatePreview());
 
         truthTable.setFillsViewportHeight(true);
         truthTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
@@ -155,61 +164,64 @@ public final class ExpressionDialog extends JDialog {
 
     private void updatePreview() {
         currentCompilation = null;
-        currentLayout = null;
         generateButton.setEnabled(false);
         tableModel.setTable(null);
         tableNote.setText(" ");
         truthTable.setEnabled(true);
         tableScroll.setVisible(true);
         try {
-            ExpressionCompiler.Compilation compilation =
-                    ExpressionCompiler.compile(expressionText.getText(), true, optimizeInvertingGates.isSelected());
+            ComponentExpressionCompiler.CompileOption option = expandSequentialParts.isSelected()
+                    ? ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION
+                    : ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES;
+            ComponentExpressionCompiler.Compilation compilation =
+                    ComponentExpressionCompiler.compile(
+                            expressionText.getText(),
+                            GateLibrary.load().all(),
+                            ComponentLibrary.load().all(),
+                            option,
+                            true,
+                            optimizeInvertingGates.isSelected());
             currentCompilation = compilation;
-            List<String> variables = compilation.netlist().inputs();
-            if (compilation.hasSequentialParts()) {
+
+            boolean sequential = compilation.hasSequentialInstances();
+            if (sequential) {
                 statusLine.setForeground(labelForeground());
                 statusLine.setText(SEQUENTIAL_STATUS);
                 tableScroll.setVisible(false);
-                tableNote.setText(" ");
-            } else {
-                String reuseHint = outputReuseHint(compilation);
-                if (reuseHint != null) {
-                    statusLine.setForeground(hintForeground());
-                    statusLine.setText(reuseHint);
-                } else {
-                    statusLine.setForeground(labelForeground());
-                    statusLine.setText(variables.isEmpty()
-                            ? "Variables: none"
-                            : "Variables: " + String.join(", ", variables));
-                }
-            }
-
-            if (compilation.hasFeedback()) {
-                SchematicLayout layoutEngine = new SchematicLayout(GateLibrary.load().all());
-                currentLayout = layoutEngine.layoutFeedback(
-                        compilation.feedbackExtraction().orElseThrow());
                 SchematicCompiler.SimulationResult initial =
-                        SchematicCompiler.compileAndSettle(currentLayout.schematic());
+                        SchematicCompiler.compileAndSettle(compilation.schematic());
                 if (initial.oscillating()) {
                     throw new IllegalStateException("Circuit did not settle");
                 }
+            } else if (compilation.hasFeedback()) {
+                statusLine.setForeground(labelForeground());
+                statusLine.setText("Feedback circuit");
+                tableScroll.setVisible(false);
+                tableNote.setText(FEEDBACK_PREVIEW_NOTE);
                 truthTable.setEnabled(false);
-                if (!compilation.hasSequentialParts()) {
-                    tableNote.setText(FEEDBACK_PREVIEW_NOTE);
+                SchematicCompiler.SimulationResult initial =
+                        SchematicCompiler.compileAndSettle(compilation.schematic());
+                if (initial.oscillating()) {
+                    throw new IllegalStateException("Circuit did not settle");
                 }
-            } else if (variables.size() > TABLE_INPUT_LIMIT) {
-                tableNote.setText("Truth table preview is limited to 10 inputs; "
-                        + variables.size() + " variables are present.");
             } else {
-                TruthTableVerifier.VerificationResult preview =
-                        TruthTableVerifier.verify(compilation);
-                if (!preview.verified()) {
-                    throw new IllegalStateException(
-                            "The synthesis engine did not verify this expression: "
-                                    + preview.mismatches());
+                List<String> inputs = compilation.inputComponentIds().keySet().stream()
+                        .sorted().toList();
+                List<String> outputs = compilation.outputComponentIds().keySet().stream()
+                        .sorted().toList();
+                statusLine.setForeground(labelForeground());
+                statusLine.setText(inputs.isEmpty()
+                        ? "Variables: none"
+                        : "Variables: " + String.join(", ", inputs));
+
+                if (inputs.size() > TABLE_INPUT_LIMIT) {
+                    tableNote.setText("Truth table preview is limited to 10 inputs; "
+                            + inputs.size() + " variables are present.");
+                } else {
+                    TruthTable preview = buildEnginePreview(compilation, inputs, outputs);
+                    tableModel.setTable(preview);
+                    tableNote.setText(preview.rows().size() + " rows (engine preview)");
                 }
-                tableModel.setTable(preview.truthTable());
-                tableNote.setText(preview.truthTable().rows().size() + " rows");
             }
             generateButton.setEnabled(true);
         } catch (ParseException exception) {
@@ -220,15 +232,46 @@ public final class ExpressionDialog extends JDialog {
         }
     }
 
+    private static TruthTable buildEnginePreview(
+            ComponentExpressionCompiler.Compilation compilation,
+            List<String> inputNames,
+            List<String> outputNames) {
+        Schematic schematic = compilation.schematic();
+        List<TruthTable.Row> rows = new ArrayList<>();
+        int rowCount = 1 << inputNames.size();
+        for (int row = 0; row < rowCount; row++) {
+            StringBuilder bits = new StringBuilder(inputNames.size());
+            for (int index = 0; index < inputNames.size(); index++) {
+                boolean high = ((row >>> (inputNames.size() - index - 1)) & 1) != 0;
+                bits.append(high ? '1' : '0');
+                schematic.setInputValue(
+                        compilation.inputComponentIds().get(inputNames.get(index)), high);
+            }
+            SchematicCompiler.SimulationResult result =
+                    SchematicCompiler.compileAndSettle(schematic);
+            List<Value> values = new ArrayList<>(outputNames.size());
+            for (String output : outputNames) {
+                Value value = result.outputValues().get(
+                        compilation.outputComponentIds().get(output));
+                values.add(value == null ? Value.X : value);
+            }
+            rows.add(new TruthTable.Row(row, bits.toString(), values, result.oscillating()));
+        }
+        for (String input : inputNames) {
+            schematic.setInputValue(compilation.inputComponentIds().get(input), false);
+        }
+        return new TruthTable(inputNames, outputNames, rows);
+    }
+
     private void showError(String message) {
         currentCompilation = null;
-        currentLayout = null;
         generateButton.setEnabled(false);
         truthTable.setEnabled(true);
         tableScroll.setVisible(true);
         statusLine.setForeground(new Color(190, 35, 35));
         statusLine.setText(message == null ? "Invalid expression" : message);
         tableNote.setText(" ");
+        tableModel.setTable(null);
     }
 
     private void generate() {
@@ -236,32 +279,12 @@ public final class ExpressionDialog extends JDialog {
             return;
         }
         try {
-            SchematicLayout.LayoutResult layout;
-            SchematicExpressionVerifier.VerificationResult placed = null;
+            boolean sequential = currentCompilation.hasSequentialInstances();
             boolean feedback = currentCompilation.hasFeedback();
-            boolean sequential = currentCompilation.hasSequentialParts();
-            if (feedback) {
-                layout = currentLayout;
-                if (layout == null) {
-                    SchematicLayout layoutEngine =
-                            new SchematicLayout(GateLibrary.load().all());
-                    layout = layoutEngine.layoutFeedback(
-                            currentCompilation.feedbackExtraction().orElseThrow());
-                }
-            } else {
-                // The preview core verifies the expression netlist; this second pass
-                // verifies the actual placed geometry through SchematicCompiler.
-                SchematicLayout layoutEngine =
-                        new SchematicLayout(GateLibrary.load().all());
-                layout = layoutEngine.layout(currentCompilation.netlist());
-                placed = SchematicExpressionVerifier.verify(currentCompilation, layout);
-                if (!placed.verified()) {
-                    showError("Placed circuit verification failed: " + placed.mismatches());
-                    return;
-                }
-            }
+            Schematic generated = currentCompilation.schematic();
 
             boolean hasContent = !canvas.schematic().components().isEmpty()
+                    || !canvas.schematic().componentInstances().isEmpty()
                     || !canvas.schematic().wires().isEmpty();
             if (hasContent) {
                 int answer = JOptionPane.showConfirmDialog(
@@ -276,13 +299,15 @@ public final class ExpressionDialog extends JDialog {
             }
 
             if (sequential) {
-                canvas.replaceWithSequentialCircuit(layout.schematic());
+                canvas.replaceWithSequentialCircuit(generated);
                 canvas.setStatusMessage(SEQUENTIAL_STATUS);
             } else {
-                canvas.replaceWithGeneratedCircuit(layout.schematic());
+                canvas.replaceWithGeneratedCircuit(generated);
                 canvas.setStatusMessage(feedback
                         ? FEEDBACK_PREVIEW_NOTE
-                        : "Verified: " + placed.rowCount() + " rows match");
+                        : expandSequentialParts.isSelected()
+                                ? "Generated using legacy gate expansion"
+                                : "Generated with boxed component calls");
             }
             dispose();
         } catch (IllegalArgumentException | IllegalStateException exception) {
