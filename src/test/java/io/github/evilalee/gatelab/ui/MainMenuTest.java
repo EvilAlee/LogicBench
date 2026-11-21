@@ -72,6 +72,29 @@ class MainMenuTest {
     }
 
     @Test
+    void circuitMenuContainsEditAsExpressionsAction() {
+        JMenuBar menuBar = Main.createMenuBar(new CanvasPanel());
+        JMenu circuit = null;
+        for (int index = 0; index < menuBar.getMenuCount(); index++) {
+            JMenu candidate = menuBar.getMenu(index);
+            if (candidate != null && "Circuit".equals(candidate.getText())) {
+                circuit = candidate;
+                break;
+            }
+        }
+        assertNotNull(circuit);
+        boolean found = false;
+        for (Component item : circuit.getMenuComponents()) {
+            if (item instanceof JMenuItem menuItem
+                    && "Edit as expressions...".equals(menuItem.getText())) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "Circuit must expose Edit as expressions");
+    }
+
+    @Test
     void startupMenuBarContainsShowGateNamesUnderView() {
         // createMenuBar is the same builder used by Main.createFrame during startup.
         JMenuBar menuBar = Main.createMenuBar(new CanvasPanel());

@@ -59,7 +59,7 @@ public final class ExpressionDialog extends JDialog {
     private ExpressionCompiler.Compilation currentCompilation;
     private SchematicLayout.LayoutResult currentLayout;
 
-    private ExpressionDialog(JFrame owner, CanvasPanel canvas) {
+    private ExpressionDialog(JFrame owner, CanvasPanel canvas, String initialText) {
         super(owner, "From expression", ModalityType.APPLICATION_MODAL);
         setIconImages(AppIcons.load());
         this.canvas = Objects.requireNonNull(canvas, "canvas");
@@ -72,6 +72,7 @@ public final class ExpressionDialog extends JDialog {
         add(hint, BorderLayout.NORTH);
 
         expressionText.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        expressionText.setText(Objects.requireNonNull(initialText, "initialText"));
         expressionText.setLineWrap(false);
         JScrollPane expressionScroll = new JScrollPane(expressionText);
         expressionScroll.setBorder(BorderFactory.createTitledBorder("Boolean expressions"));
@@ -143,7 +144,12 @@ public final class ExpressionDialog extends JDialog {
     }
 
     public static void showDialog(JFrame owner, CanvasPanel canvas) {
-        ExpressionDialog dialog = new ExpressionDialog(owner, canvas);
+        showDialog(owner, canvas, "");
+    }
+
+    /** Opens the expression editor with an existing circuit description prefilled. */
+    public static void showDialog(JFrame owner, CanvasPanel canvas, String initialText) {
+        ExpressionDialog dialog = new ExpressionDialog(owner, canvas, initialText);
         dialog.setVisible(true);
     }
 

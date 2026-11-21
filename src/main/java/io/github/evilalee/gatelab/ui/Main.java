@@ -8,6 +8,7 @@ import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.sim.SignalRecorder;
 import io.github.evilalee.gatelab.synth.layout.TidyCircuitService;
+import io.github.evilalee.gatelab.synth.CircuitDescriber;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
 import javax.swing.AbstractAction;
@@ -282,6 +283,25 @@ public final class Main {
         createComponent.addActionListener(event ->
                 CreateComponentDialog.showDialog(frame, canvas));
         circuit.add(createComponent);
+
+        JMenuItem editExpressions = new JMenuItem("Edit as expressions...");
+        editExpressions.addActionListener(event -> {
+            try {
+                CircuitDescriber.Description description =
+                        CircuitDescriber.describe(canvas.schematic());
+                ExpressionDialog.showDialog(frame, canvas, description.text());
+            } catch (IllegalArgumentException | IllegalStateException exception) {
+                String message = exception.getMessage() == null
+                        ? "The current circuit cannot be exported as expressions."
+                        : exception.getMessage();
+                canvas.setStatusMessage("Circuit export failed: " + message);
+                if (!GraphicsEnvironment.isHeadless()) {
+                    JOptionPane.showMessageDialog(
+                            frame, message, "Edit as expressions", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+        circuit.add(editExpressions);
         menuBar.add(circuit);
 
         JMenu edit = new JMenu("Edit");
