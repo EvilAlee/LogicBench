@@ -223,10 +223,10 @@ class ComponentLibraryTest {
         schematic.add(new PlacedComponent("q0-not", "not", 700, 400, Facing.EAST));
         schematic.add(new PlacedComponent("count-xor", "xor", 1300, 400, Facing.EAST));
         schematic.add(new PlacedComponent("d0-and", "and", 300, 700, Facing.EAST));
-        schematic.add(new PlacedComponent("d1-and", "and", 1000, 700, Facing.EAST));
+        schematic.add(new PlacedComponent("d1-and", "and", 1700, 700, Facing.EAST));
 
-        addOutputAt(schematic, "q0-probe", "Q0", 1800, 220);
-        addOutputAt(schematic, "q1-probe", "Q1", 1800, 240);
+        addOutputAt(schematic, "q0-probe", "Q0", 2600, 220);
+        addOutputAt(schematic, "q1-probe", "Q1", 2800, 240);
 
         int route = 0;
         route(schematic, pin(schematic, "reset", "out"),
@@ -363,15 +363,50 @@ class ComponentLibraryTest {
             Connectivity.PinPosition end,
             int index) {
         int laneY = 1200 + index * 20;
-        // Give every source/target stub its own X lane; pins sharing a body edge
-        // (for example D and CLK) must not share an overlapping vertical trunk.
-        int startX = start.x() + (index + 1) * 10;
-        int endX = end.x() - (index + 1) * 10;
+        int startX = outwardTrackX(schematic, start);
+        int endX = outwardTrackX(schematic, end);
         addWire(schematic, start.x(), start.y(), startX, start.y());
         addWire(schematic, startX, start.y(), startX, laneY);
         addWire(schematic, startX, laneY, endX, laneY);
         addWire(schematic, endX, laneY, endX, end.y());
         addWire(schematic, endX, end.y(), end.x(), end.y());
+    }
+
+    /** Routes on the outward side of a terminal, with a separate trunk per port. */
+    private static int outwardTrackX(
+            Schematic schematic, Connectivity.PinPosition pin) {
+        ComponentInstance instance = schematic.componentInstances().stream()
+                .filter(candidate -> candidate.id().equals(pin.componentId()))
+                .findFirst().orElse(null);
+        if (instance != null) {
+            ComponentDefinition definition = schematic.componentDefinitionFor(instance);
+            ComponentInstance.PinGeometry geometry = instance.geometry(definition).pins().stream()
+                    .filter(candidate -> candidate.name().equals(pin.pinId()))
+                    .findFirst().orElseThrow();
+            if (geometry.direction() == ComponentDefinition.Direction.IN) {
+                int index = definition.inputPorts().stream()
+                        .map(ComponentDefinition.Port::name).toList().indexOf(pin.pinId());
+                return pin.x() - 10 - index * 20;
+            }
+            int index = definition.outputPorts().stream()
+                    .map(ComponentDefinition.Port::name).toList().indexOf(pin.pinId());
+            return pin.x() + 10 + index * 20;
+        }
+
+        PlacedComponent component = schematic.components().stream()
+                .filter(candidate -> candidate.id().equals(pin.componentId()))
+                .findFirst().orElseThrow();
+        if (component.typeId().equals("input") || component.typeId().equals("clock")) {
+            return pin.x() + 10;
+        }
+        if (component.typeId().equals("output")) {
+            return pin.x() - 10;
+        }
+        if (pin.pinId().equals("out")) {
+            return pin.x() + 10;
+        }
+        int inputIndex = Integer.parseInt(pin.pinId().substring(2));
+        return pin.x() - 10 - inputIndex * 20;
     }
 
     private static void addWire(
