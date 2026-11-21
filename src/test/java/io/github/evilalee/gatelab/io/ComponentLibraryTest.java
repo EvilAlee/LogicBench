@@ -46,6 +46,11 @@ class ComponentLibraryTest {
         ComponentDefinition ha = library.get("HA");
         ComponentDefinition fa = library.get("FA");
 
+        System.out.println("COMPONENT_LIBRARY_PORTS: DLATCH=" + portNames(latch)
+                + " DFF=" + portNames(dff) + " TFF=" + portNames(tff)
+                + " JKFF=" + portNames(jkff) + " HA=" + portNames(ha)
+                + " FA=" + portNames(fa));
+
         assertEquals(List.of("D", "EN", "Q", "QN"), portNames(latch));
         assertEquals(List.of("D", "CLK", "Q", "QN"), portNames(dff));
         assertEquals(List.of("T", "CLK", "Q", "QN"), portNames(tff));
@@ -122,6 +127,14 @@ class ComponentLibraryTest {
 
         SequenceRunner referenceRunner = referenceCounterRunner();
         SequenceRunner.SequenceResult referenceRun = referenceRunner.run(counterSteps());
+
+        System.out.println("COMPONENT_LIBRARY_COUNTER: flattened="
+                + flattenedRun.steps().stream()
+                        .map(SequenceRunner.StepObservation::observedOutputs).toList()
+                + " firstMismatch=" + flattenedRun.firstMismatch()
+                + " reference=" + referenceRun.steps().stream()
+                        .map(SequenceRunner.StepObservation::observedOutputs).toList()
+                + " referenceMismatch=" + referenceRun.firstMismatch());
 
         assertTrue(flattenedRun.passed(), () -> flattenedRun.firstMismatch().toString());
         assertTrue(referenceRun.passed(), () -> referenceRun.firstMismatch().toString());
