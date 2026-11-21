@@ -1195,6 +1195,22 @@ public final class AiCircuitService {
                 throw new IllegalArgumentException("spec.rules has " + rules.size()
                         + " entries; maximum is " + AiCircuitLimits.MAX_SPEC_RULES);
             }
+            for (int index = 0; index < rules.size(); index++) {
+                JsonElement ruleElement = rules.get(index);
+                if (!ruleElement.isJsonObject()) {
+                    throw new IllegalArgumentException("spec.rules[" + index + "] must be an object");
+                }
+                JsonObject rule = ruleElement.getAsJsonObject();
+                requireExactKeys(rule, Set.of("out", "expr"), "spec.rules[" + index + "]");
+                requireString(rule.get("out"), "spec.rules[" + index + "].out");
+                String specExpression = requireString(rule.get("expr"),
+                        "spec.rules[" + index + "].expr");
+                totalExpressionLength += specExpression.length();
+            }
+            if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
+                throw new IllegalArgumentException("total expression text exceeds "
+                        + AiCircuitLimits.MAX_EXPRESSION_TEXT + " characters");
+            }
         }
         // truthTable is a legacy cache field. It is deliberately never parsed or used as evidence.
         return new Answer(summary, List.copyOf(inputs), List.copyOf(outputNames),

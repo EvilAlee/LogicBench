@@ -140,8 +140,11 @@ public final class SpecEvaluator {
                 }
                 pins.add(pin);
             }
-            if (pins.size() > 1 && pins.contains(busName)) {
-                throw new SpecException(-1, "multi-pin bus name cannot also be one of its pins: " + busName);
+            boolean busNameIsPin = inputSet.contains(busName) || outputSet.contains(busName);
+            boolean oneBitAlias = pins.size() == 1 && pins.getFirst().equals(busName);
+            if (busNameIsPin && !oneBitAlias) {
+                throw new SpecException(-1,
+                        "bus name conflicts with a declared pin: " + busName);
             }
             Bus bus = new Bus(busName, pins);
             (Boolean.TRUE.equals(isInputBus) ? inputBusMap : outputBusMap).put(busName, bus);
@@ -172,6 +175,11 @@ public final class SpecEvaluator {
                 throw new SpecException(-1, "spec.rules[" + index + "] must be an object");
             }
             JsonObject ruleObject = ruleElement.getAsJsonObject();
+            Set<String> ruleKeys = new LinkedHashSet<>(ruleObject.keySet());
+            if (!ruleKeys.equals(Set.of("out", "expr"))) {
+                throw new SpecException(-1,
+                        "spec.rules[" + index + "] must contain exactly out and expr");
+            }
             String out = requireString(ruleObject.get("out"), "spec.rules[" + index + "].out");
             requireName(out, "spec.rules[" + index + "].out");
             String expressionText = requireString(

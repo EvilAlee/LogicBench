@@ -36,7 +36,7 @@ All limits live in \`AiCircuitLimits\`:
 | Primary inputs | 10 |
 | Outputs | 16 |
 | Gates | 400 |
-| Total expression text (signals and outputs) | 3,000 characters |
+| Total expression text (signals, outputs and spec rules) | 3,000 characters |
 | Spec rules | 16 |
 | User-supplied expected rows | 64 |
 | Verification attempts | 3 |
