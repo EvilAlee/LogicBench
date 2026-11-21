@@ -165,10 +165,12 @@ public final class CircuitDescriber {
                 .map(PlacedComponent::id)
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 
+        int nextUnnamedInstance = 1;
         for (int index = 0; index < instances.size(); index++) {
             ComponentInstance instance = instances.get(index);
             ComponentDefinition definition = source.componentDefinitionFor(instance);
-            String rawName = instance.label().isBlank() ? instance.id() : instance.label();
+            String rawName = instance.label().isBlank()
+                    ? "U" + nextUnnamedInstance++ : instance.label();
             String expressionName = uniqueName(sanitizeIdentifier(rawName), usedNames);
             usedInstanceNames.put(instance.id(), expressionName);
 

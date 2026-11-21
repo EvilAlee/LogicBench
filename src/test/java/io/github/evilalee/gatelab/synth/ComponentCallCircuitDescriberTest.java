@@ -40,7 +40,7 @@ class ComponentCallCircuitDescriberTest {
 
         CircuitDescriber.Description description = CircuitDescriber.describe(original.schematic());
 
-        assertTrue(description.text().contains("U0 := FA(A, B, CIN)"), description.text());
+        assertTrue(description.text().contains("U1 := FA(A, B, CIN)"), description.text());
         assertTrue(description.text().contains("S = U0.S"), description.text());
         assertTrue(description.text().contains("COUT = U0.COUT"), description.text());
         assertEquals("U0", description.componentIds().keySet().stream()
@@ -68,7 +68,7 @@ class ComponentCallCircuitDescriberTest {
                 """, GATES, library.all());
 
         CircuitDescriber.Description description = CircuitDescriber.describe(original.schematic());
-        assertTrue(description.text().contains("U3 := FA(A3, B3, U2.COUT)"),
+        assertTrue(description.text().contains("U4 := FA(A3, B3, U3.COUT)"),
                 description.text());
         ComponentExpressionCompiler.Compilation rebuilt =
                 ComponentExpressionCompiler.compile(description.text(), GATES, library.all());
@@ -89,10 +89,10 @@ class ComponentCallCircuitDescriberTest {
                 """, GATES, library.all());
 
         CircuitDescriber.Description description = CircuitDescriber.describe(original.schematic());
-        assertTrue(description.text().contains("U0 := DFF("), description.text());
         assertTrue(description.text().contains("U1 := DFF("), description.text());
-        assertTrue(description.text().contains("U0.Q"), description.text());
+        assertTrue(description.text().contains("U2 := DFF("), description.text());
         assertTrue(description.text().contains("U1.Q"), description.text());
+        assertTrue(description.text().contains("U2.Q"), description.text());
 
         ComponentExpressionCompiler.Compilation rebuilt =
                 ComponentExpressionCompiler.compile(description.text(), GATES, library.all());
@@ -141,8 +141,48 @@ class ComponentCallCircuitDescriberTest {
         CircuitDescriber.Description first = CircuitDescriber.describe(schematic);
         CircuitDescriber.Description second = CircuitDescriber.describe(schematic);
         assertEquals(first, second);
-        assertTrue(first.text().contains("U0 := FA("), first.text());
         assertTrue(first.text().contains("U1 := FA("), first.text());
+        assertTrue(first.text().contains("U2 := FA("), first.text());
+    }
+
+    @Test
+    void savedInstanceLabelIsUsedAsTheExpressionCallName() throws Exception {
+        ComponentLibrary library = componentLibrary();
+        ComponentExpressionCompiler.Compilation compiled = ComponentExpressionCompiler.compile(
+                """
+                U0 := FA(A, B, CIN)
+                S = U0.S
+                COUT = U0.COUT
+                """, GATES, library.all());
+        Schematic labelled = withInstanceLabel(compiled.schematic(), "U0", "Final Adder");
+
+        CircuitDescriber.Description description = CircuitDescriber.describe(labelled);
+        assertTrue(description.text().contains("Final_Adder := FA("), description.text());
+        assertTrue(description.text().contains("S = Final_Adder.S"), description.text());
+        assertEquals("U0", description.componentIds().get("Final_Adder"));
+
+        ComponentExpressionCompiler.Compilation rebuilt =
+                ComponentExpressionCompiler.compile(description.text(), GATES, library.all());
+        assertCombinationallyEquivalent(compiled, rebuilt);
+    }
+
+    private static Schematic withInstanceLabel(
+            Schematic original, String targetId, String label) {
+        Schematic copy = new Schematic(original.gateDefinitions());
+        for (PlacedComponent component : original.components()) {
+            copy.add(component);
+        }
+        for (var instance : original.componentInstances()) {
+            var definition = original.componentDefinitionFor(instance);
+            copy.addInstance(new io.github.evilalee.gatelab.model.ComponentInstance(
+                    instance.definitionName(), instance.definitionHash(), instance.id(),
+                    instance.id().equals(targetId) ? label : instance.label(),
+                    instance.x(), instance.y(), instance.rotation()), definition);
+        }
+        for (var wire : original.wires()) {
+            copy.addWire(wire);
+        }
+        return copy;
     }
 
     private void assertCombinationallyEquivalent(

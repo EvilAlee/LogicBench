@@ -144,7 +144,8 @@ intended signal graph before returning the schematic.
 `CircuitDescriber` exports instance-bearing schematics using the same call
 syntax. It emits one call assignment per instance, uses the saved instance
 label when present (otherwise its deterministic instance ID such as `U1`),
-and emits output references such as `U0.S` and `U0.COUT`. Recompiling the
+and emits output references such as `U1.S` and `U1.COUT`. Unnamed boxes receive
+stable fallback names `U1`, `U2`, ... in deterministic instance order. Recompiling the
 description resolves those calls through the component library. The existing
 AI generation/validation path is separate: it retains its expression/netlist
 gate-expansion flow and does not consume boxed component-call syntax.
