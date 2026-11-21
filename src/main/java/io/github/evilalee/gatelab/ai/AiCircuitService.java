@@ -318,6 +318,13 @@ public final class AiCircuitService {
     public Result generate(
             String description, boolean cacheOnly, boolean invertingGates,
             String expectedRowsText) throws IOException, InterruptedException {
+        return generate(description, cacheOnly, invertingGates, expectedRowsText, false);
+    }
+
+    /** Regeneration bypasses cache lookup and cache fallback after a live failure. */
+    public Result generate(
+            String description, boolean cacheOnly, boolean invertingGates,
+            String expectedRowsText, boolean bypassCache) throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
         expectedRowsText = expectedRowsText == null ? "" : expectedRowsText;
         String safeDescription = provider.redact(description);
@@ -386,10 +393,13 @@ public final class AiCircuitService {
             }
         }
 
-        if (cacheOnly) {
+        if (!bypassCache) {
             Result cached = cachedResult(
                     safeDescription, log, "Using", 0, invertingGates, expectedRowsText);
             if (cached != null) return cached;
+        }
+
+        if (cacheOnly) {
             log.add("AI unavailable: cache-only mode is enabled and no valid cached answer exists.");
             return new Result(0, Status.UNAVAILABLE,
                     "AI unavailable: no valid cached answer is available offline.",
@@ -412,8 +422,9 @@ public final class AiCircuitService {
                 allModelAttempts.addAll(failure.modelAttempts());
                 String reason = provider.redact(unavailableReason(failure));
                 String notice = provider.redact(cachedNotice(failure));
-                Result fallback = cachedResult(safeDescription, log, notice, attemptNumber - 1,
-                        invertingGates, expectedRowsText);
+                Result fallback = bypassCache ? null
+                        : cachedResult(safeDescription, log, notice, attemptNumber - 1,
+                                invertingGates, expectedRowsText);
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
@@ -442,7 +453,8 @@ public final class AiCircuitService {
                             + response.model());
                     if (cache != null) {
                         try {
-                            cache.storeVerified(safeDescription, serializeAnswer(current.answer()));
+                            cache.storeVerified(safeDescription, serializeAnswer(current.answer()),
+                                    response.model());
                             log.add("Saved verified live answer in the new cache schema.");
                         } catch (IOException cacheError) {
                             log.add("Verified answer, but could not save the user cache.");
@@ -674,7 +686,8 @@ public final class AiCircuitService {
                 }
                 log.add("FROM CACHE: Revalidated " + rows + " engine rows"
                         + (status == Status.BUILT ? "; no independent check, read the truth table." : "."));
-                return result(attemptCount, status, cachedAttempt, log, true);
+                return result(attemptCount, status, cachedAttempt, log, true,
+                        provider.redact(hit.model()), List.of());
             }
             List<String> failures = new ArrayList<>(cachedAttempt.errors());
             failures.addAll(cachedAttempt.mismatchRows());

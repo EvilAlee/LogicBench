@@ -84,7 +84,9 @@ There are at most three model-validation attempts. After three failing attempts,
 - **FROM CACHE** is the result-source badge when a cached answer is replayed. A cache answer goes through the same current validation path; a legacy entry with only a claimed table is at most BUILT, never VERIFIED from that table.
 - **UNAVAILABLE** means no usable live answer or valid cache answer is available. There is no placeable circuit.
 
-Newly stored answers use the new schema. A successful answer is cached without \`truthTable\`; an old cache entry is still loadable and is revalidated under the same rules. The six bundled demonstration prompts remain old-format fixtures and are also revalidated, so they show FROM CACHE and BUILT unless independent rows/spec are later added.
+Normal generation checks the normalized user cache first and then the bundled cache, after the direct-expression shortcut and before making a provider request. Every hit is revalidated through the current validation pipeline; an invalid hit is ignored and live generation continues. The dialog's Regenerate action bypasses cache lookup and cache fallback. Only a live answer that passes an independent check replaces the user cache, and its model name is stored alongside the answer.
+
+Newly stored answers use the new schema and do not include `truthTable`. Versioned user-cache entries store the validated answer and producing model. Earlier unwrapped user-cache entries remain readable and are revalidated under the same rules; their original model is unknown. The six bundled demonstration prompts remain old-format fixtures and are also revalidated, so they show FROM CACHE and BUILT unless independent rows/spec are later added.
 
 ## Inverting-gate mapping
 

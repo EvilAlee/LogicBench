@@ -162,7 +162,8 @@ public final class AiCircuitDialog extends JDialog {
 
         placeButton.setEnabled(false);
         cancelButton.addActionListener(event -> cancelOrClose());
-        generateButton.addActionListener(event -> generate());
+        generateButton.addActionListener(event ->
+                generate("Regenerate".equals(generateButton.getText())));
         placeButton.addActionListener(event -> place());
         testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
         testConnectionButton.addActionListener(event -> testConnection());
@@ -210,7 +211,7 @@ public final class AiCircuitDialog extends JDialog {
                 + config.configFile() + " or set GEMINI_API_KEY.";
     }
 
-    private void generate() {
+    private void generate(boolean bypassCache) {
         String prompt = description.getText().trim();
         if (prompt.isEmpty() || activeWorker != null) return;
         currentResult = null;
@@ -228,7 +229,7 @@ public final class AiCircuitDialog extends JDialog {
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
-                return service.generate(prompt, cacheOnly, optimize, rowText);
+                return service.generate(prompt, cacheOnly, optimize, rowText, bypassCache);
             }
 
             @Override
@@ -241,6 +242,7 @@ public final class AiCircuitDialog extends JDialog {
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
                     currentResult = get();
+                    if (!cacheOnly) generateButton.setText("Regenerate");
                     for (String line : currentResult.attemptLog()) appendLog(line);
                     showResult(currentResult);
                 } catch (CancellationException exception) {
@@ -262,6 +264,7 @@ public final class AiCircuitDialog extends JDialog {
     private void invalidateResult() {
         if (activeWorker != null) return;
         currentResult = null;
+        generateButton.setText("Generate");
         placeButton.setEnabled(false);
         expressionsArea.setText("");
         tableModel.setTable(null);
@@ -278,6 +281,9 @@ public final class AiCircuitDialog extends JDialog {
                     .findFirst().orElse("");
             if (!unavailableNotice.isBlank()) {
                 displaySummary = config.redact(unavailableNotice) + " — " + displaySummary;
+            }
+            if (!result.answeredBy().isBlank()) {
+                displaySummary += " — FROM CACHE via " + config.redact(result.answeredBy());
             }
         } else if (!result.answeredBy().isBlank()) {
             String status = switch (result.status()) {

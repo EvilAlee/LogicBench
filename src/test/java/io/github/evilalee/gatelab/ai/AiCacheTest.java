@@ -80,6 +80,112 @@ class AiCacheTest {
     }
 
     @Test
+    void normalGenerationUsesValidatedCacheBeforeCallingTheProviderAndRestoresItsModel() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "Build a uniquely described cached AND circuit for checkpoint one.";
+        cache.storeVerified(description, AND_ANSWER_WITH_SPEC, "cached-model");
+        int[] calls = {0};
+        AiProvider neverCall = (prompt, conversation, schema) -> {
+            calls[0]++;
+            fail("a valid cache hit must avoid the provider");
+            return "";
+        };
+
+        AiCircuitService.Result result = service(neverCall, cache).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertTrue(result.fromCache());
+        assertEquals("cached-model", result.answeredBy());
+        assertEquals(0, calls[0]);
+    }
+
+    @Test
+    void regenerateBypassesCacheAndOverwritesItWithTheVerifiedLiveModel() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "Regenerate this uniquely described AND circuit.";
+        cache.storeVerified(description,
+                AND_ANSWER_WITH_SPEC.replace("AND gate", "old cached AND gate"), "old-model");
+        AiProvider liveProvider = new AiProvider() {
+            @Override
+            public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
+                return AND_ANSWER_WITH_SPEC.replace("AND gate", "regenerated AND gate");
+            }
+
+            @Override
+            public List<String> models() { return List.of("live-model"); }
+        };
+
+        AiCircuitService.Result regenerated = new AiCircuitService(
+                liveProvider, GateLibrary.load().all(), cache)
+                .generate(description, false, true, "", true);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, regenerated.status());
+        assertFalse(regenerated.fromCache());
+        assertEquals("live-model", regenerated.answeredBy());
+
+        AiCache reloadedCache = new AiCache(directory);
+        AiCircuitService.Result replayed = service(
+                (prompt, conversation, schema) -> {
+                    fail("the verified regenerated answer should now be cached");
+                    return "";
+                }, reloadedCache).generate(description);
+        assertTrue(replayed.fromCache());
+        assertEquals("live-model", replayed.answeredBy());
+        assertEquals("regenerated AND gate", replayed.summary());
+    }
+
+    @Test
+    void invalidCacheHitFallsThroughToTheLiveProvider() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "A unique description whose cached answer is invalid.";
+        cache.storeVerified(description,
+                "{\"summary\":\"bad\",\"inputs\":[\"A\"],\"outputs\":[]}", "bad-model");
+        int[] calls = {0};
+        AiProvider provider = (prompt, conversation, schema) -> {
+            calls[0]++;
+            return AND_ANSWER_WITH_SPEC;
+        };
+
+        AiCircuitService.Result result = service(provider, cache).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertFalse(result.fromCache());
+        assertEquals(1, calls[0]);
+        assertTrue(result.attemptLog().stream()
+                .anyMatch(line -> line.contains("Ignored invalid user cache")));
+    }
+
+    @Test
+    void expressionShortcutStillRunsBeforeMatchingCacheLookup() throws Exception {
+        AiCache cache = new AiCache(directory);
+        String description = "F = A & B";
+        cache.storeVerified(description, "{\"summary\":\"bad\",\"inputs\":[],\"outputs\":[]}");
+        AiProvider neverCall = (prompt, conversation, schema) -> {
+            fail("expression text must compile locally without provider calls");
+            return "";
+        };
+
+        AiCircuitService.Result result = service(neverCall, cache).generate(description);
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertFalse(result.fromCache());
+        assertEquals(0, result.attemptCount());
+    }
+
+    @Test
+    void legacyUnwrappedUserCacheEntriesRemainReadableWithoutModelMetadata() throws Exception {
+        String key = AiCache.normalizeDescription("legacy cache description");
+        Files.writeString(directory.resolve("ai_cache.json"),
+                "{\"entries\":{\"" + key + "\":" + AND_ANSWER + "}}");
+        AiCache cache = new AiCache(directory);
+
+        AiCache.CacheHit hit = cache.lookupCandidates("legacy cache description").getFirst();
+        assertEquals(AiCache.Source.USER, hit.source());
+        assertEquals("", hit.model());
+        assertTrue(hit.answerJson().contains("AND gate"));
+    }
+
+    @Test
     void specVerifiedLiveAnswerIsStoredInTheUserCache() throws Exception {
         AiCache cache = new AiCache(directory);
         String description = "Build a two-input AND gate with inputs A and B.";
@@ -154,10 +260,10 @@ class AiCacheTest {
     }
 
     @Test
-    void preexistingCacheIsUsedOnlyAfterExhaustedTransportFailure() throws Exception {
+    void preexistingCacheIsUsedBeforeAnyProviderCall() throws Exception {
         AiCache cache = new AiCache(directory);
         String description = "Build a two-input AND gate with inputs A and B.";
-        cache.storeVerified(description, AND_ANSWER);
+        cache.storeVerified(description, AND_ANSWER, "cached-model");
         int[] calls = {0};
         List<Long> delays = new java.util.ArrayList<>();
         AiProvider provider = (prompt, conversation, schema) -> {
@@ -170,34 +276,29 @@ class AiCacheTest {
 
         assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
+        assertEquals("cached-model", result.answeredBy());
         assertEquals(0, result.attemptCount());
-        assertEquals(3, calls[0]);
-        assertEquals(List.of(2_000L, 6_000L), delays);
-        assertTrue(result.attemptLog().stream().anyMatch(line ->
-                line.startsWith("AI unavailable (HTTP 503, model default) - showing cached result")));
+        assertEquals(0, calls[0]);
+        assertTrue(delays.isEmpty());
     }
 
     @Test
-    void rejectedKeyStillFallsBackToPreexistingCache() throws Exception {
+    void cacheHitPrecedesAnyRejectedKeyLiveRequest() throws Exception {
         AiCache cache = new AiCache(directory);
         String description = "Design an AND function using A and B.";
-        cache.storeVerified(description, AND_ANSWER);
+        cache.storeVerified(description, AND_ANSWER, "cached-model");
         List<String> calls = new java.util.ArrayList<>();
         AiProvider provider = new AiProvider() {
             @Override
             public String complete(String prompt, List<Turn> conversation, JsonObject schema) {
-                fail("model-aware overload should be used");
+                fail("the existing valid cache entry must be used first");
                 return "";
             }
-
             @Override
-            public List<String> models() {
-                return List.of("primary-model", "fallback-model");
-            }
-
+            public List<String> models() { return List.of("primary-model", "fallback-model"); }
             @Override
             public String complete(String model, String prompt,
-                                   List<Turn> conversation, JsonObject schema) throws IOException {
+                                    List<Turn> conversation, JsonObject schema) throws IOException {
                 calls.add(model);
                 throw new ProviderFailure(ProviderFailure.Kind.KEY_REJECTED,
                         "API key rejected (HTTP 403).", model, 403);
@@ -208,9 +309,8 @@ class AiCacheTest {
 
         assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertTrue(result.fromCache());
-        assertEquals(List.of("primary-model"), calls);
-        assertTrue(result.attemptLog().stream().anyMatch(line ->
-                line.startsWith("AI unavailable (HTTP 403, model primary-model) - showing cached result")));
+        assertEquals("cached-model", result.answeredBy());
+        assertTrue(calls.isEmpty());
     }
 
     @Test
