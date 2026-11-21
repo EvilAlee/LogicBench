@@ -870,7 +870,7 @@ public final class AiCircuitService {
                 + detail.replaceAll("[\\r\\n]+", " ");
     }
 
-    private static List<String> structuralErrors(TruthTable table) {
+    static List<String> structuralErrors(TruthTable table) {
         List<String> errors = new ArrayList<>();
         for (TruthTable.Row row : table.rows()) {
             String assignment = inputPinContext(table, row);
