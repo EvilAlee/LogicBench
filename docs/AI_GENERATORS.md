@@ -84,6 +84,7 @@ Examples include:
 | 4 to 1 mux / 4:1 multiplexer | mux(k=2) |
 | 3 to 8 decoder | decoder(n=3, enable=no) |
 | 4 bit comparator | comparator(n=4) |
+| 4-bit subtractor | subtractor(n=4) |
 | parity of 6 bits | parity(n=6, mode=even) |
 | 3 input majority | majority(n=3) |
 | 4 bit gray code to binary | gray_to_binary(n=4) |
@@ -98,3 +99,23 @@ do not match and continue to the normal AI provider path.
 The Regenerate action bypasses template matching as well as cache lookup, so the caller
 can explicitly force a live AI request. Turning off the Use templates checkbox also
 bypasses matching without disabling cache or provider generation.
+
+
+## AI response kinds
+
+The structured model response now requires a top-level `kind`:
+- `expressions`: followed by the existing free-form `summary`, `inputs`, `outputs`,
+  optional ordered `signals`, and optional `spec` fields.
+- `template`: followed only by `template.generator` and `template.params`.
+  Parameter values are stringified by the service, checked against the selected
+  generator's exact parameter set and supported values, then built locally. Unknown
+  generators, missing/unexpected parameters, and out-of-range values are validation
+  feedback and trigger the ordinary bounded correction retry.
+
+A model template is not trusted as a circuit description. The service converts it into
+the normal answer shape and passes it through the same expression parser/compiler,
+placed-schematic verification, engine truth-table generation, structural checks, and
+integer `SpecEvaluator` checks as a free-form model answer. Only a fully verified live
+answer is written to the existing AI cache; cache hits are revalidated through the same
+pipeline. Legacy cached free-form answers without a `kind` remain readable, and the
+six bundled prompt entries remain unchanged.

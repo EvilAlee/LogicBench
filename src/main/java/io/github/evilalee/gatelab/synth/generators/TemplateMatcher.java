@@ -54,6 +54,8 @@ public final class TemplateMatcher {
     private static final Pattern DECODER_REVERSED = Pattern.compile(
             "^decoder\\s+(" + NUMBER + ")\\s*(?:to|-to-)\\s*(" + NUMBER + ")"
                     + "(?:\\s+(?:with\\s+enable|enabled))?$");
+    private static final Pattern SUBTRACTOR = Pattern.compile(
+            "^(" + NUMBER + ")\\s*-?\\s*bit\\s+(?:unsigned\\s+)?subtractor$");
     private static final Pattern COMPARATOR = Pattern.compile(
             "^(" + NUMBER + ")\\s*-?\\s*bit\\s+(?:magnitude\\s+)?comparator$");
     private static final Pattern PARITY = Pattern.compile(
@@ -128,6 +130,15 @@ public final class TemplateMatcher {
             boolean enabled = phrase.endsWith("with enable") || phrase.endsWith("enabled");
             return built("decoder", Map.of(
                     "n", Integer.toString(inputs), "enable", enabled ? "yes" : "no"));
+        }
+
+        matcher = SUBTRACTOR.matcher(phrase);
+        if (matcher.matches()) {
+            int width = number(matcher.group(1));
+            if (!inRange(width, 1, 4)) {
+                return range("subtractor", "bits", 1, 4, width);
+            }
+            return built("subtractor", Map.of("n", Integer.toString(width)));
         }
 
         matcher = COMPARATOR.matcher(phrase);

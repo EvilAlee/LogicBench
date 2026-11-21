@@ -36,6 +36,7 @@ class TemplateMatcherTest {
                 new Case("3 to 8 decoder", "decoder",
                         Map.of("n", "3", "enable", "no")),
                 new Case("4 bit comparator", "comparator", Map.of("n", "4")),
+                new Case("4-bit unsigned subtractor", "subtractor", Map.of("n", "4")),
                 new Case("parity of 6 bits", "parity", Map.of("n", "6", "mode", "even")),
                 new Case("odd parity of six bits", "parity", Map.of("n", "6", "mode", "odd")),
                 new Case("3 input majority", "majority", Map.of("n", "3")),
@@ -73,6 +74,10 @@ class TemplateMatcherTest {
         TemplateMatcher.Unsupported adder = assertInstanceOf(
                 TemplateMatcher.Unsupported.class, TemplateMatcher.match("5-bit adder"));
         assertTrue(adder.message().contains("supported: 1 to 4 bits"));
+
+        TemplateMatcher.Unsupported subtractor = assertInstanceOf(
+                TemplateMatcher.Unsupported.class, TemplateMatcher.match("5-bit subtractor"));
+        assertTrue(subtractor.message().contains("supported: 1 to 4 bits"));
 
         TemplateMatcher.Unsupported parity = assertInstanceOf(
                 TemplateMatcher.Unsupported.class, TemplateMatcher.match("parity of 9 bits"));

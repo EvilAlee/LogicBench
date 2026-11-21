@@ -94,6 +94,18 @@ class AiCircuitServiceTest {
         return root.toString();
     }
 
+    private static String templateResponse(String generator, Map<String, String> params) {
+        JsonObject root = new JsonObject();
+        root.addProperty("kind", "template");
+        JsonObject template = new JsonObject();
+        template.addProperty("generator", generator);
+        JsonObject parameterObject = new JsonObject();
+        params.forEach((name, value) -> parameterObject.addProperty(name, value));
+        template.add("params", parameterObject);
+        root.add("template", template);
+        return root.toString();
+    }
+
     private static String andAnswer(String bits) {
         return answer(List.of("A", "B"), List.of(new Output("F", "A & B")), bits);
     }
@@ -302,6 +314,137 @@ class AiCircuitServiceTest {
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
         assertTrue(result.summary().contains("supported: 1 to 4 bits"));
         assertEquals(0, provider.calls);
+    }
+
+    @Test
+    void schemaAndPromptDescribeBothAnswerKindsAndAllTemplates() {
+        JsonObject schema = AiCircuitService.responseSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        JsonObject kind = properties.getAsJsonObject("kind");
+        assertEquals("kind", schema.getAsJsonArray("required").get(0).getAsString());
+        assertEquals(List.of("expressions", "template"),
+                kind.getAsJsonArray("enum").asList().stream()
+                        .map(element -> element.getAsString()).toList());
+        assertTrue(properties.getAsJsonObject("template").getAsJsonArray("required")
+                .asList().stream().map(element -> element.getAsString()).toList()
+                .containsAll(List.of("generator", "params")));
+        String prompt = AiCircuitService.systemPrompt();
+        for (String generator : List.of("ripple_adder", "subtractor", "comparator",
+                "array_multiplier", "mux", "decoder", "parity", "majority",
+                "gray_to_binary", "binary_to_gray")) {
+            assertTrue(prompt.contains(generator), generator);
+        }
+    }
+
+    @Test
+    void modelTemplateAnswerBuildsAndVerifiesThroughTheNormalPipeline() throws Exception {
+        JsonObject modelTemplate = JsonParser.parseString(templateResponse(
+                "ripple_adder", Map.of("n", "2", "carryIn", "no"))).getAsJsonObject();
+        // The generator remains authoritative even if a model adds answer-like fields.
+        modelTemplate.addProperty("summary", "untrusted model summary");
+        JsonArray untrustedInputs = new JsonArray();
+        untrustedInputs.add("MODEL_INPUT");
+        modelTemplate.add("inputs", untrustedInputs);
+        ScriptedProvider provider = new ScriptedProvider(modelTemplate.toString());
+        String description = "Design a compact arithmetic datapath for two unsigned operands.";
+
+        AiCircuitService.Result result = service(provider).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(4, result.truthTable().inputNames().size());
+        assertEquals(16, result.truthTable().rows().size());
+        assertTrue(result.summary().startsWith("Template: ripple_adder("));
+        assertEquals(0, result.mismatchingRows().size());
+    }
+
+    @Test
+    void invalidTemplateRangeProducesNamedRetryFeedbackThenVerifies() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(
+                templateResponse("ripple_adder", Map.of("n", "5", "carryIn", "no")),
+                templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Design a compact arithmetic datapath for two unsigned operands.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, result.attemptCount());
+        assertEquals(2, provider.calls);
+        String retry = provider.conversations.get(1).stream()
+                .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(retry.contains("parameter 'n' for ripple_adder"), retry);
+        assertTrue(retry.contains("got 5"), retry);
+    }
+
+    @Test
+    void unknownTemplateGeneratorProducesNamedRetryFeedbackThenVerifies() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(
+                templateResponse("mystery_circuit", Map.of("n", "2")),
+                templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Design a compact arithmetic datapath for two unsigned operands.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, provider.calls);
+        String retry = provider.conversations.get(1).stream()
+                .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(retry.contains("unknown generator 'mystery_circuit'"), retry);
+    }
+
+    @Test
+    void unexpectedTemplateParameterProducesNamedRetryFeedbackThenVerifies() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(
+                templateResponse("ripple_adder",
+                        Map.of("n", "2", "carryIn", "no", "width", "2")),
+                templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Design a compact arithmetic datapath for two unsigned operands.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, provider.calls);
+        String retry = provider.conversations.get(1).stream()
+                .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(retry.contains("unexpected=[width]"), retry);
+    }
+
+    @Test
+    void expressionsKindRemainsCompatibleWithFreeFormAnswers() throws Exception {
+        JsonObject expressionAnswer = JsonParser.parseString(andAnswerWithSpec("A & B"))
+                .getAsJsonObject();
+        expressionAnswer.addProperty("kind", "expressions");
+        ScriptedProvider provider = new ScriptedProvider(expressionAnswer.toString());
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Build an unrelated two-input boolean function.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(4, result.truthTable().rows().size());
+    }
+
+    @Test
+    void verifiedModelTemplateIsStoredAndRevalidatedFromCache() throws Exception {
+        AiCache cache = new AiCache(directory);
+        List<Long> delays = new ArrayList<>();
+        ScriptedProvider provider = new ScriptedProvider(templateResponse(
+                "ripple_adder", Map.of("n", "2", "carryIn", "no")));
+        String description = "Design a cache-test arithmetic datapath for two operands.";
+
+        AiCircuitService.Result live = service(provider, cache, delays).generate(description);
+        assertEquals(AiCircuitService.Status.VERIFIED, live.status());
+        assertEquals(1, provider.calls);
+        assertEquals(1, cache.lookupCandidates(description).size());
+
+        AiProvider neverCall = (prompt, conversation, schema) -> {
+            fail("verified template should be revalidated from cache");
+            return "";
+        };
+        AiCircuitService.Result cached = service(neverCall, cache, delays).generate(description);
+        assertEquals(AiCircuitService.Status.VERIFIED, cached.status());
+        assertTrue(cached.fromCache());
+        assertTrue(cached.summary().startsWith("Template: ripple_adder("));
     }
 
     @Test
