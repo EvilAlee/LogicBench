@@ -95,7 +95,7 @@ class CircuitDescriberTest {
     }
 
     @Test
-    void fullAdderMajorityAndFourBitAdderTemplatesRoundTripEveryTruthTableRow() {
+    void fullAdderMajorityAndFourBitAdderTemplatesRoundTripEveryTruthTableRow() throws Exception {
         ComponentLibrary library = componentLibrary();
         Schematic fullAdder = library.get("FA").internalCircuit();
 
