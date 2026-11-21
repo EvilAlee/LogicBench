@@ -176,10 +176,10 @@ public final class SchematicLayout {
     public LayoutResult layout(Netlist netlist) {
         Objects.requireNonNull(netlist, "netlist");
         try {
-            return build(netlist, 1, null, false);
+            return build(netlist, 1, null);
         } catch (LayoutCheckException firstFailure) {
             try {
-                return build(netlist, 2, null, false);
+                return build(netlist, 2, null);
             } catch (LayoutCheckException retryFailure) {
                 Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
                 involved.addAll(retryFailure.involvedNets);
@@ -198,38 +198,27 @@ public final class SchematicLayout {
     public LayoutResult layoutFeedback(FeedbackCircuitExtractor.Extraction extraction) {
         Objects.requireNonNull(extraction, "extraction");
         try {
-            return build(extraction.dagNetlist(), 1, extraction, true);
-        } catch (LayoutCheckException compactFailure) {
-            // The final row sweep is opportunistic: retain it when the full
-            // placed-schematic self-check accepts it, otherwise restore the
-            // pre-sweep layout and retry at the same spacing before expanding.
+            return build(extraction.dagNetlist(), 1, extraction);
+        } catch (LayoutCheckException firstFailure) {
             try {
-                return build(extraction.dagNetlist(), 1, extraction, false);
-            } catch (LayoutCheckException uncompressedFailure) {
-                try {
-                    return build(extraction.dagNetlist(), 2, extraction, false);
-                } catch (LayoutCheckException retryFailure) {
-                    Set<String> involved = new TreeSet<>(compactFailure.involvedNets);
-                    involved.addAll(uncompressedFailure.involvedNets);
-                    involved.addAll(retryFailure.involvedNets);
-                    String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
-                    throw new IllegalStateException(
-                            "Feedback layout failed its connectivity self-check after "
-                                    + "the compact and uncompressed candidates and one "
-                                    + "doubled-spacing retry. Involved nets: " + names
-                                    + ". Compact failure: " + compactFailure.getMessage()
-                                    + "; uncompressed failure: " + uncompressedFailure.getMessage()
-                                    + "; retry failure: " + retryFailure.getMessage(),
-                            retryFailure);
-                }
+                return build(extraction.dagNetlist(), 2, extraction);
+            } catch (LayoutCheckException retryFailure) {
+                Set<String> involved = new TreeSet<>(firstFailure.involvedNets);
+                involved.addAll(retryFailure.involvedNets);
+                String names = involved.isEmpty() ? "unknown" : String.join(", ", involved);
+                throw new IllegalStateException(
+                        "Feedback layout failed its connectivity self-check after one "
+                                + "doubled-spacing retry. Involved nets: " + names
+                                + ". First failure: " + firstFailure.getMessage()
+                                + "; retry failure: " + retryFailure.getMessage(),
+                        retryFailure);
             }
         }
     }
 
     private LayoutResult build(
             Netlist netlist, int spacingFactor,
-            FeedbackCircuitExtractor.Extraction feedback,
-            boolean compactFeedback) {
+            FeedbackCircuitExtractor.Extraction feedback) {
         Map<String, Integer> depthBySignal = new LinkedHashMap<>();
         netlist.inputs().forEach(name -> depthBySignal.put(name, 0));
 
@@ -377,7 +366,7 @@ public final class SchematicLayout {
             orderFeedbackColumns(columns);
         }
         optimizeVerticalPositions(
-                columns, outputNodes, routeSteps, rowGap, feedback != null, compactFeedback);
+                columns, outputNodes, routeSteps, rowGap, feedback != null);
 
         int laneStart = TRUNK_START_MARGIN * spacingFactor;
         int lanePitch = TRUNK_PITCH * spacingFactor;
@@ -504,8 +493,7 @@ public final class SchematicLayout {
 
         LinkedHashSet<WireSegment> feedbackWires = routeFeedbackEdges(
                 feedback, gateNodes, feedbackSourcesByChannel, feedbackTargetsByChannel,
-                normalGapByChannel, columnLeft, columnWidths,
-                feedbackTrackPitch, allNodes(columns));
+                normalGapByChannel, feedbackTrackPitch, allNodes(columns));
         List<PlacedComponent> finalComponents = schematic.components().stream()
                 .filter(component -> !feedbackIds.containsValue(component.id()))
                 .toList();
@@ -706,40 +694,27 @@ public final class SchematicLayout {
     }
 
     private static void orderFeedbackColumns(List<List<Node>> columns) {
-        for (int pass = 0; pass < 4; pass++) {
-            for (int column = 1; column < columns.size(); column++) {
-                reorderFeedbackByBarycenter(columns, column, true);
-            }
-            for (int column = columns.size() - 2; column >= 0; column--) {
-                reorderFeedbackByBarycenter(columns, column, false);
-            }
+        for (int column = 1; column < columns.size(); column++) {
+            List<Node> layer = columns.get(column);
+            layer.sort(Comparator
+                    .comparingDouble(SchematicLayout::driverBarycenter)
+                    .thenComparing(SchematicLayout::nodeTieBreakId));
         }
     }
 
-    /**
-     * Uses the average row rank of the connected drivers (or sinks in the
-     * backward pass). The stable component id resolves equal barycentres.
-     */
-    private static void reorderFeedbackByBarycenter(
-            List<List<Node>> columns, int column, boolean usePrevious) {
-        List<Node> layer = columns.get(column);
-        if (layer.size() < 2) {
-            return;
+    private static double driverBarycenter(Node node) {
+        if (node.previous.isEmpty()) {
+            return node.y;
         }
-        List<Node> neighborLayer = columns.get(usePrevious ? column - 1 : column + 1);
-        Map<Node, Integer> positions = new HashMap<>();
-        for (int index = 0; index < neighborLayer.size(); index++) {
-            positions.put(neighborLayer.get(index), index);
+        long total = 0L;
+        for (Node driver : node.previous) {
+            total += sourcePinY(driver);
         }
-        Map<Node, Integer> currentPositions = new HashMap<>();
-        for (int index = 0; index < layer.size(); index++) {
-            currentPositions.put(layer.get(index), index);
-        }
-        layer.sort(Comparator
-                .comparingDouble((Node node) -> barycenter(
-                        usePrevious ? node.previous : node.next,
-                        positions, currentPositions.get(node)))
-                .thenComparing(node -> node.key));
+        return total / (double) node.previous.size();
+    }
+
+    private static String nodeTieBreakId(Node node) {
+        return node.componentId == null ? node.key : node.componentId;
     }
 
     private static void assignInputColumn(List<Node> inputNodes, int rowGap) {
@@ -765,8 +740,7 @@ public final class SchematicLayout {
             Map<String, Node> outputNodes,
             List<RouteStep> routeSteps,
             int rowGap,
-            boolean feedbackPacking,
-            boolean compactFeedback) {
+            boolean feedbackPacking) {
         int outputColumn = columns.size() - 1;
         int[] bestPositions = null;
         long bestLength = Long.MAX_VALUE;
@@ -803,7 +777,7 @@ public final class SchematicLayout {
             throw new IllegalStateException("no vertical layout candidate was produced");
         }
         restoreVerticalPositions(columns, bestPositions);
-        if (feedbackPacking && compactFeedback) {
+        if (feedbackPacking) {
             compactFeedbackRows(columns, routeSteps, rowGap);
         }
     }
@@ -987,7 +961,8 @@ public final class SchematicLayout {
         if (feedbackPacking) {
             int previousPins = previous.isDummy() ? 1 : previous.definition.inputs().size() + 1;
             int currentPins = current.isDummy() ? 1 : current.definition.inputs().size() + 1;
-            requiredGap = 10 + 10 * Math.max(previousPins, currentPins);
+            int pinBasedGap = 10 + 10 * Math.max(previousPins, currentPins);
+            requiredGap = Math.max(requiredGap, pinBasedGap);
         }
         int required = nodeBottomOffset(previous) - nodeTopOffset(current) + requiredGap;
         return roundUpToGrid(required);
@@ -1254,20 +1229,12 @@ public final class SchematicLayout {
      * interval. Each interval uses the left-edge lane allocation above, so
      * disjoint column spans share the same logical lane.
      */
-    private record FeedbackRouteSpan(int startColumn, int endColumn, int y) {
-        private boolean overlaps(int start, int end) {
-            return start <= endColumn && startColumn <= end;
-        }
-    }
-
     private static LinkedHashSet<WireSegment> routeFeedbackEdges(
             FeedbackCircuitExtractor.Extraction extraction,
             Map<String, Node> gateNodes,
             Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> sourcesByChannel,
             Map<Integer, List<FeedbackCircuitExtractor.FeedbackEdge>> targetsByChannel,
             Map<Integer, Integer> normalGapByChannel,
-            int[] columnLeft,
-            int[] columnWidths,
             int trackPitch,
             List<Node> allNodes) {
         LinkedHashSet<WireSegment> wires = new LinkedHashSet<>();
@@ -1275,7 +1242,6 @@ public final class SchematicLayout {
         gateNodes.forEach((signal, node) -> columnsByGate.put(signal, node.column));
         Map<FeedbackCircuitExtractor.FeedbackEdge, Integer> laneByEdge =
                 assignFeedbackLanes(extraction.feedbackEdges(), columnsByGate);
-        List<FeedbackRouteSpan> assignedRouteSpans = new ArrayList<>();
 
         for (FeedbackCircuitExtractor.FeedbackEdge edge : extraction.feedbackEdges()) {
             Node source = gateNodes.get(edge.sourceGate());
@@ -1296,8 +1262,6 @@ public final class SchematicLayout {
 
             int normalSourceGap = normalGapByChannel.get(source.column);
             int normalTargetGap = normalGapByChannel.get(target.column - 1);
-            // GateDef.origin() is the output pin, so the source node
-            // coordinate is already the right edge of the column's gate body.
             int sourceX = source.x + normalSourceGap
                     + (sourceTrackIndex + 1) * trackPitch;
             GateGeometry.Offset targetInputOffset = GateGeometry.pinOffset(
@@ -1314,16 +1278,14 @@ public final class SchematicLayout {
             int endColumn = source.column;
             int minGateTop = Integer.MAX_VALUE;
             int maxGateBottom = Integer.MIN_VALUE;
-            for (Node node : allNodes) {
-                if (node.isDummy() || node.kind == NodeKind.FEEDBACK
-                        || node.column < startColumn || node.column > endColumn) {
-                    continue;
+            for (Node gate : gateNodes.values()) {
+                if (gate.column >= startColumn && gate.column <= endColumn) {
+                    GateGeometry.Bounds bounds = GateGeometry.bounds(
+                            gate.definition, Facing.EAST);
+                    minGateTop = Math.min(minGateTop, gate.y + bounds.y());
+                    maxGateBottom = Math.max(
+                            maxGateBottom, gate.y + bounds.y() + bounds.height());
                 }
-                GateGeometry.Bounds bounds = GateGeometry.bounds(
-                        node.definition, Facing.EAST);
-                minGateTop = Math.min(minGateTop, node.y + bounds.y());
-                maxGateBottom = Math.max(
-                        maxGateBottom, node.y + bounds.y() + bounds.height());
             }
             if (minGateTop == Integer.MAX_VALUE) {
                 throw new IllegalStateException("feedback interval contains no gate rows");
@@ -1332,10 +1294,9 @@ public final class SchematicLayout {
             int lane = laneByEdge.get(edge);
             int aboveY = minGateTop - (lane + 1) * trackPitch;
             int belowY = maxGateBottom + (lane + 1) * trackPitch;
-            int laneY = chooseFeedbackLaneY(
-                    startColumn, endColumn, sourceY, targetY,
-                    aboveY, belowY, trackPitch, assignedRouteSpans);
-            assignedRouteSpans.add(new FeedbackRouteSpan(startColumn, endColumn, laneY));
+            int aboveLength = Math.abs(sourceY - aboveY) + Math.abs(targetY - aboveY);
+            int belowLength = Math.abs(sourceY - belowY) + Math.abs(targetY - belowY);
+            int laneY = aboveLength <= belowLength ? aboveY : belowY;
 
             if (sourceX <= targetTrackX) {
                 throw new IllegalStateException(
@@ -1349,49 +1310,6 @@ public final class SchematicLayout {
             addWire(wires, targetTrackX, targetY, targetPinX, targetY);
         }
         return wires;
-    }
-
-    private static int chooseFeedbackLaneY(
-            int startColumn, int endColumn, int sourceY, int targetY,
-            int aboveY, int belowY, int trackPitch,
-            List<FeedbackRouteSpan> assigned) {
-        int bestY = 0;
-        long bestLength = Long.MAX_VALUE;
-        boolean found = false;
-        for (int offset = 0; offset <= assigned.size(); offset++) {
-            int above = aboveY - offset * trackPitch;
-            if (hasFreeFeedbackLane(startColumn, endColumn, above, assigned)) {
-                long length = (long) Math.abs(sourceY - above) + Math.abs(targetY - above);
-                if (length < bestLength) {
-                    bestLength = length;
-                    bestY = above;
-                    found = true;
-                }
-            }
-            int below = belowY + offset * trackPitch;
-            if (hasFreeFeedbackLane(startColumn, endColumn, below, assigned)) {
-                long length = (long) Math.abs(sourceY - below) + Math.abs(targetY - below);
-                if (length < bestLength) {
-                    bestLength = length;
-                    bestY = below;
-                    found = true;
-                }
-            }
-        }
-        if (!found) {
-            throw new IllegalStateException("could not allocate a non-overlapping feedback lane");
-        }
-        return bestY;
-    }
-
-    private static boolean hasFreeFeedbackLane(
-            int startColumn, int endColumn, int y, List<FeedbackRouteSpan> assigned) {
-        for (FeedbackRouteSpan lane : assigned) {
-            if (lane.y() == y && lane.overlaps(startColumn, endColumn)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static void addWire(
@@ -1462,8 +1380,6 @@ public final class SchematicLayout {
         Map<PinKey, Integer> netByPin = new HashMap<>();
         Map<String, Integer> netBySignal = new HashMap<>();
         Set<String> involved = new TreeSet<>();
-        List<String> joinedNetDetails = new ArrayList<>();
-        List<String> splitSignalDetails = new ArrayList<>();
 
         for (int netIndex = 0; netIndex < topology.nets().size(); netIndex++) {
             Connectivity.Net net = topology.nets().get(netIndex);
@@ -1485,26 +1401,17 @@ public final class SchematicLayout {
                 Integer previousNet = netBySignal.putIfAbsent(signal, netIndex);
                 if (previousNet != null && previousNet != netIndex) {
                     involved.add(signal);
-                    splitSignalDetails.add(signal + " occurs in net " + previousNet
-                            + " and net " + netIndex);
                 }
             }
             if (expectedSignals.size() > 1) {
                 involved.addAll(expectedSignals);
-                String pins = net.pins().stream()
-                        .map(pin -> pin.componentId() + "." + pin.pinId())
-                        .sorted().collect(java.util.stream.Collectors.joining(","));
-                joinedNetDetails.add("net " + netIndex + " signals=" + expectedSignals
-                        + " pins=[" + pins + "]");
             }
         }
 
         if (!involved.isEmpty()) {
             throw new LayoutCheckException(
                     "different netlist signals were joined or one signal was split: "
-                            + String.join(", ", involved)
-                            + "; joined=" + joinedNetDetails
-                            + "; split=" + splitSignalDetails,
+                            + String.join(", ", involved),
                     involved);
         }
 
