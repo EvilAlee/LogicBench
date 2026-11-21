@@ -64,7 +64,7 @@ class ComponentInstanceGeometryTest {
         assertEquals(100, southGeometry.height());
         ComponentInstance.PinGeometry eastClock = eastGeometry.pins().get(1);
         ComponentInstance.PinGeometry southClock = southGeometry.pins().get(1);
-        assertEquals(east.x() + 40, eastClock.x());
+        assertEquals(east.x(), eastClock.x(), "east-facing input pins lie on the left body edge");
         assertEquals(east.y() + 40, eastClock.y());
         assertEquals(south.x() + 40, southClock.x());
         assertEquals(south.y(), southClock.y());
