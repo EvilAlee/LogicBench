@@ -190,4 +190,39 @@ class SpecEvaluatorTest {
                 () -> spec(List.of("A"), List.of("Y"), "A +"));
         assertTrue(syntax.position() >= 0);
     }
+    @Test
+    void rejectsAmbiguousBusNameAndExtraRuleProperties() {
+        JsonObject ambiguous = new JsonObject();
+        JsonObject buses = new JsonObject();
+        JsonArray aPins = new JsonArray(); aPins.add("A1"); aPins.add("A0");
+        JsonArray otherPins = new JsonArray(); otherPins.add("B");
+        buses.add("A", aPins);
+        buses.add("A1", otherPins);
+        ambiguous.add("buses", buses);
+        JsonArray rules = new JsonArray();
+        JsonObject rule = new JsonObject();
+        rule.addProperty("out", "Y"); rule.addProperty("expr", "A");
+        rules.add(rule);
+        ambiguous.add("rules", rules);
+        SpecEvaluator.SpecException busError = assertThrows(
+                SpecEvaluator.SpecException.class,
+                () -> SpecEvaluator.parse(ambiguous,
+                        List.of("A1", "A0", "B"), List.of("Y")));
+        assertTrue(busError.getMessage().contains("bus name conflicts with a declared pin"));
+
+        JsonObject extraRule = new JsonObject();
+        extraRule.add("buses", new JsonObject());
+        JsonArray extraRules = new JsonArray();
+        JsonObject extra = new JsonObject();
+        extra.addProperty("out", "Y");
+        extra.addProperty("expr", "A");
+        extra.addProperty("comment", "ignored data is not accepted");
+        extraRules.add(extra);
+        extraRule.add("rules", extraRules);
+        SpecEvaluator.SpecException ruleError = assertThrows(
+                SpecEvaluator.SpecException.class,
+                () -> SpecEvaluator.parse(extraRule, List.of("A"), List.of("Y")));
+        assertTrue(ruleError.getMessage().contains("exactly out and expr"));
+    }
+
 }

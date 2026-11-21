@@ -298,7 +298,7 @@ public final class AiCircuitDialog extends JDialog {
             statusBadge.setText("VERIFIED");
             statusBadge.setBackground(new Color(215, 240, 220));
         } else if (result.status() == AiCircuitService.Status.BUILT) {
-            statusBadge.setText("BUILT");
+            statusBadge.setText("BUILT: no independent check, read the truth table");
             statusBadge.setBackground(new Color(235, 235, 235));
         } else if (result.status() == AiCircuitService.Status.UNAVAILABLE) {
             statusBadge.setText("UNAVAILABLE");
