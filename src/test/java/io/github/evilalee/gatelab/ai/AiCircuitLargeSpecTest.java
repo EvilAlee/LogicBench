@@ -184,6 +184,7 @@ class AiCircuitLargeSpecTest {
         assertTrue(elapsed < 10_000_000_000L,
                 "4-bit adder and 4x4 multiplier should finish under 10 seconds");
     }
+    /** Measures a deliberately deep max-limit chain to expose worst-case column depth. */
     @Test
     void measuresLayoutForTheMaximumTenInputSixteenOutputFourHundredGateNetlist() {
         List<String> inputs = List.of("A", "B", "C", "D", "E", "F", "G", "H", "I", "J");

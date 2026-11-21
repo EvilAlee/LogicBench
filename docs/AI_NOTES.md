@@ -159,4 +159,6 @@ Example 2 — 2-to-4 decoder with enable:
 
 ## Verification performance
 
-The largest supported input space is 10 bits (1,024 engine rows). The headless CI test also builds, lays out, and checks the 9-input/5-output four-bit adder and the 8-input/8-output 4×4 multiplier. The measured elapsed time for those two combined cases is recorded from the CI test log.
+The largest supported input space is 10 bits (1,024 engine rows). In GitHub Actions run 44865571316, the 9-input/5-output four-bit adder plus the 8-input/8-output 4×4 multiplier built, laid out, and passed executable-spec verification in **2,611.5 ms combined** (both cases; under the required 10-second CI bound).
+
+A separate maximum-limit layout stress case used **10 inputs, 16 outputs, and 400 gates** arranged as a 400-stage chain with side-input connections. Its layout took **109,496.9 ms** (about **109.5 seconds**) in the same CI run. This is a deliberately deep, worst-case-shaped layout measurement, not the runtime of the arithmetic examples. Both timings are environment-specific measurements, not performance guarantees.
