@@ -153,6 +153,7 @@ class FeedbackCircuitLayoutMetricsTest {
         Map<String, String> expectedSignals = expectedSignalLabels(
                 extraction, compactRun.result());
         String geometry = SchematicLayout.diagnosticDump(compact, expectedSignals);
+        System.out.println(geometry);
 
         assertTrue(compactMetrics.area() < legacyMetrics.area(),
                 "2-bit counter compact candidate must beat the same-run legacy layout. "
