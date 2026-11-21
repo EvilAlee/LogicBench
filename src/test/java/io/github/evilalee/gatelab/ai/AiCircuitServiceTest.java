@@ -311,7 +311,7 @@ class AiCircuitServiceTest {
                 fourBitRippleSignals(), rippleAdderSpec());
         ScriptedProvider provider = new ScriptedProvider(raw);
 
-        AiCircuitService.Result result = service(provider).generate("Build a 4-bit ripple-carry adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a 4-bit ripple-carry adder.", false, true, "", false, false);
         TruthTable flat = TruthTableGenerator.generate(
                 ExpressionCompiler.compile(flatFourBitRippleAdder(), false, true).netlist());
 
@@ -330,7 +330,7 @@ class AiCircuitServiceTest {
                 fourByFourMultiplierSignals(), multiplierSpec());
         ScriptedProvider provider = new ScriptedProvider(raw);
 
-        AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.");
+        AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(1, provider.calls);
@@ -850,7 +850,7 @@ class AiCircuitServiceTest {
         List<String> declaredOrder = List.of("A1", "A0", "B1", "B0");
         ScriptedProvider provider = new ScriptedProvider(twoBitAdderAnswer(declaredOrder, false));
 
-        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(1, provider.calls);
@@ -863,7 +863,7 @@ class AiCircuitServiceTest {
         List<String> declaredOrder = List.of("A0", "B0", "A1", "B1");
         ScriptedProvider provider = new ScriptedProvider(twoBitAdderAnswer(declaredOrder, false));
 
-        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(List.of("A0", "B0", "A1", "B1"), result.truthTable().inputNames());
@@ -883,7 +883,7 @@ class AiCircuitServiceTest {
                     new Output("C2", "A1 & B1 | A1 & A0 & B0 | B1 & A0 & B0")),
                     zeros, zeros, zeros);
             AiCircuitService.Result result = service(new ScriptedProvider(raw))
-                    .generate("Build a two-bit adder.");
+                    .generate("Build a two-bit adder.", false, true, "", false, false);
 
             assertEquals(AiCircuitService.Status.UNVERIFIED, result.status(), inputs.toString());
             String log = String.join("\\n", result.attemptLog());
@@ -924,7 +924,7 @@ class AiCircuitServiceTest {
                 twoBitAdderAnswer(declaredOrder, true),
                 twoBitAdderAnswer(declaredOrder, false));
 
-        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(2, result.attemptCount());
