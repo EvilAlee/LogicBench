@@ -12,6 +12,9 @@ import io.github.evilalee.gatelab.synth.NamedExpression;
 import io.github.evilalee.gatelab.synth.Netlist;
 import io.github.evilalee.gatelab.synth.TruthTable;
 import io.github.evilalee.gatelab.synth.TruthTableGenerator;
+import io.github.evilalee.gatelab.synth.generators.GeneratedCircuit;
+import io.github.evilalee.gatelab.synth.generators.TemplateMatcher;
+import io.github.evilalee.gatelab.synth.generators.StandardCircuitGenerators;
 import io.github.evilalee.gatelab.synth.layout.SchematicExpressionVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 
@@ -171,6 +174,28 @@ public final class AiCircuitService {
         root.addProperty("type", "OBJECT");
         JsonObject properties = new JsonObject();
 
+        JsonObject kind = new JsonObject();
+        kind.addProperty("type", "STRING");
+        kind.add("enum", stringArray("expressions", "template"));
+        properties.add("kind", kind);
+
+        JsonObject templateProperties = new JsonObject();
+        JsonObject generator = new JsonObject();
+        generator.addProperty("type", "STRING");
+        templateProperties.add("generator", generator);
+        JsonObject parameterValue = new JsonObject();
+        parameterValue.addProperty("type", "STRING");
+        JsonObject parameters = new JsonObject();
+        parameters.addProperty("type", "OBJECT");
+        parameters.add("additionalProperties", parameterValue);
+        templateProperties.add("params", parameters);
+        JsonObject template = new JsonObject();
+        template.addProperty("type", "OBJECT");
+        template.add("properties", templateProperties);
+        template.add("required", stringArray("generator", "params"));
+        template.addProperty("additionalProperties", false);
+        properties.add("template", template);
+
         JsonObject summary = new JsonObject();
         summary.addProperty("type", "STRING");
         properties.add("summary", summary);
@@ -230,7 +255,7 @@ public final class AiCircuitService {
         properties.add("spec", spec);
 
         root.add("properties", properties);
-        root.add("required", stringArray("summary", "inputs", "outputs"));
+        root.add("required", stringArray("kind"));
         root.addProperty("additionalProperties", false);
         return root;
     }
@@ -260,7 +285,29 @@ public final class AiCircuitService {
     /** Short model instruction; verification comes from code, never model-claimed rows. */
     public static String systemPrompt() {
         return """
-                You design digital logic circuits. Reply with JSON only, shaped as {summary, inputs, outputs, signals, spec}.
+                You design digital logic circuits. Reply with JSON only and always choose a response kind.
+                For ordinary/free-form logic use {kind:"expressions", summary, inputs, outputs, signals?, spec?}.
+                For an exact regular circuit from the template table use only {kind:"template", template:{generator, params}}.
+                Template params are strings. The program builds the pin expressions and integer spec, then verifies the result; never invent template inputs, outputs, signals or a spec.
+                Do not choose a template when the request adds extra behavior (for example an alarm light or traffic-light controller); use kind "expressions" for that request.
+                If a requested template dimension is outside the listed range, still name the intended template and exact dimension; the program will report the supported range.
+
+                Template catalogue (A0/B0/D0/S0/G0 are least-significant bits):
+                generator        parameters                      input pins                         output pins
+                ripple_adder     n=1..4, carryIn=yes|no          A0..A(n-1), B0..B(n-1), CIN?       S0..S(n-1), COUT
+                subtractor       n=1..4                          A0..A(n-1), B0..B(n-1)             D0..D(n-1), BOUT
+                comparator       n=1..4                          A0..A(n-1), B0..B(n-1)             LT, EQ, GT
+                array_multiplier n=1..4, m=1..4                  A0..A(n-1), B0..B(m-1)             P0..P(n+m-1)
+                mux              k=1..2                          D0..D(2^k-1), S0..S(k-1)            Y
+                decoder          n=1..3, enable=yes|no            A0..A(n-1), EN?                    Y0..Y(2^n-1)
+                parity           n=2..8, mode=even|odd            A0..A(n-1)                         PARITY
+                majority         n=3 or 5                       A0..A(n-1)                         Y
+                gray_to_binary   n=2..4                          G0..G(n-1)                         B0..B(n-1)
+                binary_to_gray   n=2..4                          B0..B(n-1)                         G0..G(n-1)
+                A conventional 8:1 mux requires 11 independent inputs and is not available under the 10-input limit.
+                For a template answer, params must include every parameter listed for that generator and no others.
+                Examples of template parameters: {"n":"4","carryIn":"yes"} for ripple_adder; {"n":"4","m":"4"} for array_multiplier.
+                Free-form answers keep the existing shape after the kind field:
                 inputs: single-bit pin names.
                 outputs: list of {name, expression} for ONLY the pins the user asked for.
                 signals: ordered list of {name, expression} for every intermediate value (propagate, generate, carries, partial products).
@@ -274,7 +321,7 @@ public final class AiCircuitService {
                 Additional response limits: at most 10 inputs, 16 outputs, 160 signals, 400 gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
 
                 Example 1 — 4-bit ripple-carry adder:
-                {"summary":"4-bit ripple adder","inputs":["A3","A2","A1","A0","B3","B2","B1","B0","CIN"],
+                {"kind":"expressions","summary":"4-bit ripple adder","inputs":["A3","A2","A1","A0","B3","B2","B1","B0","CIN"],
                  "signals":[
                   {"name":"G0","expression":"A0 & B0"},{"name":"G1","expression":"A1 & B1"},
                   {"name":"G2","expression":"A2 & B2"},{"name":"G3","expression":"A3 & B3"},
@@ -292,17 +339,8 @@ public final class AiCircuitService {
                          "rules":[{"out":"S","expression":"A + B + CIN"},
                                   {"out":"COUT","expression":"(A + B + CIN) >> 4}]}}
 
-                Example 2 — 4x4 multiplier partial-product signal fragment:
-                {"signals":[
-                 {"name":"P00","expression":"A0 & B0"},{"name":"P10","expression":"A1 & B0"},
-                 {"name":"P20","expression":"A2 & B0"},{"name":"P30","expression":"A3 & B0"},
-                 {"name":"P01","expression":"A0 & B1"},{"name":"P11","expression":"A1 & B1"},
-                 {"name":"P21","expression":"A2 & B1"},{"name":"P31","expression":"A3 & B1"},
-                 {"name":"P02","expression":"A0 & B2"},{"name":"P12","expression":"A1 & B2"},
-                 {"name":"P22","expression":"A2 & B2"},{"name":"P32","expression":"A3 & B2"},
-                 {"name":"P03","expression":"A0 & B3"},{"name":"P13","expression":"A1 & B3"},
-                 {"name":"P23","expression":"A2 & B3"},{"name":"P33","expression":"A3 & B3"}]}
-                Continue these partial products with ordered carry-save/ripple sum and carry signals, then output Y0 through Y7. The multiplier spec uses buses A=[A3,A2,A1,A0], B=[B3,B2,B1,B0], Y=[Y7,Y6,Y5,Y4,Y3,Y2,Y1,Y0] and rule {out:Y, expression:"A * B"}.
+                Example 2 — exact 4x4 multiplier template answer:
+                {"kind":"template","template":{"generator":"array_multiplier","params":{"n":"4","m":"4"}}}
                 """;
     }
 
@@ -339,6 +377,15 @@ public final class AiCircuitService {
     public Result generate(
             String description, boolean cacheOnly, boolean invertingGates,
             String expectedRowsText, boolean bypassCache) throws IOException, InterruptedException {
+        return generate(description, cacheOnly, invertingGates, expectedRowsText,
+                bypassCache, true);
+    }
+
+    /** Disables deterministic templates when the caller wants provider-only generation. */
+    public Result generate(
+            String description, boolean cacheOnly, boolean invertingGates,
+            String expectedRowsText, boolean bypassCache, boolean useTemplates)
+            throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
         expectedRowsText = expectedRowsText == null ? "" : expectedRowsText;
         String safeDescription = provider.redact(description);
@@ -404,6 +451,29 @@ public final class AiCircuitService {
                 log.add("Local expression build failed: " + safeParseMessage(exception));
                 return new Result(0, Status.UNVERIFIED, "Local expression could not be built.",
                         local.expressions(), local.netlist(), null, null, List.of(), log, false);
+            }
+        }
+
+        if (!bypassCache && useTemplates) {
+            TemplateMatcher.MatchResult templateMatch = TemplateMatcher.match(description);
+            if (templateMatch instanceof TemplateMatcher.Matched matched) {
+                GeneratedCircuit template = matched.circuit();
+                String label = templateLabel(template);
+                Attempt generated = validate(templateAnswerJson(template, label),
+                        invertingGates, expectedRowsText);
+                log.add("Matched deterministic " + template.generator() + " template.");
+                if (generated.passed() && generated.independentCheck()) {
+                    log.add("Verified the template against its integer specification.");
+                    return result(0, Status.VERIFIED, generated, log, false);
+                }
+                log.add("Generated template did not pass the common compilation/verification pipeline.");
+                return result(0, Status.UNVERIFIED, generated, log, false);
+            }
+            if (templateMatch instanceof TemplateMatcher.Unsupported unsupported) {
+                log.add("Template request is outside the supported range: " + unsupported.message());
+                return new Result(0, Status.UNVERIFIED,
+                        "Template request not supported: " + unsupported.message(),
+                        List.of(), null, null, null, List.of(), log, false);
             }
         }
 
@@ -503,6 +573,74 @@ public final class AiCircuitService {
         }
         return result(AiCircuitLimits.MAX_ATTEMPTS, Status.UNVERIFIED, best, log, false,
                 bestAnsweredBy, allModelAttempts);
+    }
+
+    private static String templateLabel(GeneratedCircuit template) {
+        String parameters = template.params().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> entry.getKey() + "=" + entry.getValue())
+                .collect(java.util.stream.Collectors.joining(", "));
+        return "Template: " + template.generator() + "(" + parameters
+                + "), verified against its integer spec";
+    }
+
+    private static String templateAnswerJson(GeneratedCircuit template, String label) {
+        JsonObject answer = template.toJson();
+        answer.addProperty("summary", label);
+        return answer.toString();
+    }
+
+    private static String normalizeTemplateResponse(String raw) {
+        String jsonText = stripCodeFence(Objects.requireNonNull(raw, "model response"));
+        JsonElement parsed = JsonParser.parseString(jsonText);
+        if (!parsed.isJsonObject()) return raw;
+        JsonObject root = parsed.getAsJsonObject();
+        JsonElement kindElement = root.get("kind");
+        if (kindElement == null) return raw; // legacy free-form answers and old cache entries
+        String kind = requireString(kindElement, "kind");
+        if ("expressions".equals(kind)) {
+            root.remove("kind");
+            return root.toString();
+        }
+        if (!"template".equals(kind)) {
+            throw new IllegalArgumentException("kind must be 'expressions' or 'template'; got " + kind);
+        }
+
+        Set<String> allowedTemplateFields = Set.of(
+                "kind", "template", "summary", "inputs", "outputs", "signals", "spec");
+        Set<String> unexpectedTemplateFields = new LinkedHashSet<>(root.keySet());
+        unexpectedTemplateFields.removeAll(allowedTemplateFields);
+        if (!unexpectedTemplateFields.isEmpty()) {
+            throw new IllegalArgumentException("template response has unexpected fields: "
+                    + unexpectedTemplateFields);
+        }
+        // The generator is authoritative; ignore any optional model-supplied circuit details.
+        JsonElement templateElement = root.get("template");
+        if (templateElement == null || !templateElement.isJsonObject()) {
+            throw new IllegalArgumentException("template must be an object with generator and params");
+        }
+        JsonObject templateObject = templateElement.getAsJsonObject();
+        requireExactKeys(templateObject, Set.of("generator", "params"), "template");
+        String generatorId = requireString(templateObject.get("generator"), "template generator");
+        JsonElement paramsElement = templateObject.get("params");
+        if (paramsElement == null || !paramsElement.isJsonObject()) {
+            throw new IllegalArgumentException("template params must be an object");
+        }
+
+        Map<String, String> parameters = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> entry : paramsElement.getAsJsonObject().entrySet()) {
+            JsonElement value = entry.getValue();
+            if (value == null || !value.isJsonPrimitive()
+                    || !(value.getAsJsonPrimitive().isString()
+                        || value.getAsJsonPrimitive().isNumber())) {
+                throw new IllegalArgumentException("template parameter '" + entry.getKey()
+                        + "' must be a string or integer");
+            }
+            parameters.put(entry.getKey(), value.getAsString());
+        }
+
+        GeneratedCircuit generated = StandardCircuitGenerators.require(generatorId).build(parameters);
+        return templateAnswerJson(generated, templateLabel(generated));
     }
 
     /**
@@ -739,7 +877,7 @@ public final class AiCircuitService {
     private Attempt validate(String raw, boolean invertingGates, String expectedRowsText) {
         Answer answer;
         try {
-            answer = parseAnswer(raw);
+            answer = parseAnswer(normalizeTemplateResponse(raw));
         } catch (RuntimeException exception) {
             return new Attempt(null, null, null, null, List.of(),
                     List.of("JSON/schema error: " + safeParseMessage(exception)),

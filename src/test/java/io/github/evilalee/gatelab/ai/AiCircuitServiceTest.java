@@ -94,6 +94,18 @@ class AiCircuitServiceTest {
         return root.toString();
     }
 
+    private static String templateResponse(String generator, Map<String, String> params) {
+        JsonObject root = new JsonObject();
+        root.addProperty("kind", "template");
+        JsonObject template = new JsonObject();
+        template.addProperty("generator", generator);
+        JsonObject parameterObject = new JsonObject();
+        params.forEach((name, value) -> parameterObject.addProperty(name, value));
+        template.add("params", parameterObject);
+        root.add("template", template);
+        return root.toString();
+    }
+
     private static String andAnswer(String bits) {
         return answer(List.of("A", "B"), List.of(new Output("F", "A & B")), bits);
     }
@@ -259,13 +271,190 @@ class AiCircuitServiceTest {
     }
 
     @Test
+    void recognizedTemplateIsVerifiedWithoutCallingTheProvider() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+        AiCircuitService.Result result = service(provider).generate("4-bit adder with carry");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(0, provider.calls);
+        assertEquals(9, result.truthTable().inputNames().size());
+        assertEquals(512, result.truthTable().rows().size());
+        assertTrue(result.summary().startsWith("Template: ripple_adder("));
+        assertTrue(result.summary().contains("verified against its integer spec"));
+    }
+
+    @Test
+    void regenerateBypassesTemplatesAndCallsTheProvider() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "4-bit adder", false, true, "", true);
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(1, provider.calls);
+    }
+
+    @Test
+    void disablingTemplatesRoutesRecognizedPhrasesToTheProvider() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "4-bit adder", false, true, "", false, false);
+
+        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(1, provider.calls);
+    }
+
+    @Test
+    void recognizedOutOfRangeTemplateProducesANamedMessageWithoutClamping() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(andAnswer(""));
+
+        AiCircuitService.Result result = service(provider).generate("5-bit adder");
+
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(result.summary().contains("supported: 1 to 4 bits"));
+        assertEquals(0, provider.calls);
+    }
+
+    @Test
+    void schemaAndPromptDescribeBothAnswerKindsAndAllTemplates() {
+        JsonObject schema = AiCircuitService.responseSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        JsonObject kind = properties.getAsJsonObject("kind");
+        assertEquals("kind", schema.getAsJsonArray("required").get(0).getAsString());
+        assertEquals(List.of("expressions", "template"),
+                kind.getAsJsonArray("enum").asList().stream()
+                        .map(element -> element.getAsString()).toList());
+        assertTrue(properties.getAsJsonObject("template").getAsJsonArray("required")
+                .asList().stream().map(element -> element.getAsString()).toList()
+                .containsAll(List.of("generator", "params")));
+        String prompt = AiCircuitService.systemPrompt();
+        for (String generator : List.of("ripple_adder", "subtractor", "comparator",
+                "array_multiplier", "mux", "decoder", "parity", "majority",
+                "gray_to_binary", "binary_to_gray")) {
+            assertTrue(prompt.contains(generator), generator);
+        }
+    }
+
+    @Test
+    void modelTemplateAnswerBuildsAndVerifiesThroughTheNormalPipeline() throws Exception {
+        JsonObject modelTemplate = JsonParser.parseString(templateResponse(
+                "ripple_adder", Map.of("n", "2", "carryIn", "no"))).getAsJsonObject();
+        // The generator remains authoritative even if a model adds answer-like fields.
+        modelTemplate.addProperty("summary", "untrusted model summary");
+        JsonArray untrustedInputs = new JsonArray();
+        untrustedInputs.add("MODEL_INPUT");
+        modelTemplate.add("inputs", untrustedInputs);
+        ScriptedProvider provider = new ScriptedProvider(modelTemplate.toString());
+        String description = "Design a compact arithmetic datapath for two unsigned operands.";
+
+        AiCircuitService.Result result = service(provider).generate(description);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(4, result.truthTable().inputNames().size());
+        assertEquals(16, result.truthTable().rows().size());
+        assertTrue(result.summary().startsWith("Template: ripple_adder("));
+        assertEquals(0, result.mismatchingRows().size());
+    }
+
+    @Test
+    void invalidTemplateRangeProducesNamedRetryFeedbackThenVerifies() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(
+                templateResponse("ripple_adder", Map.of("n", "5", "carryIn", "no")),
+                templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Design a compact arithmetic datapath for two unsigned operands.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, result.attemptCount());
+        assertEquals(2, provider.calls);
+        String retry = provider.conversations.get(1).stream()
+                .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(retry.contains("parameter 'n' for ripple_adder"), retry);
+        assertTrue(retry.contains("got 5"), retry);
+    }
+
+    @Test
+    void unknownTemplateGeneratorProducesNamedRetryFeedbackThenVerifies() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(
+                templateResponse("mystery_circuit", Map.of("n", "2")),
+                templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Design a compact arithmetic datapath for two unsigned operands.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, provider.calls);
+        String retry = provider.conversations.get(1).stream()
+                .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(retry.contains("unknown generator 'mystery_circuit'"), retry);
+    }
+
+    @Test
+    void unexpectedTemplateParameterProducesNamedRetryFeedbackThenVerifies() throws Exception {
+        ScriptedProvider provider = new ScriptedProvider(
+                templateResponse("ripple_adder",
+                        Map.of("n", "2", "carryIn", "no", "width", "2")),
+                templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Design a compact arithmetic datapath for two unsigned operands.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(2, provider.calls);
+        String retry = provider.conversations.get(1).stream()
+                .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(retry.contains("unexpected=[width]"), retry);
+    }
+
+    @Test
+    void expressionsKindRemainsCompatibleWithFreeFormAnswers() throws Exception {
+        JsonObject expressionAnswer = JsonParser.parseString(andAnswerWithSpec("A & B"))
+                .getAsJsonObject();
+        expressionAnswer.addProperty("kind", "expressions");
+        ScriptedProvider provider = new ScriptedProvider(expressionAnswer.toString());
+
+        AiCircuitService.Result result = service(provider).generate(
+                "Build an unrelated two-input boolean function.");
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
+        assertEquals(1, provider.calls);
+        assertEquals(4, result.truthTable().rows().size());
+    }
+
+    @Test
+    void verifiedModelTemplateIsStoredAndRevalidatedFromCache() throws Exception {
+        AiCache cache = new AiCache(directory);
+        List<Long> delays = new ArrayList<>();
+        ScriptedProvider provider = new ScriptedProvider(templateResponse(
+                "ripple_adder", Map.of("n", "2", "carryIn", "no")));
+        String description = "Design a cache-test arithmetic datapath for two operands.";
+
+        AiCircuitService.Result live = service(provider, cache, delays).generate(description);
+        assertEquals(AiCircuitService.Status.VERIFIED, live.status());
+        assertEquals(1, provider.calls);
+        assertEquals(1, cache.lookupCandidates(description).size());
+
+        AiProvider neverCall = (prompt, conversation, schema) -> {
+            fail("verified template should be revalidated from cache");
+            return "";
+        };
+        AiCircuitService.Result cached = service(neverCall, cache, delays).generate(description);
+        assertEquals(AiCircuitService.Status.VERIFIED, cached.status());
+        assertTrue(cached.fromCache());
+        assertTrue(cached.summary().startsWith("Template: ripple_adder("));
+    }
+
+    @Test
     void fourBitRippleAdderUsesOrderedGeneratePropagateAndCarrySignalsAndMatchesFlatCircuit()
             throws Exception {
         String raw = answerWithSignals(bitAdderInputs(), fourBitRippleOutputs(),
                 fourBitRippleSignals(), rippleAdderSpec());
         ScriptedProvider provider = new ScriptedProvider(raw);
 
-        AiCircuitService.Result result = service(provider).generate("Build a 4-bit ripple-carry adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a 4-bit ripple-carry adder.", false, true, "", false, false);
         TruthTable flat = TruthTableGenerator.generate(
                 ExpressionCompiler.compile(flatFourBitRippleAdder(), false, true).netlist());
 
@@ -284,7 +473,7 @@ class AiCircuitServiceTest {
                 fourByFourMultiplierSignals(), multiplierSpec());
         ScriptedProvider provider = new ScriptedProvider(raw);
 
-        AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.");
+        AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(1, provider.calls);
@@ -804,7 +993,7 @@ class AiCircuitServiceTest {
         List<String> declaredOrder = List.of("A1", "A0", "B1", "B0");
         ScriptedProvider provider = new ScriptedProvider(twoBitAdderAnswer(declaredOrder, false));
 
-        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(1, provider.calls);
@@ -817,7 +1006,7 @@ class AiCircuitServiceTest {
         List<String> declaredOrder = List.of("A0", "B0", "A1", "B1");
         ScriptedProvider provider = new ScriptedProvider(twoBitAdderAnswer(declaredOrder, false));
 
-        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(List.of("A0", "B0", "A1", "B1"), result.truthTable().inputNames());
@@ -837,7 +1026,7 @@ class AiCircuitServiceTest {
                     new Output("C2", "A1 & B1 | A1 & A0 & B0 | B1 & A0 & B0")),
                     zeros, zeros, zeros);
             AiCircuitService.Result result = service(new ScriptedProvider(raw))
-                    .generate("Build a two-bit adder.");
+                    .generate("Build a two-bit adder.", false, true, "", false, false);
 
             assertEquals(AiCircuitService.Status.UNVERIFIED, result.status(), inputs.toString());
             String log = String.join("\\n", result.attemptLog());
@@ -878,7 +1067,7 @@ class AiCircuitServiceTest {
                 twoBitAdderAnswer(declaredOrder, true),
                 twoBitAdderAnswer(declaredOrder, false));
 
-        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.");
+        AiCircuitService.Result result = service(provider).generate("Build a two-bit adder.", false, true, "", false, false);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(2, result.attemptCount());
