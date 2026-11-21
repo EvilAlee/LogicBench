@@ -77,9 +77,10 @@ nets with clock metadata retained for top-level clock/source handling.
 
 Nesting is limited to eight component-instance levels. Direct or indirect
 definition cycles are rejected with the complete cycle path. Waveform probes
-remain top-level only. Tidy and expression-based netlist analysis explicitly
-refuse schematics containing component instances until those workflows gain
-hierarchical support.
+remain top-level only. `SchematicNetlistExtractor` and **Tidy circuit** still
+refuse schematics containing component instances because their gate-netlist
+extraction and relayout path is not hierarchical. The typed expression compiler
+and `CircuitDescriber` have a separate instance-aware path described below.
 
 ## Built-in and user library
 
@@ -102,6 +103,51 @@ User definitions are stored in the platform configuration directory under
 `%APPDATA%/LogicBench/components` on Windows and
 `$XDG_CONFIG_HOME/logicbench/components` (or `~/.config/logicbench/components`)
 on Linux/macOS. A user definition cannot shadow a built-in name.
+
+## Library components in expressions
+
+The typed **From expression** dialog resolves calls against `ComponentLibrary`.
+A call creates a boxed `ComponentInstance` by default; it is not expanded into
+loose gates in the generated schematic. Arguments bind to the definition's
+`IN` ports in their declared order.
+
+A one-output definition can be used directly as an expression value. A
+multi-output definition with a `primaryOutput` uses that output as its scalar
+value. For definitions without a primary output, bind the instance to a named
+internal signal and select its outputs explicitly:
+
+```text
+U0 := FA(A, B, CIN)
+S = U0.S
+COUT = U0.COUT
+```
+
+Unknown component names report the available library names. Incorrect argument
+counts report the ordered input-port names, and unknown output selectors report
+the instance's valid output pins. A multi-output call without a primary output
+cannot be used directly as a scalar value.
+
+Sequential library calls such as `DFF(D, CLK)`, `TFF(T, CLK)`,
+`JKFF(J, K, CLK)`, and `DLATCH(D, EN)` also create boxes by default in the
+typed dialog. The explicit **Expand sequential calls as gates (legacy)** option
+retains the previous `SequentialParts` gate-expansion behavior. This option is
+for compatibility with the original expression compiler path; it is not the
+default. Feedback through a boxed sequential component is represented by the
+instance's named output selectors and remains part of the schematic graph.
+
+The resulting schematic is simulated through `SchematicCompiler`, which
+recursively flattens boxes into the engine circuit and preserves hierarchical
+component IDs. The expression compiler's instance-aware layout routes named
+instance pins and checks that the geometric pin-to-net partition matches the
+intended signal graph before returning the schematic.
+
+`CircuitDescriber` exports instance-bearing schematics using the same call
+syntax. It emits one call assignment per instance, uses the saved instance
+label when present (otherwise its deterministic instance ID such as `U1`),
+and emits output references such as `U0.S` and `U0.COUT`. Recompiling the
+description resolves those calls through the component library. The existing
+AI generation/validation path is separate: it retains its expression/netlist
+gate-expansion flow and does not consume boxed component-call syntax.
 
 ## Desktop GUI workflow
 
