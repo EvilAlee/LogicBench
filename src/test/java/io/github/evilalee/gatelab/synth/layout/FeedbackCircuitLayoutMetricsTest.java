@@ -134,6 +134,29 @@ class FeedbackCircuitLayoutMetricsTest {
     }
 
     @Test
+    void counterUsesLegacyWhenNoCompactCandidateBeatsLegacyArea() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                Q0 = DFF(RESET_N & NOT(Q0), CLK)
+                Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
+                """, false);
+        FeedbackCircuitExtractor.Extraction extraction =
+                compilation.feedbackExtraction().orElseThrow();
+        SchematicLayout layout = new SchematicLayout(DEFINITIONS);
+        Schematic legacy = layout.layoutFeedbackRun(
+                extraction, SchematicLayout.FeedbackLayoutMode.LEGACY).result().schematic();
+
+        SchematicLayout.FeedbackLayoutRun selected = layout.layoutFeedbackRun(
+                extraction, SchematicLayout.FeedbackLayoutMode.COMPACT_WITH_FALLBACK);
+
+        assertTrue(selected.legacyFallbackUsed(),
+                "counter must stop using compact candidates that are larger than legacy");
+        assertTrue(selected.selectionDescription().contains("not strictly smaller"));
+        assertEquals(SchematicSnapshot.capture(legacy),
+                SchematicSnapshot.capture(selected.result().schematic()),
+                "production must retain the legacy counter layout when no compact candidate wins");
+    }
+
+    @Test
     void twoBitCounterCompactCandidateHasNoCrossSignalConnectivityJoins() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 Q0 = DFF(RESET_N & NOT(Q0), CLK)

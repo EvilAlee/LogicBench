@@ -299,8 +299,7 @@ public final class SchematicLayout {
                 throw new IllegalStateException("forced compact failure (test hook)");
             }
             CompactCandidate candidate = bestCompactCandidate(extraction, 1);
-            return new FeedbackLayoutRun(
-                    candidate.result(), false, candidate.description());
+            return selectCompactCandidate(extraction, mode, candidate);
         } catch (RuntimeException failure) {
             firstFailure = failure;
         }
@@ -312,8 +311,7 @@ public final class SchematicLayout {
                         "forced doubled-spacing compact failure (test hook)");
             }
             CompactCandidate candidate = bestCompactCandidate(extraction, 2);
-            return new FeedbackLayoutRun(
-                    candidate.result(), false, candidate.description());
+            return selectCompactCandidate(extraction, mode, candidate);
         } catch (RuntimeException failure) {
             retryFailure = failure;
         }
@@ -336,6 +334,44 @@ public final class SchematicLayout {
                             + "; legacy failure: " + legacyFailure.getMessage(),
                     legacyFailure);
         }
+    }
+
+    /**
+     * Never replace the preserved main layout with a connected but larger
+     * compact drawing. A compact candidate is used only when it strictly
+     * improves the same circuit's legacy bounding-box area. If the legacy
+     * comparison itself fails, the already self-checked compact result remains
+     * usable; "no valid layout" is still reserved for failure of both paths.
+     */
+    private FeedbackLayoutRun selectCompactCandidate(
+            FeedbackCircuitExtractor.Extraction extraction,
+            FeedbackLayoutMode mode,
+            CompactCandidate candidate) {
+        if (mode == FeedbackLayoutMode.COMPACT_ONLY) {
+            return new FeedbackLayoutRun(
+                    candidate.result(), false, candidate.description());
+        }
+        LayoutResult legacy;
+        try {
+            legacy = legacyLayout(extraction);
+        } catch (RuntimeException legacyFailure) {
+            return new FeedbackLayoutRun(
+                    candidate.result(), false,
+                    candidate.description()
+                            + "; legacy comparison failed, retained self-checked compact result: "
+                            + legacyFailure.getMessage());
+        }
+        LayoutMeasurements legacyMeasurements = measureLayout(legacy.schematic());
+        if (candidate.measurements().area() >= legacyMeasurements.area()) {
+            return new FeedbackLayoutRun(
+                    legacy, true,
+                    "legacy selected because best compact candidate was not strictly smaller: "
+                            + candidate.description() + "; legacy "
+                            + legacyMeasurements.display());
+        }
+        return new FeedbackLayoutRun(
+                candidate.result(), false, candidate.description()
+                        + "; legacy " + legacyMeasurements.display());
     }
 
     private LayoutResult legacyLayout(FeedbackCircuitExtractor.Extraction extraction) {
