@@ -34,10 +34,15 @@ class SpecEvaluatorTest {
         JsonArray aPins = new JsonArray();
         JsonArray bPins = new JsonArray();
         JsonArray yPins = new JsonArray();
+        List<String> inputs = new java.util.ArrayList<>();
+        List<String> outputs = new java.util.ArrayList<>();
         for (int index = 63; index >= 0; index--) {
             aPins.add("A" + index);
             bPins.add("B" + index);
             yPins.add("Y" + index);
+            inputs.add("A" + index);
+            inputs.add("B" + index);
+            outputs.add("Y" + index);
         }
         buses.add("A", aPins);
         buses.add("B", bPins);
@@ -49,15 +54,7 @@ class SpecEvaluatorTest {
         rule.addProperty("expr", expression);
         rules.add(rule);
         root.add("rules", rules);
-        return SpecEvaluator.parse(root,
-                java.util.stream.IntStream.iterate(63, i -> i >= 0, i -> i - 1)
-                        .mapToObj(i -> "A" + i).toList()
-                        .stream().collect(java.util.stream.Stream.concat(
-                                java.util.stream.IntStream.iterate(63, i -> i >= 0, i -> i - 1)
-                                        .mapToObj(i -> "B" + i),
-                                java.util.stream.Stream::concat).toList()),
-                java.util.stream.IntStream.iterate(63, i -> i >= 0, i -> i - 1)
-                        .mapToObj(i -> "Y" + i).toList());
+        return SpecEvaluator.parse(root, inputs, outputs);
     }
 
     private static Map<String, Boolean> longInputs(long a, long b) {
