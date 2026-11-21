@@ -7,6 +7,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
@@ -16,6 +18,8 @@ import io.github.evilalee.gatelab.model.WireSegment;
 
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,6 +31,13 @@ public final class SchematicJson {
     public static final int CURRENT_VERSION = 1;
     public static final String FILE_EXTENSION = ".lbc";
     public static final String LEGACY_FILE_EXTENSION = ".logicbench.json";
+
+    public record LoadResult(Schematic schematic, List<String> notices) {
+        public LoadResult {
+            Objects.requireNonNull(schematic, "schematic");
+            notices = List.copyOf(Objects.requireNonNull(notices, "notices"));
+        }
+    }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -66,6 +77,31 @@ public final class SchematicJson {
         }
         root.add("components", components);
 
+        if (!schematic.componentInstances().isEmpty()) {
+            JsonArray instances = new JsonArray();
+            for (ComponentInstance instance : schematic.componentInstances()) {
+                JsonObject item = new JsonObject();
+                item.addProperty("definitionName", instance.definitionName());
+                item.addProperty("definitionHash", instance.definitionHash());
+                item.addProperty("id", instance.id());
+                if (!instance.label().isEmpty()) {
+                    item.addProperty("label", instance.label());
+                }
+                item.addProperty("x", instance.x());
+                item.addProperty("y", instance.y());
+                item.addProperty("rotation", instance.rotation().name());
+                instances.add(item);
+            }
+            root.add("instances", instances);
+
+            JsonArray embedded = new JsonArray();
+            schematic.componentDefinitions().values().stream()
+                    .sorted(java.util.Comparator.comparing(ComponentDefinition::name))
+                    .forEach(definition -> embedded.add(
+                            JsonParser.parseString(ComponentDefinitionJson.toJson(definition))));
+            root.add("componentDefinitions", embedded);
+        }
+
         JsonArray wires = new JsonArray();
         for (WireSegment wire : schematic.wires()) {
             JsonObject item = new JsonObject();
@@ -84,6 +120,18 @@ public final class SchematicJson {
      * current document only after this method returns successfully.
      */
     public static Schematic fromJson(String json, Collection<GateDef> definitions) {
+        return fromJsonWithNotices(json, definitions, null).schematic();
+    }
+
+    /** Loads using the user library as fallback; embedded definitions always win. */
+    public static Schematic fromJson(
+            String json, Collection<GateDef> definitions, ComponentLibrary library) {
+        return fromJsonWithNotices(json, definitions, library).schematic();
+    }
+
+    /** Loads a document and returns notices about embedded/library definition conflicts. */
+    public static LoadResult fromJsonWithNotices(
+            String json, Collection<GateDef> definitions, ComponentLibrary library) {
         Objects.requireNonNull(json, "json");
         Objects.requireNonNull(definitions, "definitions");
 
@@ -113,6 +161,36 @@ public final class SchematicJson {
         }
         Schematic schematic = new Schematic(definitions);
         schematic.setUndefinedInputMode(undefinedInputMode);
+        List<String> notices = new ArrayList<>();
+        Map<String, ComponentDefinition> resolvedDefinitions = new LinkedHashMap<>();
+        if (root.has("componentDefinitions")) {
+            JsonElement definitionsElement = root.get("componentDefinitions");
+            if (definitionsElement == null || !definitionsElement.isJsonArray()) {
+                throw new IllegalArgumentException("document.componentDefinitions must be an array");
+            }
+            JsonArray embeddedDefinitions = definitionsElement.getAsJsonArray();
+            for (int index = 0; index < embeddedDefinitions.size(); index++) {
+                ComponentDefinition embedded = ComponentDefinitionJson.fromJson(
+                        embeddedDefinitions.get(index).toString(), definitions);
+                ComponentDefinition previous = resolvedDefinitions.putIfAbsent(
+                        embedded.name(), embedded);
+                if (previous != null && !previous.hash().equals(embedded.hash())) {
+                    throw new IllegalArgumentException(
+                            "document.componentDefinitions contains duplicate name with "
+                                    + "different hashes: " + embedded.name());
+                }
+                if (library != null) {
+                    ComponentDefinition libraryDefinition = library.find(embedded.name()).orElse(null);
+                    if (libraryDefinition != null
+                            && !libraryDefinition.hash().equals(embedded.hash())) {
+                        notices.add("Embedded component definition '" + embedded.name()
+                                + "' (" + embedded.hash().substring(0, 12)
+                                + ") overrides library version ("
+                                + libraryDefinition.hash().substring(0, 12) + ").");
+                    }
+                }
+            }
+        }
         JsonArray componentArray = array(root, "components", "document");
         Set<String> ids = new HashSet<>();
         for (int index = 0; index < componentArray.size(); index++) {
@@ -201,6 +279,62 @@ public final class SchematicJson {
             }
         }
 
+        if (root.has("instances")) {
+            JsonElement instancesElement = root.get("instances");
+            if (instancesElement == null || !instancesElement.isJsonArray()) {
+                throw new IllegalArgumentException("document.instances must be an array");
+            }
+            JsonArray instanceArray = instancesElement.getAsJsonArray();
+            for (int index = 0; index < instanceArray.size(); index++) {
+                String context = "instances[" + index + "]";
+                JsonElement element = instanceArray.get(index);
+                if (element == null || !element.isJsonObject()) {
+                    throw new IllegalArgumentException(context + " must be an object");
+                }
+                JsonObject item = element.getAsJsonObject();
+                String definitionName = string(item, "definitionName", context);
+                String definitionHash = string(item, "definitionHash", context);
+                String id = string(item, "id", context);
+                if (!ids.add(id)) {
+                    throw new IllegalArgumentException("Duplicate component id: " + id);
+                }
+                String label = item.has("label") ? string(item, "label", context) : "";
+                int x = integer(item, "x", context);
+                int y = integer(item, "y", context);
+                String rotationText = string(item, "rotation", context);
+                Facing rotation;
+                try {
+                    rotation = Facing.valueOf(rotationText);
+                } catch (IllegalArgumentException exception) {
+                    throw new IllegalArgumentException(
+                            context + ".rotation has unknown facing: " + rotationText, exception);
+                }
+                ComponentDefinition definition = resolvedDefinitions.get(definitionName);
+                if (definition == null && library != null) {
+                    definition = library.find(definitionName).orElse(null);
+                    if (definition != null) {
+                        resolvedDefinitions.put(definitionName, definition);
+                    }
+                }
+                if (definition == null) {
+                    throw new IllegalArgumentException(
+                            context + " references missing component definition: " + definitionName);
+                }
+                if (!definition.hash().equalsIgnoreCase(definitionHash)) {
+                    throw new IllegalArgumentException(
+                            context + " definition hash mismatch for " + definitionName
+                                    + ": instance=" + definitionHash
+                                    + ", resolved=" + definition.hash());
+                }
+                try {
+                    schematic.addInstance(new ComponentInstance(
+                            definitionName, definitionHash, id, label, x, y, rotation), definition);
+                } catch (IllegalArgumentException exception) {
+                    throw new IllegalArgumentException(context + ": " + exception.getMessage(), exception);
+                }
+            }
+        }
+
         JsonArray wireArray = array(root, "wires", "document");
         for (int index = 0; index < wireArray.size(); index++) {
             String context = "wires[" + index + "]";
@@ -219,7 +353,7 @@ public final class SchematicJson {
                 throw new IllegalArgumentException(context + ": " + exception.getMessage(), exception);
             }
         }
-        return schematic;
+        return new LoadResult(schematic, notices);
     }
 
     private static UndefinedInputMode readUndefinedInputMode(JsonObject root) {
