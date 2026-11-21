@@ -142,9 +142,9 @@ class SchematicJsonTest {
         original.addInstance(halfAdder, "sum", 200, 300, Facing.EAST);
 
         String json = SchematicJson.toJson(original);
-        assertTrue(json.contains("\\"instances\\""));
-        assertTrue(json.contains("\\"componentDefinitions\\""));
-        assertFalse(json.contains("\\"components\\" : ["));
+        assertTrue(json.contains("\"instances\""));
+        assertTrue(json.contains("\"componentDefinitions\""));
+        assertFalse(json.contains("\"components\" : ["));
 
         SchematicJson.LoadResult loaded = SchematicJson.fromJsonWithNotices(
                 json, DEFINITIONS, library);
@@ -188,8 +188,8 @@ class SchematicJsonTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         schematic.add("and", 100, 100, Facing.EAST);
         String json = SchematicJson.toJson(schematic);
-        assertFalse(json.contains("\\"instances\\""));
-        assertFalse(json.contains("\\"componentDefinitions\\""));
+        assertFalse(json.contains("\"instances\""));
+        assertFalse(json.contains("\"componentDefinitions\""));
     }
 
     @Test
