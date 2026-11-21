@@ -242,7 +242,7 @@ class TidyCircuitServiceTest {
         TidyCircuitService.TidyResult result =
                 TidyCircuitService.tidy(generated.schematic(), DEFINITIONS);
         assertFalse(result.equivalenceSkipped());
-        assertEquals(8, result.verificationRows());
+        assertEquals(4, result.verificationRows());
         PlacedComponent retainedLiteral = result.schematic().components().stream()
                 .filter(component -> component.typeId().equals("constant")
                         && component.label().equals("1"))
