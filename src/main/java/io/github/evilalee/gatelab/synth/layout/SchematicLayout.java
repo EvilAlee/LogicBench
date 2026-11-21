@@ -430,12 +430,12 @@ public final class SchematicLayout {
                                 gate.inputs().get(inputIndex), gate.id(), inputIndex));
             }
         }
-        Comparator<LayoutGateInputEdge> consumerOrder =
+        Comparator<LayoutGateInputEdge> ascendingConsumerOrder =
                 Comparator.comparing(LayoutGateInputEdge::targetGate)
                         .thenComparingInt(LayoutGateInputEdge::targetInputIndex);
-        if (ordering == CycleBreakOrdering.INPUT_ROOTED_REVERSED_CONSUMERS) {
-            consumerOrder = consumerOrder.reversed();
-        }
+        final Comparator<LayoutGateInputEdge> consumerOrder =
+                ordering == CycleBreakOrdering.INPUT_ROOTED_REVERSED_CONSUMERS
+                        ? ascendingConsumerOrder.reversed() : ascendingConsumerOrder;
         consumersBySource.values().forEach(edges -> edges.sort(consumerOrder));
 
         List<String> roots = new ArrayList<>(source.inputs());
