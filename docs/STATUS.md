@@ -26,6 +26,7 @@
 - feature-select-net: double-click wire selection expands to the full Connectivity net; net collection tests cover junction branches and separate nets.
 - feature-tidy-feedback: route reachable feedback edges on dedicated lanes and verify the rebuilt pin-to-net partition without running combinational equivalence.
 - feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
+- feature-constant-folding: extend constant simplification to sequential expressions and replace generated literal inputs with fixed, non-pokeable constant sources.
 
 ## Next
 1. M9a attribute table with editable labels
@@ -55,7 +56,7 @@
 - Undefined-input mode is a persisted document option; changing it increments the modified revision and recomputes simulation, but is excluded from topology undo/redo snapshots.
 - The synthesis package is independent of UI and Schematic. It compiles validated netlists directly into the public engine Circuit API and performs reference comparison against immutable ASTs.
 - Expression compilation resolves every identifier defined by a `Name =` or `Name :=` statement across the whole source; only undefined identifiers become inputs. Feedback expressions opt into cyclic in-memory Netlists, reuse `FeedbackCircuitExtractor` and the `SchematicLayout.layoutFeedback` router, verify final connectivity, and omit combinational truth tables. The ordinary Netlist constructor and AI layout path remain DAG-only.
-- Constant-folded expression outputs use literal 0 or 1 in outputs[].source; the layout realizes these with ordinary labeled input switches (0 starts LOW, 1 starts HIGH) because no fixed-rail source component exists in the current catalogue.
+- Constant-folded expression outputs use literal 0 or 1 in outputs[].source; generated schematics realize surviving literals with an internal fixed, non-pokeable constant source. This reuses the #38 constantComponentIds layout mapping and a dedicated constant component family, rather than a Clock or editable Input.
 - Expression layout retains deterministic depth columns, dummy nodes for skipped columns, and four barycenter ordering sweep pairs; compact coordinates use a fixed 60-unit input pitch and three alternating pin-driven vertical sweeps within each later column, with a 40-unit minimum body clearance and closest-safe pin-row shifts to prevent cross-signal T-junctions. Per-net channel trunks use 20-unit margins and 20-unit pitch, sized to the actual trunk count.
 - Layout verification extracts actual geometric nets and requires a one-to-one partition match with the netlist before returning a Schematic; a single retry doubles layout spacing.
 - The Generate action verifies the placed Schematic through the standard geometry-to-engine compile path over every declared-input row before replacing the current topology in one history step.

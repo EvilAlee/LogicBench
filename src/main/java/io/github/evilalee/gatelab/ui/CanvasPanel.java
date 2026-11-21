@@ -204,8 +204,9 @@ public final class CanvasPanel extends JPanel {
         this.schematic = new Schematic(gateLibrary.all());
         this.schematic.addChangeListener(schematicSimulationListener);
         recomputeSimulation();
-        this.galleryFirstOriginY = galleryMode ? galleryFirstOriginY(gateLibrary.all()) : 0;
-        this.galleryRowPitch = galleryMode ? galleryRowPitch(gateLibrary.all()) : 0;
+        List<GateDef> visibleGalleryDefinitions = galleryDefinitions(gateLibrary.all());
+        this.galleryFirstOriginY = galleryMode ? galleryFirstOriginY(visibleGalleryDefinitions) : 0;
+        this.galleryRowPitch = galleryMode ? galleryRowPitch(visibleGalleryDefinitions) : 0;
 
         setOpaque(true);
         setBackground(Color.WHITE);
@@ -2015,6 +2016,7 @@ public final class CanvasPanel extends JPanel {
         return switch (component.typeId()) {
             case "input", "clock" ->
                     simulationResult.inputValues().getOrDefault(component.id(), Value.ZERO);
+            case "constant" -> component.label().equals("1") ? Value.ONE : Value.ZERO;
             case "output" -> simulationResult.outputValues().getOrDefault(component.id(), Value.X);
             default -> null;
         };
@@ -2300,6 +2302,12 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
+    static List<GateDef> galleryDefinitions(List<GateDef> definitions) {
+        return definitions.stream()
+                .filter(definition -> !definition.family().equals("constant"))
+                .toList();
+    }
+
     static int galleryRowPitch(List<GateDef> definitions) {
         int largestRotatedDimension = 0;
         for (GateDef definition : definitions) {
@@ -2334,7 +2342,7 @@ public final class CanvasPanel extends JPanel {
             worldGraphics.translate(transform.translateX(), transform.translateY());
             worldGraphics.scale(transform.scale(), transform.scale());
 
-            List<GateDef> definitions = gateLibrary.all();
+            List<GateDef> definitions = galleryDefinitions(gateLibrary.all());
             Facing[] facings = Facing.values();
             for (int column = 0; column < facings.length; column++) {
                 double labelWorldX = GALLERY_FIRST_ORIGIN_X - 14 + column * GALLERY_COLUMN_SPACING;
