@@ -114,7 +114,38 @@ class ComponentLibraryTest {
     void twoBitDffCounterMatchesSequentialPartsAfterSynchronousReset(@TempDir Path userDirectory)
             throws IOException {
         ComponentLibrary library = ComponentLibrary.load(GATES, userDirectory);
-        Schematic schematic = counterSchematic(library.get("DFF"));
+        ComponentDefinition dff = library.get("DFF");
+        Schematic internalDff = dff.internalCircuit();
+        SchematicCompiler.CompiledCircuit internalCompiled =
+                SchematicCompiler.compileCircuit(internalDff);
+        Map<String, InputPin> internalInputs =
+                namedInputs(internalDff, internalCompiled);
+        Map<String, OutputProbe> internalOutputs =
+                namedOutputs(internalDff, internalCompiled);
+        SequenceRunner internalRunner = new SequenceRunner(
+                internalCompiled.circuit(), internalInputs, "CLK", internalOutputs);
+        SequenceRunner.SequenceResult internalRun = internalRunner.run(List.of(
+                new SequenceRunner.Step("capture high", Map.of("D", Value.ONE), 1,
+                        Map.of("Q", Value.ONE, "QN", Value.ZERO)),
+                new SequenceRunner.Step("capture low", Map.of("D", Value.ZERO), 1,
+                        Map.of("Q", Value.ZERO, "QN", Value.ONE))));
+        System.out.println("DFF_INTERNAL_DIAGNOSTIC: components="
+                + internalDff.components().stream()
+                        .map(c -> c.id() + ":" + c.typeId() + ":" + c.label()).toList()
+                + " clockIds=" + internalCompiled.clockIds()
+                + " outputs=" + internalRun.steps().stream()
+                        .map(SequenceRunner.StepObservation::observedOutputs).toList()
+                + " mismatch=" + internalRun.firstMismatch());
+
+        Schematic schematic = counterSchematic(dff);
+        List<List<String>> parentNetPins = Connectivity.analyze(
+                        schematic.pinPositions(), schematic.wires()).nets().stream()
+                .filter(net -> !net.pins().isEmpty())
+                .map(net -> net.pins().stream()
+                        .map(pin -> pin.componentId() + "." + pin.pinId())
+                        .sorted().toList())
+                .toList();
+        System.out.println("COUNTER_PARENT_NETS: " + parentNetPins);
 
         SchematicCompiler.CompiledCircuit flattened =
                 SchematicCompiler.compileCircuit(schematic);

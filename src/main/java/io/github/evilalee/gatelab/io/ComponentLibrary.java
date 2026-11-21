@@ -193,15 +193,17 @@ public final class ComponentLibrary {
 
         ExpressionCompiler.Compilation halfAdder = ExpressionCompiler.compile(
                 "S = A ^ B; C = A & B", false, true);
-        result.add(ComponentDefinition.fromCircuit(
-                "HA", "Half adder", "Arithmetic", null,
+        result.add(new ComponentDefinition(
+                "HA", "Half adder", "Arithmetic",
+                ports(List.of("A", "B"), null, List.of("S", "C")), null,
                 new SchematicLayout(gateDefinitions).layout(halfAdder.netlist()).schematic()));
 
         ExpressionCompiler.Compilation fullAdder = ExpressionCompiler.compile(
                 "S = (A ^ B) ^ CIN; COUT = (A & B) | (A & CIN) | (B & CIN)",
                 false, true);
-        result.add(ComponentDefinition.fromCircuit(
-                "FA", "Full adder", "Arithmetic", null,
+        result.add(new ComponentDefinition(
+                "FA", "Full adder", "Arithmetic",
+                ports(List.of("A", "B", "CIN"), null, List.of("S", "COUT")), null,
                 new SchematicLayout(gateDefinitions).layout(fullAdder.netlist()).schematic()));
         return List.copyOf(result);
     }
@@ -258,8 +260,23 @@ public final class ComponentLibrary {
                         raw.gateComponentIds());
         SchematicLayout.LayoutResult layout =
                 new SchematicLayout(gateDefinitions).layoutFeedback(extraction);
-        return ComponentDefinition.fromCircuit(
-                name, builtInDescription(name), "Sequential", "Q", layout.schematic());
+        return new ComponentDefinition(
+                name, builtInDescription(name), "Sequential",
+                ports(inputNames, clockName, List.of("Q", "QN")), "Q", layout.schematic());
+    }
+
+    private static List<ComponentDefinition.Port> ports(
+            List<String> inputs, String clockName, List<String> outputs) {
+        List<ComponentDefinition.Port> result = new ArrayList<>();
+        for (String input : inputs) {
+            result.add(new ComponentDefinition.Port(
+                    input, ComponentDefinition.Direction.IN, input.equals(clockName)));
+        }
+        for (String output : outputs) {
+            result.add(new ComponentDefinition.Port(
+                    output, ComponentDefinition.Direction.OUT, false));
+        }
+        return List.copyOf(result);
     }
 
     private static String builtInDescription(String name) {
