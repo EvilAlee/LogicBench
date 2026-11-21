@@ -156,6 +156,21 @@ class ExpressionFeedbackTest {
     }
 
     @Test
+    void feedbackOutputAliasesDoNotAddAnExtraBufferGate() {
+        ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
+                n1 := NOT n2
+                n2 := NOT n1
+                Q = n1
+                """, true);
+
+        assertTrue(compilation.hasFeedback());
+        assertEquals("n1", compilation.netlist().outputs().getFirst().source());
+        assertEquals(2, compilation.netlist().gates().size());
+        assertFalse(compilation.netlist().gates().stream()
+                .anyMatch(gate -> gate.type() == GateOperator.BUFFER));
+    }
+
+    @Test
     void ordinaryCombinationalExpressionsStillUseTheDagPath() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("F = A & B");
