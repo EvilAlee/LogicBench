@@ -198,13 +198,7 @@ public final class ComponentDefinition {
                                 append(canonical, entry.getKey());
                                 append(canonical, entry.getValue());
                             });
-                    if (component.typeId().equals("input")) {
-                        append(canonical, Boolean.toString(
-                                internalCircuit.inputValue(component.id())));
-                    } else if (component.typeId().equals("clock")) {
-                        append(canonical, Boolean.toString(
-                                internalCircuit.clockValue(component.id())));
-                    }
+                    // Source levels are runtime state, not part of a reusable definition's identity.
                 });
         internalCircuit.componentInstances().stream()
                 .sorted(Comparator.comparing(ComponentInstance::id))
