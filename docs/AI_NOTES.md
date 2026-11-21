@@ -10,15 +10,15 @@ A new model answer has these required fields:
   
 Optional fields:
 
-- \`signals\`: internal named expressions, each \`{"name":"C1","expression":"A & B"}\`. These compile as \`C1 := A & B\`, create no output pin, and may use forward references to other signal definitions.
+- \`signals\`: internal named expressions, each \`{"name":"C1","expression":"A & B"}\`. These compile as \`C1 := A & B\`, create no output pin, and must reference declared inputs or earlier signals only; forward references are rejected.
 - \`spec\`: an executable integer specification of the expected behavior:
 
   \`\`\`json
   {
     "buses": {"A": ["A1", "A0"], "B": ["B1", "B0"], "S": ["S1", "S0"]},
     "rules": [
-      {"out": "S", "expr": "A + B"},
-      {"out": "COUT", "expr": "(A + B) >> 2"}
+      {"out": "S", "expression": "A + B"},
+      {"out": "COUT", "expression": "(A + B) >> 2"}
     ]
   }
   \`\`\`
@@ -35,6 +35,8 @@ All limits live in \`AiCircuitLimits\`:
 |---|---:|
 | Primary inputs | 10 |
 | Outputs | 16 |
+| Intermediate signals | 160 |
+| Individual expression length (outputs, signals and spec rules) | 300 characters |
 | Gates | 400 |
 | Total expression text (signals, outputs and spec rules) | 3,000 characters |
 | Spec rules | 16 |
@@ -63,10 +65,10 @@ Every row must assign every declared input and output exactly once. Values are \
 For each model answer, in order:
 
 1. Validate JSON shape and all size limits. The legacy \`truthTable\` property, when present, is ignored.
-2. Parse each output and internal signal expression with parser positions.
+2. Enforce the 300-character expression limit and 160-signal limit. Parse each output and internal signal expression with parser positions; signals may reference declared inputs and earlier signals only.
 3. Confirm the declared input list is a permutation of the actual expression variables. A misspelled identifier that becomes an undeclared input is named in the error.
 4. Compile with raw feedback disabled and lay out the circuit.
-5. Run the existing placed-geometry verifier, then enumerate every engine input combination. An \`X\` output or oscillation fails the attempt. Disconnected declared inputs and constant outputs are warnings.
+5. Run the existing placed-geometry verifier, then enumerate every engine input combination. An \`X\` output or oscillation fails the attempt. Disconnected declared inputs, constant outputs, and internal signals not transitively used by an output are warnings.
 6. Check the user's expected rows, when present.
 7. Parse and execute the spec, when present, across every input combination.
 
@@ -84,7 +86,9 @@ There are at most three model-validation attempts. After three failing attempts,
 - **FROM CACHE** is the result-source badge when a cached answer is replayed. A cache answer goes through the same current validation path; a legacy entry with only a claimed table is at most BUILT, never VERIFIED from that table.
 - **UNAVAILABLE** means no usable live answer or valid cache answer is available. There is no placeable circuit.
 
-Newly stored answers use the new schema. A successful answer is cached without \`truthTable\`; an old cache entry is still loadable and is revalidated under the same rules. The six bundled demonstration prompts remain old-format fixtures and are also revalidated, so they show FROM CACHE and BUILT unless independent rows/spec are later added.
+Normal generation checks the normalized user cache first and then the bundled cache, after the direct-expression shortcut and before making a provider request. Every hit is revalidated through the current validation pipeline; an invalid hit is ignored and live generation continues. The dialog's Regenerate action bypasses cache lookup and cache fallback. Only a live answer that passes an independent check replaces the user cache, and its model name is stored alongside the answer.
+
+Newly stored answers use the new schema and do not include `truthTable`. Versioned user-cache entries store the validated answer and producing model. Earlier unwrapped user-cache entries remain readable and are revalidated under the same rules; their original model is unknown. The six bundled demonstration prompts remain old-format fixtures and are also revalidated, so they show FROM CACHE and BUILT unless independent rows/spec are later added.
 
 ## Inverting-gate mapping
 
@@ -112,51 +116,53 @@ The Test connection action runs off the Swing EDT. It tries the primary model an
 
 ## Runtime system prompt
 
-The following is the complete system instruction sent by \`AiCircuitService.systemPrompt()\`:
+The following is the complete system instruction sent by `AiCircuitService.systemPrompt()`:
 
-\`\`\`text
-You write Boolean circuits. Return ONLY JSON for the supplied schema:
-summary, inputs, outputs, optional signals, optional spec. Never output a
-truth table. Use only declared primary inputs. Limits: 10 inputs, 16 outputs,
-400 gates, 3000 total expression characters, 16 spec rules; user rows max 64.
+```text
+You design digital logic circuits. Reply with JSON only, shaped as {summary, inputs, outputs, signals, spec}.
+inputs: single-bit pin names.
+outputs: list of {name, expression} for ONLY the pins the user asked for.
+signals: ordered list of {name, expression} for every intermediate value (propagate, generate, carries, partial products).
+A signal may use inputs and EARLIER signals only. Reuse earlier signals: never expand an earlier carry inside a later formula; write C2 from C1 and C3 from C2.
+Output expressions use inputs and signals. Every expression is at most 300 characters.
+Operators: & | ^ ! parentheses and the words NAND NOR XNOR.
+Default to ripple carry for adders (each carry from the previous carry).
+If the user explicitly asks for carry lookahead, write each carry directly from P, G and CIN using named product signals.
+spec: {buses: {A: [A3,A2,A1,A0]}, rules: [{out, expression}]} using integer arithmetic over bus names, for example S = A + B + CIN, and it must cover every output.
 
-Expressions use identifiers [A-Za-z][A-Za-z0-9_]*, constants 0/1, parentheses,
-prefix !, ~, NOT, postfix ', AND &, *, AND, NAND, XOR ^, XNOR, OR |, +, NOR.
-NAND, NOR and XNOR are operator words. Outputs use {name, expression};
-internal named signals use {name, expression} in signals and compile as
-name := expression. Forward references between signals are allowed.
-List every primary input exactly once; do not list internal signals as inputs.
+Additional response limits: at most 10 inputs, 16 outputs, 160 signals, 400 gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
 
-Add an executable spec for arithmetic, comparison, selection, parity, counting
-and decoders. Omit spec for irregular logic whose behavior is not compactly
-described by integer rules. A spec is {buses:{bus:[pins...]},rules:[{out,expr}]};
-bus pins are MSB first, and every output pin must be covered. A pin not grouped
-in buses is its own one-bit bus. Specs use decimal integer arithmetic and
-bitwise expressions; they are checked against every engine input combination.
-The circuit expressions and the spec are both independently checked.
-
-Example 1 — 2-bit adder with carry-in:
-{"summary":"2-bit adder","inputs":["A1","A0","B1","B0","CIN"],
- "signals":[{"name":"C1","expression":"(A0 & B0) | (A0 & CIN) | (B0 & CIN)"}],
+Example 1 — 4-bit ripple-carry adder:
+{"summary":"4-bit ripple adder","inputs":["A3","A2","A1","A0","B3","B2","B1","B0","CIN"],
+ "signals":[
+  {"name":"G0","expression":"A0 & B0"},{"name":"G1","expression":"A1 & B1"},
+  {"name":"G2","expression":"A2 & B2"},{"name":"G3","expression":"A3 & B3"},
+  {"name":"P0","expression":"A0 ^ B0"},{"name":"P1","expression":"A1 ^ B1"},
+  {"name":"P2","expression":"A2 ^ B2"},{"name":"P3","expression":"A3 ^ B3"},
+  {"name":"C1","expression":"G0 | (P0 & CIN)"},
+  {"name":"C2","expression":"G1 | (P1 & C1)"},
+  {"name":"C3","expression":"G2 | (P2 & C2)"},
+  {"name":"C4","expression":"G3 | (P3 & C3)"}],
  "outputs":[
-  {"name":"S0","expression":"A0 ^ B0 ^ CIN"},
-  {"name":"S1","expression":"A1 ^ B1 ^ C1"},
-  {"name":"COUT","expression":"(A1 & B1) | (A1 & C1) | (B1 & C1)"}],
- "spec":{"buses":{"A":["A1","A0"],"B":["B1","B0"],"S":["S1","S0"]},
-         "rules":[{"out":"S","expr":"A + B + CIN"},
-                  {"out":"COUT","expr":"(A + B + CIN) >> 2"}]}}
+  {"name":"S0","expression":"P0 ^ CIN"},{"name":"S1","expression":"P1 ^ C1"},
+  {"name":"S2","expression":"P2 ^ C2"},{"name":"S3","expression":"P3 ^ C3"},
+  {"name":"COUT","expression":"C4"}],
+ "spec":{"buses":{"A":["A3","A2","A1","A0"],"B":["B3","B2","B1","B0"],"S":["S3","S2","S1","S0"]},
+         "rules":[{"out":"S","expression":"A + B + CIN"},
+                  {"out":"COUT","expression":"(A + B + CIN) >> 4}]}}
 
-Example 2 — 2-to-4 decoder with enable:
-{"summary":"enabled decoder","inputs":["A1","A0","E"],
- "outputs":[
-  {"name":"D0","expression":"E & NOT A1 & NOT A0"},
-  {"name":"D1","expression":"E & NOT A1 & A0"},
-  {"name":"D2","expression":"E & A1 & NOT A0"},
-  {"name":"D3","expression":"E & A1 & A0"}],
- "spec":{"buses":{"A":["A1","A0"],"D":["D3","D2","D1","D0"]},
-         "rules":[{"out":"D","expr":"E << A"}]}}
-\`\`\`
-
+Example 2 — 4x4 multiplier partial-product signal fragment:
+{"signals":[
+ {"name":"P00","expression":"A0 & B0"},{"name":"P10","expression":"A1 & B0"},
+ {"name":"P20","expression":"A2 & B0"},{"name":"P30","expression":"A3 & B0"},
+ {"name":"P01","expression":"A0 & B1"},{"name":"P11","expression":"A1 & B1"},
+ {"name":"P21","expression":"A2 & B1"},{"name":"P31","expression":"A3 & B1"},
+ {"name":"P02","expression":"A0 & B2"},{"name":"P12","expression":"A1 & B2"},
+ {"name":"P22","expression":"A2 & B2"},{"name":"P32","expression":"A3 & B2"},
+ {"name":"P03","expression":"A0 & B3"},{"name":"P13","expression":"A1 & B3"},
+ {"name":"P23","expression":"A2 & B3"},{"name":"P33","expression":"A3 & B3"}]}
+Continue these partial products with ordered carry-save/ripple sum and carry signals, then output Y0 through Y7. The multiplier spec uses buses A=[A3,A2,A1,A0], B=[B3,B2,B1,B0], Y=[Y7,Y6,Y5,Y4,Y3,Y2,Y1,Y0] and rule {out:Y, expression:"A * B"}.
+```
 ## Verification performance
 
 The largest supported input space is 10 bits (1,024 engine rows). In GitHub Actions run 44865571316, the 9-input/5-output four-bit adder plus the 8-input/8-output 4×4 multiplier built, laid out, and passed executable-spec verification in **2,611.5 ms combined** (both cases; under the required 10-second CI bound).

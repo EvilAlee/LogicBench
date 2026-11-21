@@ -23,15 +23,24 @@ import java.util.Objects;
 public final class AiCache {
     public enum Source { USER, BUNDLED }
 
-    public record CacheHit(String answerJson, Source source) {
+    public record CacheHit(String answerJson, Source source, String model) {
         public CacheHit {
             Objects.requireNonNull(answerJson, "answerJson");
             Objects.requireNonNull(source, "source");
+            model = model == null ? "" : model;
+        }
+        public CacheHit(String answerJson, Source source) { this(answerJson, source, ""); }
+    }
+
+    private record StoredAnswer(JsonObject answer, String model) {
+        private StoredAnswer {
+            Objects.requireNonNull(answer, "answer");
+            model = model == null ? "" : model;
         }
     }
 
     private final Path file;
-    private final Map<String, JsonObject> userEntries = new LinkedHashMap<>();
+    private final Map<String, StoredAnswer> userEntries = new LinkedHashMap<>();
     private final Map<String, JsonObject> bundledEntries = new LinkedHashMap<>();
 
     public AiCache(Path configDirectory) {
@@ -54,8 +63,8 @@ public final class AiCache {
     public synchronized List<CacheHit> lookupCandidates(String description) {
         String key = normalizeDescription(description);
         List<CacheHit> hits = new ArrayList<>(2);
-        JsonObject user = userEntries.get(key);
-        if (user != null) hits.add(new CacheHit(user.toString(), Source.USER));
+        StoredAnswer user = userEntries.get(key);
+        if (user != null) hits.add(new CacheHit(user.answer().toString(), Source.USER, user.model()));
         JsonObject bundled = bundledEntries.get(key);
         if (bundled != null) hits.add(new CacheHit(bundled.toString(), Source.BUNDLED));
         return List.copyOf(hits);
@@ -67,6 +76,12 @@ public final class AiCache {
 
     /** Stores only a response that the caller has already fully verified. */
     public synchronized void storeVerified(String description, String answerJson) throws IOException {
+        storeVerified(description, answerJson, "");
+    }
+
+    /** Stores the producing model alongside the verified answer. */
+    public synchronized void storeVerified(String description, String answerJson, String model)
+            throws IOException {
         String key = normalizeDescription(description);
         JsonObject answer;
         try {
@@ -74,7 +89,7 @@ public final class AiCache {
         } catch (RuntimeException exception) {
             throw new IOException("Verified AI answer could not be serialized for cache storage.");
         }
-        userEntries.put(key, answer.deepCopy());
+        userEntries.put(key, new StoredAnswer(answer.deepCopy(), model));
         writeUserCache();
     }
 
@@ -102,10 +117,24 @@ public final class AiCache {
             JsonObject entries = root.getAsJsonObject("entries");
             if (entries == null) return;
             for (Map.Entry<String, JsonElement> entry : entries.entrySet()) {
-                if (entry.getValue().isJsonObject()) {
-                    userEntries.put(normalizeDescription(entry.getKey()),
-                            entry.getValue().getAsJsonObject().deepCopy());
+                if (!entry.getValue().isJsonObject()) continue;
+                JsonObject stored = entry.getValue().getAsJsonObject();
+                JsonObject answer = stored;
+                String model = "";
+                JsonElement version = stored.get("cacheVersion");
+                if (version != null && version.isJsonPrimitive()
+                        && version.getAsJsonPrimitive().isNumber()
+                        && version.getAsInt() == 1
+                        && stored.has("answer") && stored.get("answer").isJsonObject()) {
+                    answer = stored.getAsJsonObject("answer");
+                    JsonElement modelElement = stored.get("model");
+                    if (modelElement != null && modelElement.isJsonPrimitive()
+                            && modelElement.getAsJsonPrimitive().isString()) {
+                        model = modelElement.getAsString();
+                    }
                 }
+                userEntries.put(normalizeDescription(entry.getKey()),
+                        new StoredAnswer(answer.deepCopy(), model));
             }
         } catch (IOException | RuntimeException ignored) {
             // Corrupt cache data is ignored; no content is echoed to diagnostics.
@@ -115,7 +144,13 @@ public final class AiCache {
     private void writeUserCache() throws IOException {
         Files.createDirectories(file.getParent());
         JsonObject entries = new JsonObject();
-        userEntries.forEach(entries::add);
+        userEntries.forEach((key, stored) -> {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("cacheVersion", 1);
+            entry.add("answer", stored.answer().deepCopy());
+            if (!stored.model().isBlank()) entry.addProperty("model", stored.model());
+            entries.add(key, entry);
+        });
         JsonObject root = new JsonObject();
         root.add("entries", entries);
         Path temporary = Files.createTempFile(file.getParent(), "ai-cache-", ".tmp");
