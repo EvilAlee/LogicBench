@@ -107,6 +107,8 @@ public final class Main {
         frame.setIconImages(AppIcons.load());
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         CanvasPanel canvas = new CanvasPanel(galleryMode);
+        canvas.setComponentDefinitionViewListener(definition ->
+                ComponentDefinitionViewer.showDialog(frame, definition));
         DocumentState document = new DocumentState();
         SignalRecorder signalRecorder = new SignalRecorder();
         WaveformPanel waveformPanel = new WaveformPanel(signalRecorder);

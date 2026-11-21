@@ -120,6 +120,8 @@ public final class CanvasPanel extends JPanel {
 
     private final ViewTransform transform = new ViewTransform(1.0, 24.0, 24.0);
     private final boolean galleryMode;
+    private boolean readOnly;
+    private Consumer<ComponentDefinition> componentDefinitionViewListener = ignored -> { };
     private final GateLibrary gateLibrary;
     private final ComponentLibrary componentLibrary;
     private final GateRenderer gateRenderer;
@@ -250,6 +252,20 @@ public final class CanvasPanel extends JPanel {
     /** Notifies the explorer that the in-memory user library has changed. */
     public void notifyComponentLibraryChanged() {
         componentLibraryChangedListener.run();
+    }
+
+    /** Installs the action used to open a component's read-only definition view. */
+    public void setComponentDefinitionViewListener(
+            Consumer<ComponentDefinition> listener) {
+        componentDefinitionViewListener = listener == null ? ignored -> { } : listener;
+    }
+
+    /** Prevents schematic editing while retaining pan, zoom, and definition navigation. */
+    public void setReadOnly(boolean readOnly) {
+        this.readOnly = readOnly;
+        if (readOnly) {
+            setEditMode();
+        }
     }
 
     /** Receives the current and every subsequently installed schematic. */
@@ -492,7 +508,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     public boolean undo() {
-        if (!history.undo(schematic)) {
+        if (readOnly || !history.undo(schematic)) {
             notifyHistoryStateChanged();
             return false;
         }
@@ -501,7 +517,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     public boolean redo() {
-        if (!history.redo(schematic)) {
+        if (readOnly || !history.redo(schematic)) {
             notifyHistoryStateChanged();
             return false;
         }
@@ -593,6 +609,9 @@ public final class CanvasPanel extends JPanel {
 
     /** Applies an attribute edit from the attribute table or the Add-mode tool preview. */
     public boolean setSelectedAttribute(String key, String value) {
+        if (readOnly) {
+            return false;
+        }
         if (activeTool == Tool.ADD && previewTypeId != null) {
             return setToolAttribute(previewTypeId, key, value);
         }
@@ -734,6 +753,9 @@ public final class CanvasPanel extends JPanel {
 
     /** Enters repeated-click placement mode for a gate or black-box component. */
     public void enterAddMode(String typeId) {
+        if (readOnly) {
+            return;
+        }
         if (typeId != null && typeId.startsWith("component:")) {
             enterComponentAddMode(typeId.substring("component:".length()));
             return;
@@ -766,7 +788,7 @@ public final class CanvasPanel extends JPanel {
 
     /** Enters repeated-click placement mode for one component-library definition. */
     public void enterComponentAddMode(String definitionName) {
-        if (galleryMode) {
+        if (galleryMode || readOnly) {
             return;
         }
         ComponentDefinition definition = componentLibrary.get(definitionName);
@@ -805,6 +827,9 @@ public final class CanvasPanel extends JPanel {
 
     /** Selects the input-poking tool. */
     public void setPokeMode() {
+        if (readOnly) {
+            return;
+        }
         Rectangle oldTransientBounds = union(
                 previewScreenBounds(), gestureVisualScreenBounds());
         previewTypeId = null;
@@ -818,6 +843,9 @@ public final class CanvasPanel extends JPanel {
 
     /** One-shot tree drag/drop placement with one undo snapshot for either item kind. */
     public void placeFromDrop(String typeId, Point screenPoint) {
+        if (readOnly || galleryMode) {
+            return;
+        }
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
         if (typeId.startsWith("component:")) {
             String definitionName = typeId.substring("component:".length());
@@ -908,7 +936,7 @@ public final class CanvasPanel extends JPanel {
         getActionMap().put(actionName, new AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent event) {
-                if (!galleryMode) {
+                if (!galleryMode && !readOnly) {
                     action.run();
                 }
             }
@@ -919,7 +947,7 @@ public final class CanvasPanel extends JPanel {
         setTransferHandler(new TransferHandler() {
             @Override
             public boolean canImport(TransferSupport support) {
-                return !galleryMode && support.isDrop()
+                return !galleryMode && !readOnly && support.isDrop()
                         && support.isDataFlavorSupported(DataFlavor.stringFlavor);
             }
 
@@ -940,12 +968,51 @@ public final class CanvasPanel extends JPanel {
         });
     }
 
+    private ComponentInstance componentInstanceAt(Point screenPoint) {
+        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        int x = (int) Math.floor(world.x);
+        int y = (int) Math.floor(world.y);
+        List<ComponentInstance> instances = schematic.componentInstances();
+        for (int index = instances.size() - 1; index >= 0; index--) {
+            ComponentInstance instance = instances.get(index);
+            ComponentInstance.Geometry geometry =
+                    instance.geometry(schematic.componentDefinitionFor(instance));
+            if (x >= instance.x() && x <= instance.x() + geometry.width()
+                    && y >= instance.y() && y <= instance.y() + geometry.height()) {
+                return instance;
+            }
+        }
+        return null;
+    }
+
+    private void openComponentDefinition(ComponentInstance instance) {
+        componentDefinitionViewListener.accept(schematic.componentDefinitionFor(instance));
+    }
+
+    private boolean showComponentInstancePopup(MouseEvent event) {
+        ComponentInstance instance = componentInstanceAt(event.getPoint());
+        if (instance == null) {
+            return false;
+        }
+        javax.swing.JPopupMenu popup = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem viewDefinition = new javax.swing.JMenuItem("View definition");
+        viewDefinition.addActionListener(ignored -> openComponentDefinition(instance));
+        popup.add(viewDefinition);
+        popup.show(this, event.getX(), event.getY());
+        return true;
+    }
+
     private void installMouseControls() {
         MouseAdapter mouseControls = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
                 if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)
                         && !galleryMode && activeTool == Tool.EDIT) {
+                    ComponentInstance instanceHit = componentInstanceAt(event.getPoint());
+                    if (instanceHit != null) {
+                        openComponentDefinition(instanceHit);
+                        return;
+                    }
                     Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
                     WireSegment wireHit = schematic.wireAt(
                             world.x, world.y, 6.0 / transform.scale()).orElse(null);
@@ -965,6 +1032,9 @@ public final class CanvasPanel extends JPanel {
 
             @Override
             public void mousePressed(MouseEvent event) {
+                if (event.isPopupTrigger() && showComponentInstancePopup(event)) {
+                    return;
+                }
                 requestFocusInWindow();
                 boolean middleDrag = SwingUtilities.isMiddleMouseButton(event);
                 boolean spaceLeftDrag = SwingUtilities.isLeftMouseButton(event) && spaceDown;
@@ -975,7 +1045,7 @@ public final class CanvasPanel extends JPanel {
                     setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
                     return;
                 }
-                if (galleryMode || !SwingUtilities.isLeftMouseButton(event)) {
+                if (galleryMode || readOnly || !SwingUtilities.isLeftMouseButton(event)) {
                     return;
                 }
 
@@ -1009,6 +1079,9 @@ public final class CanvasPanel extends JPanel {
                     pointerFromScreen(event.getPoint());
                     updateGestureMovement(event.getPoint());
                     repaintUnion(oldPreviewBounds, previewScreenBounds());
+                    return;
+                }
+                if (readOnly) {
                     return;
                 }
                 if (activeTool == Tool.EDIT) {
@@ -1049,13 +1122,16 @@ public final class CanvasPanel extends JPanel {
 
             @Override
             public void mouseReleased(MouseEvent event) {
+                if (event.isPopupTrigger() && showComponentInstancePopup(event)) {
+                    return;
+                }
                 if (panning) {
                     panning = false;
                     lastPanPoint = null;
                     setCursor(Cursor.getDefaultCursor());
                     return;
                 }
-                if (!SwingUtilities.isLeftMouseButton(event)) {
+                if (!SwingUtilities.isLeftMouseButton(event) || readOnly) {
                     return;
                 }
 
@@ -1431,6 +1507,9 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void setFacing(Facing facing) {
+        if (readOnly) {
+            return;
+        }
         if (activeTool == Tool.ADD) {
             Rectangle oldPreviewBounds = previewScreenBounds();
             if (previewComponentName != null) {
@@ -1456,7 +1535,8 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void deleteSelection() {
-        if ((selectedIds.isEmpty() && selectedWires.isEmpty()) || activeTool == Tool.ADD) {
+        if (readOnly || (selectedIds.isEmpty() && selectedWires.isEmpty())
+                || activeTool == Tool.ADD) {
             return;
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
