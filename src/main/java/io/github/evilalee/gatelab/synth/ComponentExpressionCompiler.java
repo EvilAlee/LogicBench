@@ -207,6 +207,7 @@ public final class ComponentExpressionCompiler {
         private int nextInstance = 1;
         private int nextOutput = 1;
         private boolean hasSequentialInstances;
+        private int activeComponentCallDepth;
 
         private Builder(
                 List<GateDef> gateDefinitions,
@@ -347,7 +348,7 @@ public final class ComponentExpressionCompiler {
                 if (reserved != null) {
                     return reserved;
                 }
-                if (allowRawFeedback) {
+                if (allowRawFeedback || activeComponentCallDepth > 0) {
                     return assignmentSignal(name);
                 }
                 throw new IllegalArgumentException(
@@ -437,8 +438,8 @@ public final class ComponentExpressionCompiler {
                 throw new IllegalArgumentException(
                         "component " + definition.name() + " has no output pins");
             }
-            if (outputPorts.size() > 1 && definition.primaryOutput() == null
-                    && assignmentKind == AssignmentKind.OUTPUT) {
+            if (scalarOutputPort(definition) == null
+                    && (assignmentName == null || assignmentKind == AssignmentKind.OUTPUT)) {
                 throw multiOutputDirectCallError(definition);
             }
 
@@ -461,11 +462,16 @@ public final class ComponentExpressionCompiler {
                 assignmentSignals.put(assignmentName, scalarSignal);
             }
 
-            for (int index = 0; index < inputPorts.size(); index++) {
-                ComponentDefinition.Port port = inputPorts.get(index);
-                String signal = buildExpression(
-                        call.arguments().get(index), null, port.isClock());
-                node.inputs.add(signal);
+            activeComponentCallDepth++;
+            try {
+                for (int index = 0; index < inputPorts.size(); index++) {
+                    ComponentDefinition.Port port = inputPorts.get(index);
+                    String signal = buildExpression(
+                            call.arguments().get(index), null, port.isClock());
+                    node.inputs.add(signal);
+                }
+            } finally {
+                activeComponentCallDepth--;
             }
             addNode(node);
             if (definition.category().toLowerCase(java.util.Locale.ROOT).contains("sequential")
@@ -558,13 +564,12 @@ public final class ComponentExpressionCompiler {
         }
 
         private String constantSignal(boolean value) {
-            String signalName = value ? "1" : "0";
-            String existing = usedSignals.contains(signalName) ? signalName : null;
-            if (existing != null && nodes.stream().anyMatch(node ->
-                    node.kind == NodeKind.CONSTANT && node.constantValue == value)) {
-                return nodes.stream().filter(node ->
-                        node.kind == NodeKind.CONSTANT && node.constantValue == value)
-                        .findFirst().orElseThrow().outputs.get("out");
+            Optional<Node> existing = nodes.stream()
+                    .filter(node -> node.kind == NodeKind.CONSTANT
+                            && node.constantValue == value)
+                    .findFirst();
+            if (existing.isPresent()) {
+                return existing.orElseThrow().outputs.get("out");
             }
             Node node = new Node(
                     uniqueComponentId(value ? "exprConst1" : "exprConst0"), NodeKind.CONSTANT);
