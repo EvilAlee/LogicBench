@@ -231,7 +231,8 @@ class CircuitDescriberTest {
                 .filter(component -> component.typeId().equals("output"))
                 .toList();
 
-        assertOutputsEqual(originalResult, rebuiltResult, outputs, layout, circuitName + " initial");
+        assertOutputsEqual(originalResult, rebuiltResult, outputs, layout,
+                circuitName + " initial", original, description.text());
         Random random = new Random(seed);
         for (int step = 0; step < 200; step++) {
             for (PlacedComponent source : sources) {
@@ -249,7 +250,7 @@ class CircuitDescriberTest {
             originalResult = SchematicCompiler.compileAndSettle(original, originalResult);
             rebuiltResult = SchematicCompiler.compileAndSettle(rebuilt, rebuiltResult);
             assertOutputsEqual(originalResult, rebuiltResult, outputs, layout,
-                    circuitName + " step " + step);
+                    circuitName + " step " + step, original, description.text());
         }
     }
 
@@ -258,7 +259,9 @@ class CircuitDescriberTest {
             SchematicCompiler.SimulationResult rebuiltResult,
             List<PlacedComponent> outputs,
             SchematicLayout.LayoutResult layout,
-            String context) {
+            String context,
+            Schematic original,
+            String expressionText) {
         for (PlacedComponent output : outputs) {
             String rebuiltId = layout.outputComponentIds().get(output.label());
             assertNotNull(rebuiltId, "exported expression omitted output " + output.label());
@@ -268,6 +271,15 @@ class CircuitDescriberTest {
                 System.err.println("CircuitDescriber feedback mismatch: " + context
                         + ", output=" + output.label() + ", original=" + originalValue
                         + ", rebuilt=" + rebuiltValue);
+                System.err.println("Exported expression text:\\n" + expressionText);
+                System.err.println("Original sources: " + original.components().stream()
+                        .filter(component -> component.typeId().equals("input")
+                                || component.typeId().equals("clock"))
+                        .map(component -> component.label() + "="
+                                + (component.typeId().equals("clock")
+                                        ? original.clockValue(component.id())
+                                        : original.inputValue(component.id())))
+                        .toList());
             }
             assertEquals(originalValue, rebuiltValue,
                     context + ": different output value for " + output.label());
