@@ -40,7 +40,7 @@ class ComponentCallCircuitDescriberTest {
 
         CircuitDescriber.Description description = CircuitDescriber.describe(original.schematic());
 
-        assertTrue(description.text().contains("U1 := FA(A, B, CIN)"), description.text());
+        assertTrue(description.text().contains("U0 := FA(A, B, CIN)"), description.text());
         assertTrue(description.text().contains("S = U0.S"), description.text());
         assertTrue(description.text().contains("COUT = U0.COUT"), description.text());
         assertEquals("U0", description.componentIds().keySet().stream()
@@ -68,7 +68,7 @@ class ComponentCallCircuitDescriberTest {
                 """, GATES, library.all());
 
         CircuitDescriber.Description description = CircuitDescriber.describe(original.schematic());
-        assertTrue(description.text().contains("U4 := FA(A3, B3, U3.COUT)"),
+        assertTrue(description.text().contains("U3 := FA(A3, B3, U2.COUT)"),
                 description.text());
         ComponentExpressionCompiler.Compilation rebuilt =
                 ComponentExpressionCompiler.compile(description.text(), GATES, library.all());
@@ -89,10 +89,10 @@ class ComponentCallCircuitDescriberTest {
                 """, GATES, library.all());
 
         CircuitDescriber.Description description = CircuitDescriber.describe(original.schematic());
+        assertTrue(description.text().contains("U0 := DFF("), description.text());
         assertTrue(description.text().contains("U1 := DFF("), description.text());
-        assertTrue(description.text().contains("U2 := DFF("), description.text());
+        assertTrue(description.text().contains("U0.Q"), description.text());
         assertTrue(description.text().contains("U1.Q"), description.text());
-        assertTrue(description.text().contains("U2.Q"), description.text());
 
         ComponentExpressionCompiler.Compilation rebuilt =
                 ComponentExpressionCompiler.compile(description.text(), GATES, library.all());
@@ -129,11 +129,11 @@ class ComponentCallCircuitDescriberTest {
         ComponentLibrary library = componentLibrary();
         ComponentExpressionCompiler.Compilation compiled = ComponentExpressionCompiler.compile(
                 """
-                U0 := FA(A0, B0, CIN)
-                U1 := FA(A1, B1, U0.COUT)
-                S0 = U0.S
-                S1 = U1.S
-                COUT = U1.COUT
+                U1 := FA(A0, B0, CIN)
+                U2 := FA(A1, B1, U1.COUT)
+                S0 = U1.S
+                S1 = U2.S
+                COUT = U2.COUT
                 """, GATES, library.all());
         // The compiler's document instance ids are already U0/U1. Clear only the
         // optional display labels to model an unnamed saved document instance.
