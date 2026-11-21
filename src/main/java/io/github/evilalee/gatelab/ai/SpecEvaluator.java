@@ -470,7 +470,6 @@ public final class SpecEvaluator {
                     default -> throw new IllegalStateException(operator);
                 };
             }
-            return left;
         }
 
         private Expr unary() {
