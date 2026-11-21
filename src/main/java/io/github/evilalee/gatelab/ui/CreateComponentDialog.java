@@ -122,7 +122,8 @@ final class CreateComponentDialog {
             if (direction == null) {
                 continue;
             }
-            String componentText = direction + " (" + component.id() + ")";
+            String componentText = direction + " (" + component.id() + ")"
+                    + (component.label().isBlank() ? " — unnamed" : "");
             rows.add(new PortRow(
                     component.id(), componentText, component.label(), direction,
                     !component.label().isBlank()));
