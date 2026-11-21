@@ -304,7 +304,7 @@ final class LegacySchematicLayout {
             String id = "expr-constant-" + constant;
             Node node = componentNode(
                     "constant:" + constant, NodeKind.CONSTANT, 0,
-                    constant, id, "input");
+                    constant, id, "constant");
             columns.get(0).add(node);
             inputColumnNodes.add(node);
             signalNodes.put(constant, node);
@@ -437,12 +437,6 @@ final class LegacySchematicLayout {
                 schematic.add(new PlacedComponent(
                         node.componentId, node.definition.family(), node.x, node.y,
                         Facing.EAST, Map.of(), label));
-            }
-        }
-
-        for (String constant : constantsUsed) {
-            if (constant.equals("1")) {
-                schematic.setInputValue(constantIds.get(constant), true);
             }
         }
 

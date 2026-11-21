@@ -51,6 +51,7 @@ public final class SchematicNetlistExtractor {
         List<PlacedComponent> components = schematic.components();
         Map<String, PlacedComponent> byId = new LinkedHashMap<>();
         List<PlacedComponent> inputs = new ArrayList<>();
+        List<PlacedComponent> constants = new ArrayList<>();
         List<PlacedComponent> outputs = new ArrayList<>();
         List<PlacedComponent> gates = new ArrayList<>();
 
@@ -58,6 +59,7 @@ public final class SchematicNetlistExtractor {
             byId.put(component.id(), component);
             switch (component.typeId()) {
                 case "input" -> inputs.add(component);
+                case "constant" -> constants.add(component);
                 case "output" -> outputs.add(component);
                 default -> {
                     GateOperator operator;
@@ -101,6 +103,15 @@ public final class SchematicNetlistExtractor {
         }
         for (PlacedComponent output : outputs) {
             outputIds.put(outputNames.get(output.id()), output.id());
+        }
+
+        Map<String, String> constantSignals = new LinkedHashMap<>();
+        for (PlacedComponent constant : constants) {
+            if (!constant.label().equals("0") && !constant.label().equals("1")) {
+                throw new IllegalArgumentException(
+                        "Constant source " + constant.id() + " must be labeled 0 or 1.");
+            }
+            constantSignals.put(constant.id(), constant.label());
         }
 
         Map<String, String> gateSignals = new LinkedHashMap<>();
@@ -151,6 +162,7 @@ public final class SchematicNetlistExtractor {
             PlacedComponent component = byId.get(driver.componentId());
             String signal = switch (component.typeId()) {
                 case "input" -> inputNames.get(component.id());
+                case "constant" -> constantSignals.get(component.id());
                 default -> gateSignals.get(component.id());
             };
             if (signal == null) {

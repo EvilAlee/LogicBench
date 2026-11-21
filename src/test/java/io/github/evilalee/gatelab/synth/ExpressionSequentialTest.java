@@ -111,6 +111,23 @@ class ExpressionSequentialTest {
     }
 
     @Test
+    void sequentialPartArgumentsFoldConstantsButLeaveNoConstantCircuitsUnchanged() {
+        ExpressionCompiler.Compilation folded =
+                ExpressionCompiler.compile("Q = DFF(A & 0, CLK)", false);
+        ExpressionCompiler.SequentialCircuit foldedCircuit =
+                folded.sequentialCircuit().orElseThrow();
+        assertTrue(foldedCircuit.fixedInputs().values().contains(Value.ZERO));
+        assertFalse(foldedCircuit.inputs().containsKey("A"));
+        assertFalse(folded.netlist().gates().stream()
+                .anyMatch(gate -> gate.type() == GateOperator.AND));
+
+        ExpressionCompiler.Compilation unchanged =
+                ExpressionCompiler.compile("Q = DFF(A & A, CLK)", false);
+        assertEquals(1, unchanged.netlist().gates().stream()
+                .filter(gate -> gate.type() == GateOperator.AND).count());
+    }
+
+    @Test
     void ordinaryExpressionCompilationRemainsOnTheOriginalDagPath() {
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile("F = A & B", false);

@@ -1157,7 +1157,8 @@ public final class Schematic {
 
         Set<String> gateIds = components.stream()
                 .filter(component -> !component.typeId().equals("input")
-                        && !component.typeId().equals("output"))
+                        && !component.typeId().equals("output")
+                        && !component.typeId().equals("constant"))
                 .map(PlacedComponent::id)
                 .collect(java.util.stream.Collectors.toSet());
         return outputNet.pins().stream().anyMatch(pin ->

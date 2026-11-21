@@ -471,6 +471,7 @@ class AiCircuitServiceTest {
         List<String> inputs = List.of("A3", "A2", "A1", "A0", "B3", "B2", "B1", "B0");
         String raw = answerWithSignals(inputs, fourByFourMultiplierOutputs(),
                 fourByFourMultiplierSignals(), multiplierSpec());
+        assertTrue(raw.contains("& 0"), "the multiplier fixture must contain a literal-zero term");
         ScriptedProvider provider = new ScriptedProvider(raw);
 
         AiCircuitService.Result result = service(provider).generate("Build a 4x4 multiplier.", false, true, "", false, false);
@@ -479,6 +480,19 @@ class AiCircuitServiceTest {
         assertEquals(1, provider.calls);
         assertEquals(103, result.signals().size());
         assertEquals(256, result.truthTable().rows().size());
+        assertEquals(inputs.size(), result.netlist().inputs().size(),
+                "literal constants must not count as declared primary inputs");
+        assertTrue(result.netlist().inputs().containsAll(inputs),
+                "all declared primary inputs must remain in the input list");
+        assertFalse(result.layout().schematic().components().stream()
+                .anyMatch(component -> component.typeId().equals("input")
+                        && component.label().equals("0")),
+                "literal zero must not become a pokeable Input pin");
+        for (String constantId : result.layout().constantComponentIds().values()) {
+            assertEquals("constant", result.layout().schematic().components().stream()
+                    .filter(component -> component.id().equals(constantId))
+                    .findFirst().orElseThrow().typeId());
+        }
     }
 
     @Test

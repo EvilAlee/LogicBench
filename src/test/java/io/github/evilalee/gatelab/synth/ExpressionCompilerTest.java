@@ -1,5 +1,10 @@
 package io.github.evilalee.gatelab.synth;
 
+import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.synth.layout.SchematicExpressionVerifier;
+import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -96,6 +101,67 @@ class ExpressionCompilerTest {
         assertTrue(constant.netlist().inputs().isEmpty());
         assertTrue(constant.netlist().gates().isEmpty());
         assertEquals("1", constant.netlist().outputs().getFirst().source());
+    }
+
+    @Test
+    void everyRequiredBooleanConstantRuleFoldsAndMatchesTheEngineTruthTable() {
+        record FoldCase(String expression, List<String> inputs, String source,
+                List<GateOperator> gates) { }
+        List<FoldCase> cases = List.of(
+                new FoldCase("A & 0", List.of("A"), "0", List.of()),
+                new FoldCase("A & 1", List.of("A"), "A", List.of()),
+                new FoldCase("A | 0", List.of("A"), "A", List.of()),
+                new FoldCase("A | 1", List.of("A"), "1", List.of()),
+                new FoldCase("A ^ 0", List.of("A"), "A", List.of()),
+                new FoldCase("A ^ 1", List.of("A"), "g1", List.of(GateOperator.NOT)),
+                new FoldCase("NOT 0", List.of(), "1", List.of()),
+                new FoldCase("NOT 1", List.of(), "0", List.of()));
+
+        for (FoldCase fold : cases) {
+            ExpressionCompiler.Compilation compilation =
+                    ExpressionCompiler.compile("F = " + fold.expression());
+            assertEquals(fold.inputs(), compilation.netlist().inputs(), fold.expression());
+            assertEquals(fold.source(), compilation.netlist().outputs().getFirst().source(),
+                    fold.expression());
+            assertEquals(fold.gates(), compilation.netlist().gates().stream()
+                    .map(Netlist.Gate::type).toList(), fold.expression());
+            assertTrue(TruthTableVerifier.verify(compilation).verified(), fold.expression());
+        }
+
+        ExpressionCompiler.Compilation propagated = ExpressionCompiler.compile(
+                "F = NOT ((A & 1) ^ 1) | (B & 0)");
+        assertEquals(List.of("A", "B"), propagated.netlist().inputs());
+        assertTrue(propagated.netlist().gates().isEmpty());
+        assertEquals("A", propagated.netlist().outputs().getFirst().source());
+        assertTrue(TruthTableVerifier.verify(propagated).verified());
+    }
+
+    @Test
+    void constantOnlyOutputsUseFixedNonPokeableSources() {
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile("Zero = 0\nOne = NOT 0");
+        SchematicLayout.LayoutResult layout = new SchematicLayout(GateLibrary.load().all())
+                .layout(compilation.netlist());
+
+        assertTrue(layout.inputComponentIds().isEmpty());
+        assertEquals(List.of("0", "1"), List.copyOf(layout.constantComponentIds().keySet()));
+        for (var entry : layout.constantComponentIds().entrySet()) {
+            var component = layout.schematic().components().stream()
+                    .filter(candidate -> candidate.id().equals(entry.getValue()))
+                    .findFirst().orElseThrow();
+            assertEquals("constant", component.typeId());
+            assertEquals(entry.getKey(), component.label());
+            assertThrows(IllegalArgumentException.class,
+                    () -> layout.schematic().setInputValue(component.id(), true));
+        }
+
+        assertTrue(SchematicExpressionVerifier.verify(compilation, layout).verified());
+        SchematicCompiler.SimulationResult result =
+                SchematicCompiler.compileAndSettle(layout.schematic());
+        assertEquals(Value.ZERO,
+                result.outputValues().get(layout.outputComponentIds().get("Zero")));
+        assertEquals(Value.ONE,
+                result.outputValues().get(layout.outputComponentIds().get("One")));
     }
 
     @Test

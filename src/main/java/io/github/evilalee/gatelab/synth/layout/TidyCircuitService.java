@@ -73,7 +73,9 @@ public final class TidyCircuitService {
         }
         List<GateDef> library = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
         if (original.components().stream().noneMatch(component ->
-                !component.typeId().equals("input") && !component.typeId().equals("output"))) {
+                !component.typeId().equals("input")
+                        && !component.typeId().equals("output")
+                        && !component.typeId().equals("constant"))) {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
@@ -131,13 +133,17 @@ public final class TidyCircuitService {
             String newId = layout.gateComponentIds().get(signal);
             newToOldIds.put(newId, oldId);
         });
+        extraction.constantComponentIds().forEach((signal, oldId) -> {
+            String newId = layout.constantComponentIds().get(signal);
+            newToOldIds.put(newId, oldId);
+        });
 
         List<PlacedComponent> components = new ArrayList<>();
         for (PlacedComponent component : layout.schematic().components()) {
             components.add(new PlacedComponent(
                     component.id(), component.typeId(), component.x(), component.y(),
                     Facing.EAST, component.attributes(),
-                    labelsByNewId.getOrDefault(component.id(), "")));
+                    labelsByNewId.getOrDefault(component.id(), component.label())));
         }
 
         Schematic replacement = new Schematic(definitions);
@@ -181,7 +187,7 @@ public final class TidyCircuitService {
             components.add(new PlacedComponent(
                     component.id(), component.typeId(), component.x(), component.y(),
                     Facing.EAST, component.attributes(),
-                    labelsByNewId.getOrDefault(component.id(), "")));
+                    labelsByNewId.getOrDefault(component.id(), component.label())));
         }
 
         Schematic replacement = new Schematic(definitions);

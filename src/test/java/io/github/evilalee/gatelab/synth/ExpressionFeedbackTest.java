@@ -113,6 +113,24 @@ class ExpressionFeedbackTest {
                 .layoutFeedback(compilation.feedbackExtraction().orElseThrow());
         assertTrue(layout.constantComponentIds().containsKey("1"));
         assertEquals(List.of("S"), List.copyOf(layout.inputComponentIds().keySet()));
+        String constantId = layout.constantComponentIds().get("1");
+        var constant = layout.schematic().components().stream()
+                .filter(component -> component.id().equals(constantId))
+                .findFirst().orElseThrow();
+        assertEquals("constant", constant.typeId());
+        assertEquals("1", constant.label());
+        assertThrows(IllegalArgumentException.class,
+                () -> layout.schematic().setInputValue(constantId, false));
+
+        var tidied = io.github.evilalee.gatelab.synth.layout.TidyCircuitService.tidy(
+                layout.schematic(), DEFINITIONS);
+        assertTrue(tidied.feedbackCircuit());
+        var tidiedConstant = tidied.schematic().components().stream()
+                .filter(component -> component.typeId().equals("constant"))
+                .findFirst().orElseThrow();
+        assertEquals("1", tidiedConstant.label());
+        assertThrows(IllegalArgumentException.class,
+                () -> tidied.schematic().setInputValue(tidiedConstant.id(), false));
     }
 
     @Test

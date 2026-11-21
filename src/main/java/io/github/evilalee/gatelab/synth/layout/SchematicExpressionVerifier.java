@@ -73,8 +73,6 @@ public final class SchematicExpressionVerifier {
         Map<String, Boolean> originalValues = new LinkedHashMap<>();
         layout.inputComponentIds().forEach((name, id) ->
                 originalValues.put(id, schematic.inputValue(id)));
-        layout.constantComponentIds().forEach((name, id) ->
-                originalValues.put(id, schematic.inputValue(id)));
 
         int inputCount = compilation.netlist().inputs().size();
         int rowCount = 1 << inputCount;
@@ -94,10 +92,7 @@ public final class SchematicExpressionVerifier {
                     schematic.setInputValue(layout.inputComponentIds().get(name), value);
                 }
 
-                // Constant-output source switches are separate from declared inputs.
-                for (Map.Entry<String, String> constant : layout.constantComponentIds().entrySet()) {
-                    schematic.setInputValue(constant.getValue(), constant.getKey().equals("1"));
-                }
+                // Fixed constant sources are immutable; only declared inputs are poked.
 
                 previous = SchematicCompiler.compileAndSettle(schematic, previous);
                 for (NamedExpression expression : compilation.expressions()) {
