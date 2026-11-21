@@ -76,6 +76,20 @@ class AiCircuitServiceTest {
         return root.toString();
     }
 
+    private static String andAnswerWithSpec(String specificationExpression) {
+        JsonObject root = JsonParser.parseString(andAnswer("")).getAsJsonObject();
+        JsonObject spec = new JsonObject();
+        spec.add("buses", new JsonObject());
+        JsonArray rules = new JsonArray();
+        JsonObject rule = new JsonObject();
+        rule.addProperty("out", "F");
+        rule.addProperty("expr", specificationExpression);
+        rules.add(rule);
+        spec.add("rules", rules);
+        root.add("spec", spec);
+        return root.toString();
+    }
+
     private static String andAnswer(String bits) {
         return answer(List.of("A", "B"), List.of(new Output("F", "A & B")), bits);
     }
@@ -254,14 +268,14 @@ class AiCircuitServiceTest {
                             "Gemini model not found (HTTP 404).", model, 404);
                 }
                 workingCalls[0]++;
-                return andAnswer(workingCalls[0] == 1 ? "0000" : "0001");
+                return andAnswerWithSpec(workingCalls[0] == 1 ? "0" : "A & B");
             }
         };
 
         AiCircuitService.Result result = service(provider, null, new ArrayList<>()).generate(
                 "Build a two-input AND gate with inputs A and B.");
 
-        assertEquals(AiCircuitService.Status.BUILT, result.status());
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status());
         assertEquals(2, result.attemptCount());
         assertEquals(1, missingCalls[0]);
         assertEquals(2, workingCalls[0]);
@@ -355,7 +369,7 @@ class AiCircuitServiceTest {
             @Override
             public String complete(String model, String prompt,
                                    List<Turn> conversation, JsonObject schema) throws IOException {
-                if (calls[0]++ == 0) return andAnswer("0000");
+                if (calls[0]++ == 0) return andAnswerWithSpec("0");
                 throw new ProviderFailure(ProviderFailure.Kind.RETRYABLE,
                         "Gemini server error (HTTP 503).", model, 503);
             }
@@ -460,7 +474,7 @@ class AiCircuitServiceTest {
         assertEquals(AiCircuitService.Status.BUILT, result.status());
         assertEquals(0, result.attemptCount());
         assertEquals(0, provider.calls);
-        assertTrue(result.attemptLog().getFirst().contains("skipped AI"));
+        assertTrue(result.attemptLog().stream().anyMatch(line -> line.contains("skipped AI")));
     }
 
     private static String twoBitAdderAnswer(List<String> inputOrder, boolean corruptSpec) {

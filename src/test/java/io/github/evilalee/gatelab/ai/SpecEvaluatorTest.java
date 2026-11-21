@@ -99,7 +99,7 @@ class SpecEvaluatorTest {
         assertEquals(1, oneBit("A > B", 6, 2));
         assertEquals(1, oneBit("A >= B", 6, 2));
         assertEquals(2, oneBit("A ? B : 9", 6, 2));
-        assertEquals(7, oneBit("(A + B) & 7", 6, 2));
+        assertEquals(0, oneBit("(A + B) & 7", 6, 2));
         assertEquals(-8, oneBit("-A - B", 6, 2));
     }
 
