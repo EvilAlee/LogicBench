@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -166,6 +166,11 @@ class CircuitDescriberTest {
         return new SchematicLayout(DEFINITIONS).layout(compilation.netlist()).schematic();
     }
 
+    private record SemanticRow(
+            Map<String, Boolean> inputs,
+            Map<String, Value> outputs,
+            boolean oscillating) { }
+
     private static void assertRoundTrip(Schematic original) {
         Netlist originalNetlist = FeedbackCircuitExtractor.extract(original)
                 .map(FeedbackCircuitExtractor.Extraction::sourceNetlist)
@@ -173,9 +178,33 @@ class CircuitDescriberTest {
         CircuitDescriber.Description description = CircuitDescriber.describe(original);
         ExpressionCompiler.Compilation rebuilt =
                 ExpressionCompiler.compile(description.text(), true);
+        TruthTable expected = TruthTableGenerator.generate(originalNetlist);
+        TruthTable actual = TruthTableGenerator.generate(rebuilt.netlist());
 
-        assertEquals(TruthTableGenerator.generate(originalNetlist),
-                TruthTableGenerator.generate(rebuilt.netlist()), description.text());
+        assertEquals(java.util.Set.copyOf(expected.inputNames()),
+                java.util.Set.copyOf(actual.inputNames()), description.text());
+        assertEquals(java.util.Set.copyOf(expected.outputNames()),
+                java.util.Set.copyOf(actual.outputNames()), description.text());
+        assertEquals(rowsByNamedAssignment(expected), rowsByNamedAssignment(actual),
+                description.text());
+    }
+
+    private static Map<Map<String, Boolean>, SemanticRow> rowsByNamedAssignment(
+            TruthTable table) {
+        Map<Map<String, Boolean>, SemanticRow> result = new LinkedHashMap<>();
+        for (TruthTable.Row row : table.rows()) {
+            Map<String, Boolean> inputs = new LinkedHashMap<>();
+            for (int index = 0; index < table.inputNames().size(); index++) {
+                inputs.put(table.inputNames().get(index), row.inputValue(index));
+            }
+            Map<String, Value> outputs = new LinkedHashMap<>();
+            for (int index = 0; index < table.outputNames().size(); index++) {
+                outputs.put(table.outputNames().get(index), row.outputValues().get(index));
+            }
+            result.put(Map.copyOf(inputs),
+                    new SemanticRow(Map.copyOf(inputs), Map.copyOf(outputs), row.oscillating()));
+        }
+        return result;
     }
 
     private static void assertFeedbackRoundTrip(Schematic original, long seed) {
