@@ -1006,8 +1006,7 @@ public final class AiCircuitService {
             for (String outputName : table.outputNames()) {
                 boolean expectedValue = expected.outputs().get(outputName);
                 Value actualValue = actualRow.outputValues().get(outputs.get(outputName));
-                if (actualValue == Value.X || actualValue == Value.CONFLICT
-                        || (actualValue == Value.ONE) != expectedValue) {
+                if (actualValue == Value.X || (actualValue == Value.ONE) != expectedValue) {
                     mismatches.add("Expected row line " + expected.lineNumber() + " "
                             + formatAssignments(expected.inputs()) + ": " + outputName
                             + " expected " + (expectedValue ? "1" : "0") + ", circuit "

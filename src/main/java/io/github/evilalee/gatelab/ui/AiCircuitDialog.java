@@ -221,10 +221,14 @@ public final class AiCircuitDialog extends JDialog {
         statusBadge.setText("WORKING");
         summary.setText("Generating and verifying...");
         appendLog("Starting generation.");
+        boolean optimize = optimizeInvertingGates.isSelected();
+        String rowText = expectedRows.getText();
+        optimizeInvertingGates.setEnabled(false);
+        expectedRows.setEditable(false);
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
-                return service.generate(prompt, cacheOnly, optimizeInvertingGates.isSelected());
+                return service.generate(prompt, cacheOnly, optimize, rowText);
             }
 
             @Override
@@ -232,6 +236,8 @@ public final class AiCircuitDialog extends JDialog {
                 activeWorker = null;
                 generateButton.setEnabled(true);
                 description.setEditable(true);
+                optimizeInvertingGates.setEnabled(true);
+                expectedRows.setEditable(true);
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
                     currentResult = get();
@@ -274,8 +280,12 @@ public final class AiCircuitDialog extends JDialog {
                 displaySummary = config.redact(unavailableNotice) + " — " + displaySummary;
             }
         } else if (!result.answeredBy().isBlank()) {
-            String status = result.status() == AiCircuitService.Status.VERIFIED
-                    ? "VERIFIED" : "UNVERIFIED";
+            String status = switch (result.status()) {
+                case VERIFIED -> "VERIFIED";
+                case BUILT -> "BUILT";
+                case UNAVAILABLE -> "UNAVAILABLE";
+                case UNVERIFIED -> "UNVERIFIED";
+            };
             displaySummary += " — " + status + " via " + config.redact(result.answeredBy());
         }
         summary.setText(config.redact(displaySummary));
@@ -287,6 +297,9 @@ public final class AiCircuitDialog extends JDialog {
         } else if (result.status() == AiCircuitService.Status.VERIFIED) {
             statusBadge.setText("VERIFIED");
             statusBadge.setBackground(new Color(215, 240, 220));
+        } else if (result.status() == AiCircuitService.Status.BUILT) {
+            statusBadge.setText("BUILT");
+            statusBadge.setBackground(new Color(235, 235, 235));
         } else if (result.status() == AiCircuitService.Status.UNAVAILABLE) {
             statusBadge.setText("UNAVAILABLE");
             statusBadge.setBackground(new Color(250, 235, 195));
@@ -295,12 +308,12 @@ public final class AiCircuitDialog extends JDialog {
             statusBadge.setBackground(new Color(250, 225, 205));
         }
         boolean placeable = result.status() != AiCircuitService.Status.UNAVAILABLE
-                && result.layout() != null
-                && (result.status() == AiCircuitService.Status.VERIFIED
-                    || !result.mismatchingRows().isEmpty());
+                && result.layout() != null;
         placeButton.setEnabled(placeable);
-        if (result.status() == AiCircuitService.Status.UNVERIFIED) {
-            appendLog("UNVERIFIED: the engine did not confirm the model's claim.");
+        if (result.status() == AiCircuitService.Status.BUILT) {
+            appendLog("BUILT: no independent check was supplied; read the engine truth table.");
+        } else if (result.status() == AiCircuitService.Status.UNVERIFIED) {
+            appendLog("UNVERIFIED: one or more validation checks failed.");
         }
     }
 
@@ -344,7 +357,7 @@ public final class AiCircuitDialog extends JDialog {
             String rows = config.redact(String.join("\n", currentResult.mismatchingRows()));
             int answer = JOptionPane.showConfirmDialog(
                     this,
-                    "This circuit is UNVERIFIED. The engine disagreed on these rows:\n\n"
+                    "This circuit is UNVERIFIED. These validation checks failed:\n\n"
                             + rows + "\n\nPlace it anyway?",
                     "Place unverified circuit",
                     JOptionPane.YES_NO_OPTION,
@@ -365,9 +378,12 @@ public final class AiCircuitDialog extends JDialog {
         }
 
         canvas.replaceWithGeneratedCircuit(currentResult.layout().schematic());
-        canvas.setStatusMessage(currentResult.status() == AiCircuitService.Status.VERIFIED
-                ? "AI circuit verified and placed."
-                : "Unverified AI circuit placed after confirmation.");
+        canvas.setStatusMessage(switch (currentResult.status()) {
+            case VERIFIED -> "AI circuit verified against independent checks and placed.";
+            case BUILT -> "AI circuit built; no independent check was supplied.";
+            case UNVERIFIED -> "Unverified AI circuit placed after confirmation.";
+            case UNAVAILABLE -> "AI circuit unavailable.";
+        });
         dispose();
     }
 
