@@ -715,6 +715,8 @@ public final class Main {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("Components");
         DefaultMutableTreeNode gates = new DefaultMutableTreeNode("Gates");
         DefaultMutableTreeNode pins = new DefaultMutableTreeNode("Pins");
+        DefaultMutableTreeNode builtIn = new DefaultMutableTreeNode("Built-in");
+        DefaultMutableTreeNode myComponents = new DefaultMutableTreeNode("My components");
 
         for (String family : GateLibrary.load().families()) {
             ComponentTreeItem item = new ComponentTreeItem(
@@ -725,8 +727,16 @@ public final class Main {
                 gates.add(new DefaultMutableTreeNode(item));
             }
         }
+        canvas.componentLibrary().builtIns().forEach(definition ->
+                builtIn.add(new DefaultMutableTreeNode(new ComponentTreeItem(
+                        "component:" + definition.name(), definition.name()))));
+        canvas.componentLibrary().userDefinitions().forEach(definition ->
+                myComponents.add(new DefaultMutableTreeNode(new ComponentTreeItem(
+                        "component:" + definition.name(), definition.name()))));
         root.add(gates);
         root.add(pins);
+        root.add(builtIn);
+        root.add(myComponents);
 
         JTree tree = new JTree(root);
         tree.setRootVisible(true);
@@ -735,6 +745,8 @@ public final class Main {
         tree.expandPath(new TreePath(root.getPath()));
         tree.expandPath(new TreePath(gates.getPath()));
         tree.expandPath(new TreePath(pins.getPath()));
+        tree.expandPath(new TreePath(builtIn.getPath()));
+        tree.expandPath(new TreePath(myComponents.getPath()));
         tree.addTreeSelectionListener(event -> {
             TreePath path = tree.getSelectionPath();
             enterAddModeForPath(canvas, path);

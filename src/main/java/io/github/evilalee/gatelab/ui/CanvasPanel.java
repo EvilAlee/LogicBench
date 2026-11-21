@@ -1,5 +1,6 @@
 package io.github.evilalee.gatelab.ui;
 
+import io.github.evilalee.gatelab.io.ComponentLibrary;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
@@ -120,6 +121,7 @@ public final class CanvasPanel extends JPanel {
     private final ViewTransform transform = new ViewTransform(1.0, 24.0, 24.0);
     private final boolean galleryMode;
     private final GateLibrary gateLibrary;
+    private final ComponentLibrary componentLibrary;
     private final GateRenderer gateRenderer;
     private final ComponentInstanceRenderer componentInstanceRenderer =
             new ComponentInstanceRenderer();
@@ -159,6 +161,7 @@ public final class CanvasPanel extends JPanel {
     private Tool activeTool = Tool.EDIT;
     private boolean showGateNames = true;
     private String previewTypeId;
+    private String previewComponentName;
     private Facing previewFacing = Facing.EAST;
     private int previewX;
     private int previewY;
@@ -169,6 +172,7 @@ public final class CanvasPanel extends JPanel {
     private Runnable nameEditorFocusListener = () -> { };
     private final Map<String, Map<String, String>> toolAttributesByFamily = new HashMap<>();
     private final Map<String, Facing> toolFacingByFamily = new HashMap<>();
+    private final Map<String, Facing> componentFacingByName = new HashMap<>();
 
     private Gesture gesture = Gesture.NONE;
     private Point gestureStartScreen;
@@ -192,6 +196,8 @@ public final class CanvasPanel extends JPanel {
     public CanvasPanel(boolean galleryMode) {
         this.galleryMode = galleryMode;
         this.gateLibrary = GateLibrary.load();
+        this.componentLibrary = ComponentLibrary.load(gateLibrary.all(),
+                ComponentLibrary.defaultUserDirectory());
         this.gateRenderer = new GateRenderer(gateLibrary);
         this.schematic = new Schematic(gateLibrary.all());
         this.schematic.addChangeListener(schematicSimulationListener);
@@ -229,6 +235,11 @@ public final class CanvasPanel extends JPanel {
 
     public Schematic schematic() {
         return schematic;
+    }
+
+    /** The built-in and user-defined component catalogue used by the explorer. */
+    public ComponentLibrary componentLibrary() {
+        return componentLibrary;
     }
 
     /** Receives the current and every subsequently installed schematic. */
@@ -711,19 +722,51 @@ public final class CanvasPanel extends JPanel {
     }
 
 
-    /** Enters repeated-click placement mode for a catalogue type. */
+    /** Enters repeated-click placement mode for a gate or black-box component. */
     public void enterAddMode(String typeId) {
+        if (typeId != null && typeId.startsWith("component:")) {
+            enterComponentAddMode(typeId.substring("component:".length()));
+            return;
+        }
         if (galleryMode) {
             return;
         }
         String family = gateLibrary.get(typeId).family();
-        if (activeTool == Tool.ADD && family.equals(previewTypeId)) {
+        if (activeTool == Tool.ADD && family.equals(previewTypeId)
+                && previewComponentName == null) {
             requestFocusInWindow();
             return;
         }
         previewTypeId = family;
+        previewComponentName = null;
         previewFacing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         toolAttributesByFamily.putIfAbsent(family, Map.of());
+        selectedIds.clear();
+        selectedWires.clear();
+        activeTool = Tool.ADD;
+        notifySelectionChanged();
+        Point2D.Double center = transform.screenToWorld(
+                Math.max(0, getWidth()) / 2.0, Math.max(0, getHeight()) / 2.0);
+        updatePreviewPosition(center.x, center.y);
+        resetGesture();
+        toolModeListener.accept(activeTool);
+        requestFocusInWindow();
+        repaint();
+    }
+
+    /** Enters repeated-click placement mode for one component-library definition. */
+    public void enterComponentAddMode(String definitionName) {
+        if (galleryMode) {
+            return;
+        }
+        ComponentDefinition definition = componentLibrary.get(definitionName);
+        if (activeTool == Tool.ADD && definition.name().equals(previewComponentName)) {
+            requestFocusInWindow();
+            return;
+        }
+        previewTypeId = null;
+        previewComponentName = definition.name();
+        previewFacing = componentFacingByName.getOrDefault(definition.name(), Facing.EAST);
         selectedIds.clear();
         selectedWires.clear();
         activeTool = Tool.ADD;
@@ -763,14 +806,30 @@ public final class CanvasPanel extends JPanel {
         repaintIfPresent(oldTransientBounds);
     }
 
-    /** One-shot tree drag/drop placement, sharing the same grid-snapped origin rule. */
+    /** One-shot tree drag/drop placement with one undo snapshot for either item kind. */
     public void placeFromDrop(String typeId, Point screenPoint) {
-        String family = gateLibrary.get(typeId).family();
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        if (typeId.startsWith("component:")) {
+            String definitionName = typeId.substring("component:".length());
+            ComponentDefinition definition = componentLibrary.get(definitionName);
+            Facing facing = componentFacingByName.getOrDefault(definitionName, Facing.EAST);
+            beginHistoryGesture();
+            schematic.addInstance(definition,
+                    snapToGrid(world.x), snapToGrid(world.y), facing);
+            commitHistoryGesture();
+            componentFacingByName.put(definitionName, facing);
+            selectedIds.clear();
+            selectedWires.clear();
+            setEditMode();
+            notifySelectionChanged();
+            repaint();
+            return;
+        }
+
+        String family = gateLibrary.get(typeId).family();
         Facing facing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         beginHistoryGesture();
-        PlacedComponent placed = placeAtWorld(
-                family, world.x, world.y, facing);
+        PlacedComponent placed = placeAtWorld(family, world.x, world.y, facing);
         commitHistoryGesture();
         selectedIds.clear();
         selectedWires.clear();
@@ -992,9 +1051,17 @@ public final class CanvasPanel extends JPanel {
 
                 if (activeTool == Tool.ADD && gesture == Gesture.ADD_CLICK) {
                     updateGestureMovement(event.getPoint());
-                    if (!gestureMoved && previewTypeId != null) {
+                    if (!gestureMoved
+                            && (previewTypeId != null || previewComponentName != null)) {
                         Rectangle previewBounds = previewScreenBounds();
-                        placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
+                        if (previewComponentName != null) {
+                            ComponentDefinition definition = componentLibrary.get(previewComponentName);
+                            schematic.addInstance(
+                                    definition, previewX, previewY, previewFacing);
+                            componentFacingByName.put(definition.name(), previewFacing);
+                        } else {
+                            placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
+                        }
                         commitHistoryGesture();
                         repaintIfPresent(previewBounds);
                     }
@@ -1356,8 +1423,13 @@ public final class CanvasPanel extends JPanel {
     private void setFacing(Facing facing) {
         if (activeTool == Tool.ADD) {
             Rectangle oldPreviewBounds = previewScreenBounds();
-            setToolAttribute(previewTypeId, "facing", facing.name());
-            previewFacing = toolFacingByFamily.getOrDefault(previewTypeId, facing);
+            if (previewComponentName != null) {
+                previewFacing = facing;
+                componentFacingByName.put(previewComponentName, facing);
+            } else if (previewTypeId != null) {
+                setToolAttribute(previewTypeId, "facing", facing.name());
+                previewFacing = toolFacingByFamily.getOrDefault(previewTypeId, facing);
+            }
             repaintUnion(oldPreviewBounds, previewScreenBounds());
             return;
         }
@@ -1617,8 +1689,11 @@ public final class CanvasPanel extends JPanel {
             for (ComponentInstance instance : schematic.componentInstances()) {
                 ComponentDefinition definition = schematic.componentDefinitionFor(instance);
                 ComponentInstance.Geometry geometry = instance.geometry(definition);
+                int labelMargin = Math.max(
+                        DIRTY_REGION_MARGIN + 12,
+                        (int) Math.ceil(36.0 * transform.scale()));
                 if (screenClip.intersects(componentInstanceScreenBounds(
-                        instance, 0, 0, DIRTY_REGION_MARGIN + 12))) {
+                        instance, 0, 0, labelMargin))) {
                     paintComponentInstance(worldGraphics, instance, definition, geometry);
                 }
             }
@@ -1655,6 +1730,21 @@ public final class CanvasPanel extends JPanel {
                     worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
                     gateRenderer.render(worldGraphics, previewDefinition,
                             previewFacing, previewX, previewY);
+                    worldGraphics.setComposite(AlphaComposite.SrcOver);
+                }
+            } else if (activeTool == Tool.ADD && previewComponentName != null) {
+                ComponentDefinition definition = componentLibrary.get(previewComponentName);
+                ComponentInstance preview = new ComponentInstance(
+                        definition.name(), definition.hash(), "Preview", "",
+                        previewX, previewY, previewFacing);
+                ComponentInstance.Geometry geometry = preview.geometry(definition);
+                int labelMargin = Math.max(
+                        DIRTY_REGION_MARGIN + 12,
+                        (int) Math.ceil(36.0 * transform.scale()));
+                if (screenClip.intersects(componentInstanceScreenBounds(
+                        preview, definition, 0, 0, labelMargin))) {
+                    worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
+                    paintComponentInstance(worldGraphics, preview, definition, geometry);
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                 }
             }
@@ -1950,6 +2040,17 @@ public final class CanvasPanel extends JPanel {
     }
 
     private Rectangle previewScreenBounds() {
+        if (previewComponentName != null) {
+            ComponentDefinition definition = componentLibrary.get(previewComponentName);
+            ComponentInstance preview = new ComponentInstance(
+                    definition.name(), definition.hash(), "Preview", "",
+                    previewX, previewY, previewFacing);
+            int labelMargin = Math.max(
+                    DIRTY_REGION_MARGIN + 12,
+                    (int) Math.ceil(36.0 * transform.scale()));
+            return componentInstanceScreenBounds(
+                    preview, definition, 0, 0, labelMargin);
+        }
         if (previewTypeId == null) {
             return null;
         }
@@ -1968,8 +2069,14 @@ public final class CanvasPanel extends JPanel {
 
     private Rectangle componentInstanceScreenBounds(
             ComponentInstance instance, int deltaX, int deltaY, int margin) {
-        ComponentInstance.Geometry geometry =
-                instance.geometry(schematic.componentDefinitionFor(instance));
+        return componentInstanceScreenBounds(
+                instance, schematic.componentDefinitionFor(instance), deltaX, deltaY, margin);
+    }
+
+    private Rectangle componentInstanceScreenBounds(
+            ComponentInstance instance, ComponentDefinition definition,
+            int deltaX, int deltaY, int margin) {
+        ComponentInstance.Geometry geometry = instance.geometry(definition);
         return worldBoundsToScreen(new GateGeometry.Bounds(
                 instance.x() + deltaX, instance.y() + deltaY,
                 geometry.width(), geometry.height()), margin);
