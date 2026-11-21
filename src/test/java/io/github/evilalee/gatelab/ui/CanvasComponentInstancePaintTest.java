@@ -19,7 +19,7 @@ class CanvasComponentInstancePaintTest {
     private static final List<GateDef> GATES = GateLibrary.load().all();
 
     @Test
-    void canvasPaintsPlaceholderForAnInstanceWithoutOpeningDialogs() {
+    void canvasPaintsAComponentBoxWithoutOpeningDialogs() {
         Schematic internal = new Schematic(GATES);
         internal.add(new PlacedComponent("input", "input", 0, 0,
                 Facing.EAST, Map.of(), "D"));

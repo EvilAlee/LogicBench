@@ -107,6 +107,8 @@ public final class Main {
         frame.setIconImages(AppIcons.load());
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         CanvasPanel canvas = new CanvasPanel(galleryMode);
+        canvas.setComponentDefinitionViewListener(definition ->
+                ComponentDefinitionViewer.showDialog(frame, definition));
         DocumentState document = new DocumentState();
         SignalRecorder signalRecorder = new SignalRecorder();
         WaveformPanel waveformPanel = new WaveformPanel(signalRecorder);
@@ -275,6 +277,11 @@ public final class Main {
             updateTidyEnabled.run();
         });
         circuit.add(tidy);
+        circuit.addSeparator();
+        JMenuItem createComponent = new JMenuItem("Create component from circuit...");
+        createComponent.addActionListener(event ->
+                CreateComponentDialog.showDialog(frame, canvas));
+        circuit.add(createComponent);
         menuBar.add(circuit);
 
         JMenu edit = new JMenu("Edit");
@@ -492,9 +499,13 @@ public final class Main {
 
         Path selected = chooser.getSelectedFile().toPath();
         final Schematic loaded;
+        final List<String> definitionNotices;
         try {
             String json = Files.readString(selected);
-            loaded = SchematicJson.fromJson(json, GateLibrary.load().all());
+            SchematicJson.LoadResult result = SchematicJson.fromJsonWithNotices(
+                    json, GateLibrary.load().all(), canvas.componentLibrary());
+            loaded = result.schematic();
+            definitionNotices = result.notices();
         } catch (IOException | IllegalArgumentException exception) {
             showFileError(frame, "Could not open schematic", exception);
             return;
@@ -507,6 +518,13 @@ public final class Main {
         document.savedModificationCount = loaded.modificationCount();
         canvas.clearSignalHistory();
         canvas.replaceSchematic(loaded);
+        if (!definitionNotices.isEmpty()) {
+            JOptionPane.showMessageDialog(
+                    frame,
+                    String.join(System.lineSeparator(), definitionNotices),
+                    "Component definition versions",
+                    JOptionPane.WARNING_MESSAGE);
+        }
     }
 
     private static boolean saveDocument(
@@ -715,6 +733,8 @@ public final class Main {
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("Components");
         DefaultMutableTreeNode gates = new DefaultMutableTreeNode("Gates");
         DefaultMutableTreeNode pins = new DefaultMutableTreeNode("Pins");
+        DefaultMutableTreeNode builtIn = new DefaultMutableTreeNode("Built-in");
+        DefaultMutableTreeNode myComponents = new DefaultMutableTreeNode("My components");
 
         for (String family : GateLibrary.load().families()) {
             ComponentTreeItem item = new ComponentTreeItem(
@@ -725,8 +745,16 @@ public final class Main {
                 gates.add(new DefaultMutableTreeNode(item));
             }
         }
+        canvas.componentLibrary().builtIns().forEach(definition ->
+                builtIn.add(new DefaultMutableTreeNode(new ComponentTreeItem(
+                        "component:" + definition.name(), definition.name()))));
+        canvas.componentLibrary().userDefinitions().forEach(definition ->
+                myComponents.add(new DefaultMutableTreeNode(new ComponentTreeItem(
+                        "component:" + definition.name(), definition.name()))));
         root.add(gates);
         root.add(pins);
+        root.add(builtIn);
+        root.add(myComponents);
 
         JTree tree = new JTree(root);
         tree.setRootVisible(true);
@@ -735,6 +763,18 @@ public final class Main {
         tree.expandPath(new TreePath(root.getPath()));
         tree.expandPath(new TreePath(gates.getPath()));
         tree.expandPath(new TreePath(pins.getPath()));
+        tree.expandPath(new TreePath(builtIn.getPath()));
+        tree.expandPath(new TreePath(myComponents.getPath()));
+        javax.swing.tree.DefaultTreeModel componentTreeModel =
+                (javax.swing.tree.DefaultTreeModel) tree.getModel();
+        canvas.setComponentLibraryChangedListener(() -> {
+            myComponents.removeAllChildren();
+            canvas.componentLibrary().userDefinitions().forEach(definition ->
+                    myComponents.add(new DefaultMutableTreeNode(new ComponentTreeItem(
+                            "component:" + definition.name(), definition.name()))));
+            componentTreeModel.reload(myComponents);
+            tree.expandPath(new TreePath(myComponents.getPath()));
+        });
         tree.addTreeSelectionListener(event -> {
             TreePath path = tree.getSelectionPath();
             enterAddModeForPath(canvas, path);

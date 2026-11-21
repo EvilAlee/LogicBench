@@ -1,5 +1,6 @@
 package io.github.evilalee.gatelab.ui;
 
+import io.github.evilalee.gatelab.io.ComponentLibrary;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
@@ -119,14 +120,20 @@ public final class CanvasPanel extends JPanel {
 
     private final ViewTransform transform = new ViewTransform(1.0, 24.0, 24.0);
     private final boolean galleryMode;
+    private boolean readOnly;
+    private Consumer<ComponentDefinition> componentDefinitionViewListener = ignored -> { };
     private final GateLibrary gateLibrary;
+    private final ComponentLibrary componentLibrary;
     private final GateRenderer gateRenderer;
+    private final ComponentInstanceRenderer componentInstanceRenderer =
+            new ComponentInstanceRenderer();
     private Schematic schematic;
     private final SchematicHistory history = new SchematicHistory();
     private Runnable historyStateListener = () -> { };
     private final Runnable schematicSimulationListener = this::schematicChanged;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private final List<Consumer<Schematic>> schematicListeners = new ArrayList<>();
+    private Runnable componentLibraryChangedListener = () -> { };
     private Runnable signalHistoryClearListener = () -> { };
     private Runnable signalSampleListener = () -> { };
     private SimulationResult simulationResult;
@@ -157,6 +164,7 @@ public final class CanvasPanel extends JPanel {
     private Tool activeTool = Tool.EDIT;
     private boolean showGateNames = true;
     private String previewTypeId;
+    private String previewComponentName;
     private Facing previewFacing = Facing.EAST;
     private int previewX;
     private int previewY;
@@ -167,6 +175,7 @@ public final class CanvasPanel extends JPanel {
     private Runnable nameEditorFocusListener = () -> { };
     private final Map<String, Map<String, String>> toolAttributesByFamily = new HashMap<>();
     private final Map<String, Facing> toolFacingByFamily = new HashMap<>();
+    private final Map<String, Facing> componentFacingByName = new HashMap<>();
 
     private Gesture gesture = Gesture.NONE;
     private Point gestureStartScreen;
@@ -190,6 +199,7 @@ public final class CanvasPanel extends JPanel {
     public CanvasPanel(boolean galleryMode) {
         this.galleryMode = galleryMode;
         this.gateLibrary = GateLibrary.load();
+        this.componentLibrary = ComponentLibrary.load();
         this.gateRenderer = new GateRenderer(gateLibrary);
         this.schematic = new Schematic(gateLibrary.all());
         this.schematic.addChangeListener(schematicSimulationListener);
@@ -227,6 +237,35 @@ public final class CanvasPanel extends JPanel {
 
     public Schematic schematic() {
         return schematic;
+    }
+
+    /** The built-in and user-defined component catalogue used by the explorer. */
+    public ComponentLibrary componentLibrary() {
+        return componentLibrary;
+    }
+
+    /** Installs the explorer refresh callback used after a definition is saved. */
+    public void setComponentLibraryChangedListener(Runnable listener) {
+        componentLibraryChangedListener = listener == null ? () -> { } : listener;
+    }
+
+    /** Notifies the explorer that the in-memory user library has changed. */
+    public void notifyComponentLibraryChanged() {
+        componentLibraryChangedListener.run();
+    }
+
+    /** Installs the action used to open a component's read-only definition view. */
+    public void setComponentDefinitionViewListener(
+            Consumer<ComponentDefinition> listener) {
+        componentDefinitionViewListener = listener == null ? ignored -> { } : listener;
+    }
+
+    /** Prevents schematic editing while retaining pan, zoom, and definition navigation. */
+    public void setReadOnly(boolean readOnly) {
+        this.readOnly = readOnly;
+        if (readOnly) {
+            setEditMode();
+        }
     }
 
     /** Receives the current and every subsequently installed schematic. */
@@ -469,7 +508,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     public boolean undo() {
-        if (!history.undo(schematic)) {
+        if (readOnly || !history.undo(schematic)) {
             notifyHistoryStateChanged();
             return false;
         }
@@ -478,7 +517,7 @@ public final class CanvasPanel extends JPanel {
     }
 
     public boolean redo() {
-        if (!history.redo(schematic)) {
+        if (readOnly || !history.redo(schematic)) {
             notifyHistoryStateChanged();
             return false;
         }
@@ -570,6 +609,9 @@ public final class CanvasPanel extends JPanel {
 
     /** Applies an attribute edit from the attribute table or the Add-mode tool preview. */
     public boolean setSelectedAttribute(String key, String value) {
+        if (readOnly) {
+            return false;
+        }
         if (activeTool == Tool.ADD && previewTypeId != null) {
             return setToolAttribute(previewTypeId, key, value);
         }
@@ -709,19 +751,54 @@ public final class CanvasPanel extends JPanel {
     }
 
 
-    /** Enters repeated-click placement mode for a catalogue type. */
+    /** Enters repeated-click placement mode for a gate or black-box component. */
     public void enterAddMode(String typeId) {
+        if (readOnly) {
+            return;
+        }
+        if (typeId != null && typeId.startsWith("component:")) {
+            enterComponentAddMode(typeId.substring("component:".length()));
+            return;
+        }
         if (galleryMode) {
             return;
         }
         String family = gateLibrary.get(typeId).family();
-        if (activeTool == Tool.ADD && family.equals(previewTypeId)) {
+        if (activeTool == Tool.ADD && family.equals(previewTypeId)
+                && previewComponentName == null) {
             requestFocusInWindow();
             return;
         }
         previewTypeId = family;
+        previewComponentName = null;
         previewFacing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         toolAttributesByFamily.putIfAbsent(family, Map.of());
+        selectedIds.clear();
+        selectedWires.clear();
+        activeTool = Tool.ADD;
+        notifySelectionChanged();
+        Point2D.Double center = transform.screenToWorld(
+                Math.max(0, getWidth()) / 2.0, Math.max(0, getHeight()) / 2.0);
+        updatePreviewPosition(center.x, center.y);
+        resetGesture();
+        toolModeListener.accept(activeTool);
+        requestFocusInWindow();
+        repaint();
+    }
+
+    /** Enters repeated-click placement mode for one component-library definition. */
+    public void enterComponentAddMode(String definitionName) {
+        if (galleryMode || readOnly) {
+            return;
+        }
+        ComponentDefinition definition = componentLibrary.get(definitionName);
+        if (activeTool == Tool.ADD && definition.name().equals(previewComponentName)) {
+            requestFocusInWindow();
+            return;
+        }
+        previewTypeId = null;
+        previewComponentName = definition.name();
+        previewFacing = componentFacingByName.getOrDefault(definition.name(), Facing.EAST);
         selectedIds.clear();
         selectedWires.clear();
         activeTool = Tool.ADD;
@@ -750,6 +827,9 @@ public final class CanvasPanel extends JPanel {
 
     /** Selects the input-poking tool. */
     public void setPokeMode() {
+        if (readOnly) {
+            return;
+        }
         Rectangle oldTransientBounds = union(
                 previewScreenBounds(), gestureVisualScreenBounds());
         previewTypeId = null;
@@ -761,14 +841,33 @@ public final class CanvasPanel extends JPanel {
         repaintIfPresent(oldTransientBounds);
     }
 
-    /** One-shot tree drag/drop placement, sharing the same grid-snapped origin rule. */
+    /** One-shot tree drag/drop placement with one undo snapshot for either item kind. */
     public void placeFromDrop(String typeId, Point screenPoint) {
-        String family = gateLibrary.get(typeId).family();
+        if (readOnly || galleryMode) {
+            return;
+        }
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        if (typeId.startsWith("component:")) {
+            String definitionName = typeId.substring("component:".length());
+            ComponentDefinition definition = componentLibrary.get(definitionName);
+            Facing facing = componentFacingByName.getOrDefault(definitionName, Facing.EAST);
+            beginHistoryGesture();
+            schematic.addInstance(definition,
+                    snapToGrid(world.x), snapToGrid(world.y), facing);
+            commitHistoryGesture();
+            componentFacingByName.put(definitionName, facing);
+            selectedIds.clear();
+            selectedWires.clear();
+            setEditMode();
+            notifySelectionChanged();
+            repaint();
+            return;
+        }
+
+        String family = gateLibrary.get(typeId).family();
         Facing facing = toolFacingByFamily.getOrDefault(family, Facing.EAST);
         beginHistoryGesture();
-        PlacedComponent placed = placeAtWorld(
-                family, world.x, world.y, facing);
+        PlacedComponent placed = placeAtWorld(family, world.x, world.y, facing);
         commitHistoryGesture();
         selectedIds.clear();
         selectedWires.clear();
@@ -837,7 +936,7 @@ public final class CanvasPanel extends JPanel {
         getActionMap().put(actionName, new AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent event) {
-                if (!galleryMode) {
+                if (!galleryMode && !readOnly) {
                     action.run();
                 }
             }
@@ -848,7 +947,7 @@ public final class CanvasPanel extends JPanel {
         setTransferHandler(new TransferHandler() {
             @Override
             public boolean canImport(TransferSupport support) {
-                return !galleryMode && support.isDrop()
+                return !galleryMode && !readOnly && support.isDrop()
                         && support.isDataFlavorSupported(DataFlavor.stringFlavor);
             }
 
@@ -869,12 +968,51 @@ public final class CanvasPanel extends JPanel {
         });
     }
 
+    private ComponentInstance componentInstanceAt(Point screenPoint) {
+        Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
+        int x = (int) Math.floor(world.x);
+        int y = (int) Math.floor(world.y);
+        List<ComponentInstance> instances = schematic.componentInstances();
+        for (int index = instances.size() - 1; index >= 0; index--) {
+            ComponentInstance instance = instances.get(index);
+            ComponentInstance.Geometry geometry =
+                    instance.geometry(schematic.componentDefinitionFor(instance));
+            if (x >= instance.x() && x <= instance.x() + geometry.width()
+                    && y >= instance.y() && y <= instance.y() + geometry.height()) {
+                return instance;
+            }
+        }
+        return null;
+    }
+
+    private void openComponentDefinition(ComponentInstance instance) {
+        componentDefinitionViewListener.accept(schematic.componentDefinitionFor(instance));
+    }
+
+    private boolean showComponentInstancePopup(MouseEvent event) {
+        ComponentInstance instance = componentInstanceAt(event.getPoint());
+        if (instance == null) {
+            return false;
+        }
+        javax.swing.JPopupMenu popup = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem viewDefinition = new javax.swing.JMenuItem("View definition");
+        viewDefinition.addActionListener(ignored -> openComponentDefinition(instance));
+        popup.add(viewDefinition);
+        popup.show(this, event.getX(), event.getY());
+        return true;
+    }
+
     private void installMouseControls() {
         MouseAdapter mouseControls = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
                 if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)
                         && !galleryMode && activeTool == Tool.EDIT) {
+                    ComponentInstance instanceHit = componentInstanceAt(event.getPoint());
+                    if (instanceHit != null) {
+                        openComponentDefinition(instanceHit);
+                        return;
+                    }
                     Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
                     WireSegment wireHit = schematic.wireAt(
                             world.x, world.y, 6.0 / transform.scale()).orElse(null);
@@ -894,6 +1032,9 @@ public final class CanvasPanel extends JPanel {
 
             @Override
             public void mousePressed(MouseEvent event) {
+                if (event.isPopupTrigger() && showComponentInstancePopup(event)) {
+                    return;
+                }
                 requestFocusInWindow();
                 boolean middleDrag = SwingUtilities.isMiddleMouseButton(event);
                 boolean spaceLeftDrag = SwingUtilities.isLeftMouseButton(event) && spaceDown;
@@ -904,7 +1045,7 @@ public final class CanvasPanel extends JPanel {
                     setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
                     return;
                 }
-                if (galleryMode || !SwingUtilities.isLeftMouseButton(event)) {
+                if (galleryMode || readOnly || !SwingUtilities.isLeftMouseButton(event)) {
                     return;
                 }
 
@@ -938,6 +1079,9 @@ public final class CanvasPanel extends JPanel {
                     pointerFromScreen(event.getPoint());
                     updateGestureMovement(event.getPoint());
                     repaintUnion(oldPreviewBounds, previewScreenBounds());
+                    return;
+                }
+                if (readOnly) {
                     return;
                 }
                 if (activeTool == Tool.EDIT) {
@@ -978,21 +1122,32 @@ public final class CanvasPanel extends JPanel {
 
             @Override
             public void mouseReleased(MouseEvent event) {
+                if (event.isPopupTrigger() && showComponentInstancePopup(event)) {
+                    return;
+                }
                 if (panning) {
                     panning = false;
                     lastPanPoint = null;
                     setCursor(Cursor.getDefaultCursor());
                     return;
                 }
-                if (!SwingUtilities.isLeftMouseButton(event)) {
+                if (!SwingUtilities.isLeftMouseButton(event) || readOnly) {
                     return;
                 }
 
                 if (activeTool == Tool.ADD && gesture == Gesture.ADD_CLICK) {
                     updateGestureMovement(event.getPoint());
-                    if (!gestureMoved && previewTypeId != null) {
+                    if (!gestureMoved
+                            && (previewTypeId != null || previewComponentName != null)) {
                         Rectangle previewBounds = previewScreenBounds();
-                        placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
+                        if (previewComponentName != null) {
+                            ComponentDefinition definition = componentLibrary.get(previewComponentName);
+                            schematic.addInstance(
+                                    definition, previewX, previewY, previewFacing);
+                            componentFacingByName.put(definition.name(), previewFacing);
+                        } else {
+                            placeAtWorld(previewTypeId, previewX, previewY, previewFacing);
+                        }
                         commitHistoryGesture();
                         repaintIfPresent(previewBounds);
                     }
@@ -1352,10 +1507,18 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void setFacing(Facing facing) {
+        if (readOnly) {
+            return;
+        }
         if (activeTool == Tool.ADD) {
             Rectangle oldPreviewBounds = previewScreenBounds();
-            setToolAttribute(previewTypeId, "facing", facing.name());
-            previewFacing = toolFacingByFamily.getOrDefault(previewTypeId, facing);
+            if (previewComponentName != null) {
+                previewFacing = facing;
+                componentFacingByName.put(previewComponentName, facing);
+            } else if (previewTypeId != null) {
+                setToolAttribute(previewTypeId, "facing", facing.name());
+                previewFacing = toolFacingByFamily.getOrDefault(previewTypeId, facing);
+            }
             repaintUnion(oldPreviewBounds, previewScreenBounds());
             return;
         }
@@ -1372,7 +1535,8 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void deleteSelection() {
-        if ((selectedIds.isEmpty() && selectedWires.isEmpty()) || activeTool == Tool.ADD) {
+        if (readOnly || (selectedIds.isEmpty() && selectedWires.isEmpty())
+                || activeTool == Tool.ADD) {
             return;
         }
         Rectangle oldSelectionBounds = selectionScreenBounds();
@@ -1615,10 +1779,12 @@ public final class CanvasPanel extends JPanel {
             for (ComponentInstance instance : schematic.componentInstances()) {
                 ComponentDefinition definition = schematic.componentDefinitionFor(instance);
                 ComponentInstance.Geometry geometry = instance.geometry(definition);
+                int labelMargin = Math.max(
+                        DIRTY_REGION_MARGIN + 12,
+                        (int) Math.ceil(36.0 * transform.scale()));
                 if (screenClip.intersects(componentInstanceScreenBounds(
-                        instance, 0, 0, DIRTY_REGION_MARGIN + 12))) {
-                    paintComponentInstancePlaceholder(
-                            worldGraphics, instance, definition, geometry);
+                        instance, 0, 0, labelMargin))) {
+                    paintComponentInstance(worldGraphics, instance, definition, geometry);
                 }
             }
 
@@ -1656,6 +1822,21 @@ public final class CanvasPanel extends JPanel {
                             previewFacing, previewX, previewY);
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                 }
+            } else if (activeTool == Tool.ADD && previewComponentName != null) {
+                ComponentDefinition definition = componentLibrary.get(previewComponentName);
+                ComponentInstance preview = new ComponentInstance(
+                        definition.name(), definition.hash(), "Preview", "",
+                        previewX, previewY, previewFacing);
+                ComponentInstance.Geometry geometry = preview.geometry(definition);
+                int labelMargin = Math.max(
+                        DIRTY_REGION_MARGIN + 12,
+                        (int) Math.ceil(36.0 * transform.scale()));
+                if (screenClip.intersects(componentInstanceScreenBounds(
+                        preview, definition, 0, 0, labelMargin))) {
+                    worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
+                    paintComponentInstance(worldGraphics, preview, definition, geometry);
+                    worldGraphics.setComposite(AlphaComposite.SrcOver);
+                }
             }
 
             if (gesture == Gesture.SELECT_RECTANGLE && gestureMoved
@@ -1677,63 +1858,14 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
-    /** Draws a deliberately plain black-box body and its derived terminals. */
-    private void paintComponentInstancePlaceholder(
+    /** Draws a reusable black-box symbol without changing its electrical terminals. */
+    private void paintComponentInstance(
             Graphics2D graphics,
             ComponentInstance instance,
             ComponentDefinition definition,
             ComponentInstance.Geometry geometry) {
-        Graphics2D g2 = (Graphics2D) graphics.create();
-        try {
-            int x = instance.x();
-            int y = instance.y();
-            g2.setColor(Color.WHITE);
-            g2.fillRect(x, y, geometry.width(), geometry.height());
-            g2.setColor(Color.DARK_GRAY);
-            g2.setStroke(new BasicStroke((float) (1.4 / transform.scale())));
-            g2.drawRect(x, y, geometry.width(), geometry.height());
-
-            Font titleFont = new Font(Font.SANS_SERIF, Font.BOLD, 12);
-            g2.setFont(titleFont);
-            java.awt.FontMetrics titleMetrics = g2.getFontMetrics();
-            String title = definition.name();
-            g2.drawString(title,
-                    x + (geometry.width() - titleMetrics.stringWidth(title)) / 2,
-                    y + Math.max(titleMetrics.getAscent() + 4, geometry.height() / 2));
-            if (!instance.label().isEmpty()) {
-                Font labelFont = new Font(Font.SANS_SERIF, Font.PLAIN, 9);
-                g2.setFont(labelFont);
-                java.awt.FontMetrics labelMetrics = g2.getFontMetrics();
-                g2.drawString(instance.label(),
-                        x + (geometry.width() - labelMetrics.stringWidth(instance.label())) / 2,
-                        y + geometry.height() - 5);
-            }
-
-            g2.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 8));
-            java.awt.FontMetrics pinMetrics = g2.getFontMetrics();
-            for (ComponentInstance.PinGeometry pin : geometry.pins()) {
-                int outward = pin.direction() == ComponentDefinition.Direction.IN ? -9 : 9;
-                GateGeometry.Offset direction = GateGeometry.rotate(
-                        new GateGeometry.Offset(outward, 0), instance.rotation());
-                int endX = pin.x() + direction.x();
-                int endY = pin.y() + direction.y();
-                g2.drawLine(pin.x(), pin.y(), endX, endY);
-                g2.fillOval(pin.x() - 2, pin.y() - 2, 4, 4);
-                if (pin.isClock()) {
-                    // The square marker distinguishes an externally driven Clock input.
-                    g2.drawRect(pin.x() - 4, pin.y() - 4, 8, 8);
-                }
-                int textX = endX + (direction.x() < 0
-                        ? -pinMetrics.stringWidth(pin.name()) - 3
-                        : direction.x() > 0 ? 3 : -pinMetrics.stringWidth(pin.name()) / 2);
-                int textY = endY + (direction.y() < 0
-                        ? -2 : direction.y() > 0 ? pinMetrics.getAscent() + 2
-                        : pinMetrics.getAscent() / 2);
-                g2.drawString(pin.name(), textX, textY);
-            }
-        } finally {
-            g2.dispose();
-        }
+        componentInstanceRenderer.render(
+                graphics, instance, definition, geometry, transform.scale());
     }
 
     /** User labels remain screen-sized and sit above gates or beside I/O pins. */
@@ -1998,6 +2130,17 @@ public final class CanvasPanel extends JPanel {
     }
 
     private Rectangle previewScreenBounds() {
+        if (previewComponentName != null) {
+            ComponentDefinition definition = componentLibrary.get(previewComponentName);
+            ComponentInstance preview = new ComponentInstance(
+                    definition.name(), definition.hash(), "Preview", "",
+                    previewX, previewY, previewFacing);
+            int labelMargin = Math.max(
+                    DIRTY_REGION_MARGIN + 12,
+                    (int) Math.ceil(36.0 * transform.scale()));
+            return componentInstanceScreenBounds(
+                    preview, definition, 0, 0, labelMargin);
+        }
         if (previewTypeId == null) {
             return null;
         }
@@ -2016,8 +2159,14 @@ public final class CanvasPanel extends JPanel {
 
     private Rectangle componentInstanceScreenBounds(
             ComponentInstance instance, int deltaX, int deltaY, int margin) {
-        ComponentInstance.Geometry geometry =
-                instance.geometry(schematic.componentDefinitionFor(instance));
+        return componentInstanceScreenBounds(
+                instance, schematic.componentDefinitionFor(instance), deltaX, deltaY, margin);
+    }
+
+    private Rectangle componentInstanceScreenBounds(
+            ComponentInstance instance, ComponentDefinition definition,
+            int deltaX, int deltaY, int margin) {
+        ComponentInstance.Geometry geometry = instance.geometry(definition);
         return worldBoundsToScreen(new GateGeometry.Bounds(
                 instance.x() + deltaX, instance.y() + deltaY,
                 geometry.width(), geometry.height()), margin);
