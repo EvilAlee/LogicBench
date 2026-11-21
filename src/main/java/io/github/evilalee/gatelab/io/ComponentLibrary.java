@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.io;
 
 import io.github.evilalee.gatelab.model.Circuit;
+import io.github.evilalee.gatelab.model.ComponentDefinition;
 import io.github.evilalee.gatelab.model.Component;
 import io.github.evilalee.gatelab.model.Gate;
 import io.github.evilalee.gatelab.model.GateDef;
