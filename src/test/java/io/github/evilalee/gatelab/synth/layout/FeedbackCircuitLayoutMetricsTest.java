@@ -130,8 +130,8 @@ class FeedbackCircuitLayoutMetricsTest {
                 "fallback schematic must be the preserved legacy layout");
     }
 
-    @Test
-    void twoBitCounterCompactCandidateEmitsFullGeometryDiagnostic() {
+    @TestFactory
+    List<DynamicTest> twoBitCounterCompactCandidateEmitsFullGeometryDiagnostic() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile("""
                 Q0 = DFF(RESET_N & NOT(Q0), CLK)
                 Q1 = DFF(RESET_N & (Q1 ^ Q0), CLK)
@@ -139,10 +139,6 @@ class FeedbackCircuitLayoutMetricsTest {
         FeedbackCircuitExtractor.Extraction extraction =
                 compilation.feedbackExtraction().orElseThrow();
         SchematicLayout layout = new SchematicLayout(DEFINITIONS);
-
-        // COMPACT_ONLY still performs its normal doubled-spacing retry, but never
-        // substitutes the legacy layout. Any self-check failure includes the same
-        // Connectivity.analyze topology plus the full geometry dump.
         SchematicLayout.FeedbackLayoutRun compactRun = layout.layoutFeedbackRun(
                 extraction, SchematicLayout.FeedbackLayoutMode.COMPACT_ONLY);
         SchematicLayout.FeedbackLayoutRun legacyRun = layout.layoutFeedbackRun(
@@ -153,13 +149,24 @@ class FeedbackCircuitLayoutMetricsTest {
         Map<String, String> expectedSignals = expectedSignalLabels(
                 extraction, compactRun.result());
         String geometry = SchematicLayout.diagnosticDump(compact, expectedSignals);
-        System.out.println(geometry);
 
-        assertTrue(compactMetrics.area() < legacyMetrics.area(),
-                "2-bit counter compact candidate must beat the same-run legacy layout. "
-                        + "legacy=" + legacyMetrics.display()
-                        + " compact=" + compactMetrics.display()
-                        + geometry);
+        // Dynamic test names are written to the Gradle Actions log even when
+        // standard test streams are captured. Emit every diagnostic line as an
+        // individual named test so the CI log contains the complete geometry.
+        List<DynamicTest> diagnostics = new java.util.ArrayList<>();
+        int lineNumber = 0;
+        for (String line : geometry.split("\\R")) {
+            int currentLine = ++lineNumber;
+            diagnostics.add(DynamicTest.dynamicTest(
+                    "COUNTER-GEOMETRY " + currentLine + ": " + line, () -> { }));
+        }
+        diagnostics.add(DynamicTest.dynamicTest(
+                "EXPECTED DIAGNOSTIC FAILURE: 2-bit counter compact area must be below "
+                        + "same-run legacy; legacy=" + legacyMetrics.display()
+                        + " compact=" + compactMetrics.display(),
+                () -> assertTrue(compactMetrics.area() < legacyMetrics.area(),
+                        "2-bit counter compact candidate must beat the same-run legacy layout")));
+        return diagnostics;
     }
 
     private static Map<String, String> expectedSignalLabels(
