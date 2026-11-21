@@ -178,7 +178,8 @@ public final class SchematicLayout {
         DRIVER_BARYCENTER,
         REVERSED_DRIVER_BARYCENTER,
         CONSUMER_BARYCENTER,
-        DAG_SWEEPS
+        DAG_SWEEPS,
+        FEEDBACK_WIRE_AWARE
     }
 
     private record LayoutMeasurements(
@@ -592,12 +593,15 @@ public final class SchematicLayout {
                         orderFeedbackColumns(columns, true);
                 case CONSUMER_BARYCENTER ->
                         orderFeedbackColumnsByConsumers(columns, routeSteps);
+                case FEEDBACK_WIRE_AWARE -> orderFeedbackColumns(columns);
                 case DAG_SWEEPS -> throw new IllegalStateException(
                         "DAG sweep ordering is handled before input seeding");
             }
         }
         optimizeVerticalPositions(
-                columns, outputNodes, routeSteps, rowGap, feedback != null);
+                columns, outputNodes, routeSteps, rowGap, feedback != null,
+                feedback, gateNodes, TRUNK_PITCH * spacingFactor,
+                feedbackOrdering == FeedbackOrdering.FEEDBACK_WIRE_AWARE);
 
         int laneStart = TRUNK_START_MARGIN * spacingFactor;
         int lanePitch = TRUNK_PITCH * spacingFactor;
@@ -1002,7 +1006,11 @@ public final class SchematicLayout {
             Map<String, Node> outputNodes,
             List<RouteStep> routeSteps,
             int rowGap,
-            boolean feedbackPacking) {
+            boolean feedbackPacking,
+            FeedbackCircuitExtractor.Extraction feedback,
+            Map<String, Node> gateNodes,
+            int feedbackTrackPitch,
+            boolean includeFeedbackWireLength) {
         int outputColumn = columns.size() - 1;
         int[] bestPositions = null;
         long bestLength = Long.MAX_VALUE;
@@ -1029,6 +1037,10 @@ public final class SchematicLayout {
                 continue;
             }
             long length = totalVerticalWireLength(routeSteps);
+            if (includeFeedbackWireLength) {
+                length += totalFeedbackVerticalWireLength(
+                        feedback, gateNodes, feedbackTrackPitch);
+            }
             if (length < bestLength) {
                 bestLength = length;
                 bestPositions = captureVerticalPositions(columns);
@@ -1287,6 +1299,62 @@ public final class SchematicLayout {
         long total = 0L;
         for (int[] range : ranges.values()) {
             total += (long) range[1] - range[0];
+        }
+        return total;
+    }
+
+    /**
+     * Exact vertical contribution of feedback returns for the current node
+     * positions, using the same interval lane assignment and above/below lane
+     * choice as routeFeedbackEdges(). This is an optional candidate score;
+     * it does not change routing or relax the connectivity check.
+     */
+    private static long totalFeedbackVerticalWireLength(
+            FeedbackCircuitExtractor.Extraction extraction,
+            Map<String, Node> gateNodes,
+            int trackPitch) {
+        if (extraction == null || extraction.feedbackEdges().isEmpty()) {
+            return 0L;
+        }
+        Map<String, Integer> columnsByGate = new LinkedHashMap<>();
+        gateNodes.forEach((signal, node) -> columnsByGate.put(signal, node.column));
+        Map<FeedbackCircuitExtractor.FeedbackEdge, Integer> laneByEdge =
+                assignFeedbackLanes(extraction.feedbackEdges(), columnsByGate);
+        long total = 0L;
+        for (FeedbackCircuitExtractor.FeedbackEdge edge : extraction.feedbackEdges()) {
+            Node source = gateNodes.get(edge.sourceGate());
+            Node target = gateNodes.get(edge.targetGate());
+            if (source == null || target == null) {
+                throw new IllegalStateException("feedback route references a missing gate");
+            }
+            GateGeometry.Offset targetInputOffset = GateGeometry.pinOffset(
+                    target.definition,
+                    target.definition.inputs().get(edge.targetInputIndex()),
+                    Facing.EAST);
+            int sourceY = sourcePinY(source);
+            int targetY = target.y + targetInputOffset.y();
+            int minGateTop = Integer.MAX_VALUE;
+            int maxGateBottom = Integer.MIN_VALUE;
+            for (Node gate : gateNodes.values()) {
+                if (gate.column >= target.column && gate.column <= source.column) {
+                    GateGeometry.Bounds bounds = GateGeometry.bounds(
+                            gate.definition, Facing.EAST);
+                    minGateTop = Math.min(minGateTop, gate.y + bounds.y());
+                    maxGateBottom = Math.max(
+                            maxGateBottom, gate.y + bounds.y() + bounds.height());
+                }
+            }
+            if (minGateTop == Integer.MAX_VALUE) {
+                throw new IllegalStateException(
+                        "feedback interval contains no gate rows for " + edge);
+            }
+            int lane = laneByEdge.get(edge);
+            int aboveY = minGateTop - (lane + 1) * trackPitch;
+            int belowY = maxGateBottom + (lane + 1) * trackPitch;
+            int aboveLength = Math.abs(sourceY - aboveY) + Math.abs(targetY - aboveY);
+            int belowLength = Math.abs(sourceY - belowY) + Math.abs(targetY - belowY);
+            int laneY = aboveLength <= belowLength ? aboveY : belowY;
+            total += Math.abs(sourceY - laneY) + Math.abs(targetY - laneY);
         }
         return total;
     }
