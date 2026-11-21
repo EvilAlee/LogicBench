@@ -147,7 +147,7 @@ class AiCircuitLargeSpecTest {
         signals.add(new Output("v7", "e7"));
 
         List<Output> outputs = new ArrayList<>();
-        for (int i = 7; i >= 0; i--) outputs.add(new Output("P" + i, "P" + i));
+        for (int i = 7; i >= 0; i--) outputs.add(new Output("P" + i, "v" + i));
         JsonObject spec = spec("A", List.of("A3", "A2", "A1", "A0"),
                 "B", List.of("B3", "B2", "B1", "B0"),
                 "P", List.of("P7", "P6", "P5", "P4", "P3", "P2", "P1", "P0"),
