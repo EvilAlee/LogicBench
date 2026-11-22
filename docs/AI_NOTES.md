@@ -27,6 +27,36 @@ Bus pins are MSB first. A pin not listed in a bus is implicitly its own one-bit 
 
 The model must not return a truth table. The new response schema does not contain a \`truthTable\` field. For compatibility, the parser tolerates that field in old answers/cache entries, ignores its contents completely, and never treats it as verification evidence.
 
+## AI Explain mode
+
+The AI dialog has a separate **Explain** mode; **Generate** remains the default and
+continues to use its existing templates, cache, regeneration, layout, and verification
+pipeline. Explain always snapshots the schematic currently open in the editor and
+exports it with `CircuitDescriber`, including boxed component calls and output
+selectors. An export failure, including the 400-gate limit, is shown locally and
+prevents any provider request.
+
+The request contains the user's question, the exported circuit expression, and
+engine-derived facts: gate and instance counts, input/output names, feedback and
+sequential classification, and simulation rows. Combinational designs with up to
+six inputs include every row; designs with more inputs include 64 evenly spread
+rows. Feedback or sequential designs explicitly report
+`contains feedback; truth table not shown`. Truth-table values are obtained by
+the LogicBench engine, not by the model.
+
+Explain has its own response schema: required `summary` and `steps`, with optional
+`notable`. Malformed responses are retried using the existing attempt and provider
+model-fallback policy. Transport failure is shown as `UNAVAILABLE`. The result is
+labelled **AI explanation, not verified**. Explain neither creates nor places a
+schematic and never reads or writes the verified-generation cache. The **Show what
+will be sent** preview displays the exact system prompt and user message sent to
+the provider.
+
+The model may describe relationships visible in the exported expression and
+engine facts only. It must not be treated as an independent verification or as a
+source of unreported timing, electrical, or physical behavior. Users should inspect
+the actual schematic and its engine facts.
+
 ## Limits
 
 All limits live in \`AiCircuitLimits\`:
