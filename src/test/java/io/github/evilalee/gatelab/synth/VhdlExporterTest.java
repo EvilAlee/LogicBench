@@ -35,6 +35,7 @@ class VhdlExporterTest {
         ComponentDefinition fullAdder = componentLibrary(temp).get("FA");
         VhdlExporter.Export exported = VhdlExporter.export(
                 fullAdder.internalCircuit(), "FA.lbc");
+        printVhdl("FULL_ADDER_GOLDEN", exported.text());
 
         String expected = resource("vhdl/full_adder.vhd");
         assertEquals(expected, exported.text());
@@ -60,6 +61,7 @@ class VhdlExporterTest {
         ComponentDefinition inner = andDefinition();
         Schematic parent = instanceParent(inner, "Outer");
         String vhdl = VhdlExporter.export(parent, "parent.lbc").text();
+        printVhdl("INSTANCE", vhdl);
 
         assertTrue(vhdl.contains("entity Outer is"));
         assertTrue(vhdl.contains("entity work.Inner"));
@@ -87,6 +89,7 @@ class VhdlExporterTest {
 
         Schematic root = instanceParent(middle, "NestedTop");
         String vhdl = VhdlExporter.export(root, "nested.lbc").text();
+        printVhdl("NESTED", vhdl);
         int leafAt = vhdl.indexOf("entity Leaf is");
         int middleAt = vhdl.indexOf("entity Middle is");
         int rootAt = vhdl.indexOf("entity NestedTop is");
@@ -296,6 +299,12 @@ class VhdlExporterTest {
         }
         throw new IllegalArgumentException(
                 "Ambiguous schematic component label '" + idOrLabel + "': " + matches);
+    }
+
+    private static void printVhdl(String label, String vhdl) {
+        System.out.println("VHDL_DIAGNOSTIC_" + label + "_BEGIN");
+        System.out.print(vhdl);
+        System.out.println("VHDL_DIAGNOSTIC_" + label + "_END");
     }
 
     private static String resource(String name) throws IOException {
