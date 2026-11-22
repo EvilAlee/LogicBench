@@ -297,20 +297,20 @@ public final class AiCircuitService {
 
         if (allowTemplateResponses) {
             JsonObject templateProperties = new JsonObject();
-        JsonObject generator = new JsonObject();
-        generator.addProperty("type", "STRING");
-        templateProperties.add("generator", generator);
-        JsonObject parameterValue = new JsonObject();
-        parameterValue.addProperty("type", "STRING");
-        JsonObject parameters = new JsonObject();
-        parameters.addProperty("type", "OBJECT");
-        parameters.add("additionalProperties", parameterValue);
-        templateProperties.add("params", parameters);
-        JsonObject template = new JsonObject();
-        template.addProperty("type", "OBJECT");
-        template.add("properties", templateProperties);
-        template.add("required", stringArray("generator", "params"));
-        template.addProperty("additionalProperties", false);
+            JsonObject generator = new JsonObject();
+            generator.addProperty("type", "STRING");
+            templateProperties.add("generator", generator);
+            JsonObject parameterValue = new JsonObject();
+            parameterValue.addProperty("type", "STRING");
+            JsonObject parameters = new JsonObject();
+            parameters.addProperty("type", "OBJECT");
+            parameters.add("additionalProperties", parameterValue);
+            templateProperties.add("params", parameters);
+            JsonObject template = new JsonObject();
+            template.addProperty("type", "OBJECT");
+            template.add("properties", templateProperties);
+            template.add("required", stringArray("generator", "params"));
+            template.addProperty("additionalProperties", false);
             properties.add("template", template);
         }
 
@@ -688,7 +688,7 @@ public final class AiCircuitService {
                 GeneratedCircuit template = matched.circuit();
                 String label = templateLabel(template);
                 Attempt generated = validate(templateAnswerJson(template, label),
-                        invertingGates, expectedRowsText, useLibraryComponents, true);
+                        invertingGates, expectedRowsText, useLibraryComponents, true, List.of());
                 log.add("Matched deterministic " + template.generator() + " template.");
                 if (generated.passed() && generated.independentCheck()) {
                     log.add("Verified the template against its integer specification.");
