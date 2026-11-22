@@ -9,20 +9,14 @@ import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
-import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -59,8 +53,8 @@ class ComponentExpressionBoxLayoutMetricsTest {
         assertEquals(2, counter.schematic().componentInstances().size());
         assertEquals(9, adder.inputComponentIds().size());
         assertEquals(5, adder.outputComponentIds().size());
-        assertEquals(2, counter.clockComponentIds().size()
-                + counter.inputComponentIds().size() - 1);
+        assertEquals(1, counter.inputComponentIds().size(), "RESET input");
+        assertEquals(1, counter.clockComponentIds().size(), "CLK input");
     }
 
     private static String fourBitAdder() {
