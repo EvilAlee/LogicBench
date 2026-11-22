@@ -74,7 +74,9 @@ public final class PinStateHelper {
         Objects.requireNonNull(simulation, "simulation");
 
         Map<PinKey, Connectivity.Net> netByPin = new LinkedHashMap<>();
+        Set<WireSegment> resultWires = new HashSet<>();
         for (Connectivity.Net net : simulation.topology().nets()) {
+            resultWires.addAll(net.segments());
             for (Connectivity.PinPosition position : net.pins()) {
                 PinKey key = new PinKey(position.componentId(), position.pinId());
                 if (netByPin.putIfAbsent(key, net) != null) {
@@ -82,6 +84,10 @@ public final class PinStateHelper {
                             "simulation topology contains duplicate pin " + key);
                 }
             }
+        }
+        if (!resultWires.equals(new HashSet<>(schematic.wires()))) {
+            throw new IllegalArgumentException(
+                    "simulation result does not match the current schematic wires");
         }
 
         Map<PinKey, Pin> pins = new LinkedHashMap<>();
@@ -95,7 +101,12 @@ public final class PinStateHelper {
                                 + position.componentId() + "." + position.pinId());
             }
 
-            Value value = simulation.netValues().getOrDefault(net, Value.X);
+            Value value = simulation.netValues().get(net);
+            if (value == null) {
+                throw new IllegalArgumentException(
+                        "simulation result has no value for pin net "
+                                + position.componentId() + "." + position.pinId());
+            }
             boolean connected = !net.segments().isEmpty() || net.pins().size() > 1;
             State state = !connected ? State.UNCONNECTED : switch (value) {
                 case ZERO -> State.CONNECTED_ZERO;
