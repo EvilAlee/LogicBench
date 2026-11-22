@@ -63,7 +63,8 @@ class VhdlExporterTest {
         String vhdl = VhdlExporter.export(parent, "parent.lbc").text();
         printVhdl("INSTANCE", vhdl);
 
-        assertTrue(vhdl.contains("entity Outer is"));
+        assertTrue(vhdl.contains("entity parent is"));
+        assertTrue(vhdl.contains("Outer : entity work.Inner"));
         assertTrue(vhdl.contains("entity work.Inner"));
         assertTrue(vhdl.contains("A =>"));
         assertTrue(vhdl.contains("B =>"));
