@@ -177,14 +177,14 @@ class VhdlExporterTest {
 
     private static Schematic instanceParent(ComponentDefinition definition, String label) {
         Schematic parent = new Schematic(DEFINITIONS);
-        addPort(parent, "X", "input", 0, 0);
-        addPort(parent, "Y", "input", 0, 100);
-        addPort(parent, "Z", "output", 650, 50);
+        PlacedComponent inputX = addPort(parent, "X", "input", 0, 0);
+        PlacedComponent inputY = addPort(parent, "Y", "input", 0, 100);
+        PlacedComponent outputZ = addPort(parent, "Z", "output", 650, 50);
         ComponentInstance instance = parent.addInstance(
                 definition, label, 300, 0, Facing.EAST);
-        connect(parent, "X", "out", instance.id(), definition.inputPorts().get(0).name());
-        connect(parent, "Y", "out", instance.id(), definition.inputPorts().get(1).name());
-        connect(parent, instance.id(), definition.outputPorts().get(0).name(), "Z", "in0");
+        connect(parent, inputX.id(), "out", instance.id(), definition.inputPorts().get(0).name());
+        connect(parent, inputY.id(), "out", instance.id(), definition.inputPorts().get(1).name());
+        connect(parent, instance.id(), definition.outputPorts().get(0).name(), outputZ.id(), "in0");
         return parent;
     }
 
