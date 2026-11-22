@@ -150,9 +150,14 @@ syntax. It emits one call assignment per instance, uses the saved instance
 label when present (otherwise its deterministic instance ID such as `U1`),
 and emits output references such as `U1.S` and `U1.COUT`. Unlabelled boxes retain their stable document instance IDs (normally
 `U1`, `U2`, ...), which are already deterministic. Recompiling the
-description resolves those calls through the component library. The existing
-AI generation/validation path is separate: it retains its expression/netlist
-gate-expansion flow and does not consume boxed component-call syntax.
+description resolves those calls through the component library. AI Generate mode
+can also use combinational library boxes when **Use library components** is
+enabled. Its request-scoped catalog exposes ordered ports and component
+descriptions. When a request explicitly names a library component, AI generation
+requires boxed instances and does not substitute a gate-level template.
+Components containing feedback or sequential behavior remain outside this
+AI-generation path; ordinary typed-expression calls retain their separate
+instance-aware compiler behavior described above.
 
 ## Desktop GUI workflow
 
