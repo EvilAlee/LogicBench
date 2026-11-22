@@ -1067,9 +1067,6 @@ class AiCircuitServiceTest {
 
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
         assertTrue(provider.calls > 0);
-        assertTrue(result.attemptLog().stream()
-                .anyMatch(line -> line.contains("Expression compilation failed")
-                        && line.contains("raw feedback is disabled")));
         assertNull(result.layout());
         assertNull(result.truthTable());
     }

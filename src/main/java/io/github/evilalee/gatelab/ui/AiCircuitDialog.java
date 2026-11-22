@@ -1,11 +1,13 @@
 package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.ai.AiCache;
+import io.github.evilalee.gatelab.ai.AiDebugLog;
 import io.github.evilalee.gatelab.ai.AiCircuitService;
 import io.github.evilalee.gatelab.ai.AiExplainService;
 import io.github.evilalee.gatelab.ai.AiConfig;
 import io.github.evilalee.gatelab.ai.AiConnectionTester;
 import io.github.evilalee.gatelab.ai.GeminiProvider;
+import io.github.evilalee.gatelab.io.ComponentLibrary;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.synth.Expression;
@@ -75,10 +77,12 @@ public final class AiCircuitDialog extends JDialog {
     private final JButton placeButton = new JButton("Place circuit");
     private final JButton testConnectionButton = new JButton("Test connection");
     private final JButton copyExpressionsButton = new JButton("Copy expressions");
+    private final JButton copyRawAnswerButton = new JButton("Copy last raw answer");
     private final JButton previewExplainButton = new JButton("Show what will be sent");
     private final JCheckBox optimizeInvertingGates =
             new JCheckBox("Optimize with NAND/NOR/XNOR", true);
     private final JCheckBox useTemplates = createUseTemplatesCheckbox();
+    private final JCheckBox useLibraryComponents = createUseLibraryComponentsCheckbox();
     private final JTextArea expectedRows = new JTextArea(2, 64);
     private final JScrollPane expectedRowsScroll = new JScrollPane(expectedRows);
     private final JPanel generationOptions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -110,8 +114,11 @@ public final class AiCircuitDialog extends JDialog {
         this.tableModel = new TruthTableModel(config);
         this.truthTable = new JTable(tableModel);
         this.cache = new AiCache(config.configDirectory());
+        ComponentLibrary componentLibrary = ComponentLibrary.load();
         this.service = new AiCircuitService(
-                new GeminiProvider(config), io.github.evilalee.gatelab.io.GateLibrary.load().all(), cache);
+                new GeminiProvider(config), io.github.evilalee.gatelab.io.GateLibrary.load().all(),
+                componentLibrary.all(), cache,
+                new AiDebugLog(config.configDirectory(), config::redact));
 
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
@@ -146,6 +153,7 @@ public final class AiCircuitDialog extends JDialog {
         keyPanel.add(keyStatus, BorderLayout.NORTH);
         keyPanel.add(setupHelp, BorderLayout.CENTER);
         generationOptions.add(useTemplates);
+        generationOptions.add(useLibraryComponents);
         generationOptions.add(optimizeInvertingGates);
         keyPanel.add(generationOptions, BorderLayout.EAST);
         expectedRows.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
@@ -189,7 +197,10 @@ public final class AiCircuitDialog extends JDialog {
         JPanel resultActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         copyExpressionsButton.setEnabled(false);
         copyExpressionsButton.addActionListener(event -> copyExpressions());
+        copyRawAnswerButton.setEnabled(false);
+        copyRawAnswerButton.addActionListener(event -> copyLastRawAnswer());
         resultActions.add(copyExpressionsButton);
+        resultActions.add(copyRawAnswerButton);
         resultHeader.add(statusBadge, BorderLayout.WEST);
         resultHeader.add(summary, BorderLayout.CENTER);
         resultHeader.add(resultActions, BorderLayout.EAST);
@@ -263,6 +274,10 @@ public final class AiCircuitDialog extends JDialog {
         setMinimumSize(new Dimension(820, 680));
         setSize(1000, 790);
         setLocationRelativeTo(owner);
+    }
+
+    static JCheckBox createUseLibraryComponentsCheckbox() {
+        return new JCheckBox("Use library components", true);
     }
 
     static JCheckBox createUseTemplatesCheckbox() {
@@ -543,15 +558,18 @@ public final class AiCircuitDialog extends JDialog {
         appendLog("Starting generation.");
         boolean optimize = optimizeInvertingGates.isSelected();
         boolean templates = useTemplates.isSelected();
+        boolean libraryComponents = useLibraryComponents.isSelected();
         String rowText = expectedRows.getText();
         optimizeInvertingGates.setEnabled(false);
         useTemplates.setEnabled(false);
+        useLibraryComponents.setEnabled(false);
         expectedRows.setEditable(false);
         modeSelector.setEnabled(false);
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
-                return service.generate(prompt, cacheOnly, optimize, rowText, bypassCache, templates);
+                return service.generate(prompt, cacheOnly, optimize, rowText, bypassCache,
+                        templates, libraryComponents);
             }
 
             @Override
@@ -562,6 +580,7 @@ public final class AiCircuitDialog extends JDialog {
                 description.setEditable(true);
                 optimizeInvertingGates.setEnabled(true);
                 useTemplates.setEnabled(true);
+                useLibraryComponents.setEnabled(true);
                 expectedRows.setEditable(true);
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
@@ -583,6 +602,7 @@ public final class AiCircuitDialog extends JDialog {
                     Throwable cause = exception.getCause();
                     showFailure(cause == null ? "Generation failed." : safeMessage(cause));
                 }
+                copyRawAnswerButton.setEnabled(!service.lastRawAnswer().isBlank());
             }
         };
         activeWorker.execute();
@@ -624,7 +644,9 @@ public final class AiCircuitDialog extends JDialog {
             displaySummary += " — " + status + " via " + config.redact(result.answeredBy());
         }
         summary.setText(config.redact(displaySummary));
-        expressionsArea.setText(formatExpressions(result.signals(), result.expressions()));
+        expressionsArea.setText(result.expressionSource().isBlank()
+                ? formatExpressions(result.signals(), result.expressions())
+                : config.redact(result.expressionSource()));
         copyExpressionsButton.setEnabled(!expressionsArea.getText().isBlank());
         tableModel.setTable(result.truthTable());
         if (result.fromCache()) {
@@ -644,7 +666,7 @@ public final class AiCircuitDialog extends JDialog {
             statusBadge.setBackground(new Color(250, 225, 205));
         }
         boolean placeable = result.status() != AiCircuitService.Status.UNAVAILABLE
-                && result.layout() != null;
+                && result.schematic() != null;
         placeButton.setEnabled(placeable);
         if (result.status() == AiCircuitService.Status.BUILT) {
             appendLog("BUILT: no independent check was supplied; read the engine truth table.");
@@ -689,6 +711,14 @@ public final class AiCircuitDialog extends JDialog {
         return List.copyOf(wrapped);
     }
 
+    private void copyLastRawAnswer() {
+        String raw = service.lastRawAnswer();
+        if (raw.isBlank()) return;
+        Toolkit.getDefaultToolkit().getSystemClipboard()
+                .setContents(new StringSelection(config.redact(raw)), null);
+        appendLog("Copied the last raw model answer.");
+    }
+
     private void copyExpressions() {
         if (currentResult == null) return;
         List<String> lines = new ArrayList<>();
@@ -698,7 +728,8 @@ public final class AiCircuitDialog extends JDialog {
         for (NamedExpression output : currentResult.expressions()) {
             lines.add(output.name() + " = " + formatExpression(output.expression()));
         }
-        String text = config.redact(String.join("\n", lines));
+        String text = config.redact(currentResult.expressionSource().isBlank()
+                ? String.join("\n", lines) : currentResult.expressionSource());
         if (text.isBlank()) return;
         try {
             Toolkit.getDefaultToolkit().getSystemClipboard()
@@ -739,7 +770,7 @@ public final class AiCircuitDialog extends JDialog {
     }
 
     private void place() {
-        if (isExplainMode() || currentResult == null || currentResult.layout() == null) return;
+        if (isExplainMode() || currentResult == null || currentResult.schematic() == null) return;
         if (currentResult.status() == AiCircuitService.Status.UNVERIFIED) {
             String rows = config.redact(String.join("\n", currentResult.mismatchingRows()));
             int answer = JOptionPane.showConfirmDialog(
@@ -764,13 +795,21 @@ public final class AiCircuitDialog extends JDialog {
             if (answer != JOptionPane.YES_OPTION) return;
         }
 
-        canvas.replaceWithGeneratedCircuit(currentResult.layout().schematic());
-        canvas.setStatusMessage(switch (currentResult.status()) {
+        canvas.replaceWithGeneratedCircuit(currentResult.schematic());
+        String status = switch (currentResult.status()) {
             case VERIFIED -> "AI circuit verified against independent checks and placed.";
             case BUILT -> "AI circuit built; no independent check was supplied.";
             case UNVERIFIED -> "Unverified AI circuit placed after confirmation.";
             case UNAVAILABLE -> "AI circuit unavailable.";
-        });
+        };
+        if (!currentResult.componentUseCounts().isEmpty()) {
+            String components = currentResult.componentUseCounts().entrySet().stream()
+                    .sorted(java.util.Map.Entry.comparingByKey())
+                    .map(entry -> entry.getKey() + " x" + entry.getValue())
+                    .collect(java.util.stream.Collectors.joining(", "));
+            status += " uses components: " + components + ".";
+        }
+        canvas.setStatusMessage(status);
         dispose();
     }
 

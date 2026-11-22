@@ -22,6 +22,7 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
+- feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification; sequential components remain unsupported.
 - feature-ai-explain: read-only AI explanations of the open schematic, with deterministic engine facts, pre-send request preview, and no placement or cache interaction.
 - fix-instance-selection: component box instances participate in mixed click/marquee selection, drag, rotate, delete and undo/redo; instance pins use validated wire-follow routing.
 - feature-expression-feedback: resolve all named expression definitions independent of line order, and build feedback schematics through the existing feedback-lane layout path with connectivity verification.
@@ -30,7 +31,6 @@
 - feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
 - feature-constant-folding: extend constant simplification to sequential expressions and replace generated literal inputs with fixed, non-pokeable constant sources.
 - feature-circuit-exporter: add deterministic, Swing-free schematic/netlist expression export; headless tests first, Circuit menu action last.
-- feature-pin-dots: expose compiler-topology pin states and dangling wire ends, paint zoom-aware pin markers, add pin tooltips and a default-on View toggle.
 
 ## Next
 1. M9a attribute table with editable labels
@@ -74,4 +74,4 @@
 - User reviews and merges each milestone PR.
 
 - AI circuit generation uses `AiConfig` in `$XDG_CONFIG_HOME/logicbench/ai.json` or `~/.config/logicbench/ai.json` on Linux and `%APPDATA%\\LogicBench\\ai.json` on Windows. Verified live answers are cached in `ai_cache.json`; six bundled examples are in `demo_prompts.json`.
-- AI-generated output remains combinational: its existing response format/prompt continues to inline intermediates, and its validator still uses the DAG-only layout and truth-table verification path, which rejects cyclic answers. The old PR #25 output-reference-as-input limitation is fixed for the expression dialog; it is not a description of the AI response path.
+- AI generation can request boxed instances from ComponentLibrary when "Use library components" is enabled. HA, FA and user definitions without feedback are catalogued; DLATCH, DFF, TFF and JKFF are explicitly marked sequential and unavailable. Instance calls compile through ComponentExpressionCompiler into boxed schematics, then SchematicCompiler flattens them for exhaustive engine/spec/expected-row verification. Gate-only answers retain the existing DAG path, and raw feedback remains disabled. The old PR #25 output-reference-as-input limitation is fixed for the expression dialog; it is not a description of the AI response path.

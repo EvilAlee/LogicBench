@@ -11,6 +11,7 @@ public final class AiCircuitLimits {
     public static final int MAX_SPEC_RULES = 16;
     public static final int MAX_EXPECTED_ROWS = 64;
     public static final int MAX_ATTEMPTS = 3;
+    public static final int MAX_INSTANCES = 32;
 
     private AiCircuitLimits() {
     }

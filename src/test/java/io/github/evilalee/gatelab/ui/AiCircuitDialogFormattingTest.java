@@ -21,6 +21,13 @@ class AiCircuitDialogFormattingTest {
     }
 
     @Test
+    void useLibraryComponentsCheckboxDefaultsToSelected() {
+        JCheckBox checkbox = AiCircuitDialog.createUseLibraryComponentsCheckbox();
+        assertTrue(checkbox.isSelected());
+        assertEquals("Use library components", checkbox.getText());
+    }
+
+    @Test
     void displaysSignalsBeforeOutputsAndUsesInternalAssignmentSyntax() {
         List<NamedExpression> signals = List.of(
                 new NamedExpression("C1", ExpressionParser.parse("A & B")));
