@@ -179,9 +179,9 @@ class BoxPinConnectivityRegressionTest {
                 states.requirePin(and.id(), "in0").state());
         assertEquals(PinStateHelper.State.UNCONNECTED,
                 states.requirePin(and.id(), "in1").state());
-        assertEquals(PinStateHelper.State.CONNECTED_X,
+        assertEquals(PinStateHelper.State.CONNECTED_ONE,
                 states.requirePin(and.id(), "out").state());
-        assertEquals(PinStateHelper.State.CONNECTED_X,
+        assertEquals(PinStateHelper.State.CONNECTED_ONE,
                 states.requirePin(probe.id(), "in0").state());
         for (String pinId : List.of("in0", "in1", "out")) {
             assertEquals(PinStateHelper.State.UNCONNECTED,
