@@ -532,9 +532,10 @@ public final class VhdlExporter {
                 assertions.add(output.emittedName() + " = '" + vhdlValue(value) + "'");
             }
             if (!assertions.isEmpty()) {
+                final int currentRow = row;
                 String rowBits = inputs.stream().map(port -> {
                     int index = inputs.indexOf(port);
-                    return ((row >>> (inputs.size() - 1 - index)) & 1) == 1 ? "1" : "0";
+                    return ((currentRow >>> (inputs.size() - 1 - index)) & 1) == 1 ? "1" : "0";
                 }).reduce("", String::concat);
                 append(text, "        assert (" + String.join(" and ", assertions)
                         + ") report \"Mismatch for input row " + rowBits
