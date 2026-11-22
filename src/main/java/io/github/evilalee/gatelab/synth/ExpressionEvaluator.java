@@ -31,6 +31,12 @@ public final class ExpressionEvaluator {
             case Expression.Binary binary -> evaluateBinary(binary, assignment);
             case Expression.PartCall call -> throw new IllegalArgumentException(
                     "sequential part calls cannot be evaluated as Boolean expressions: " + call.kind());
+            case Expression.ComponentCall call -> throw new IllegalArgumentException(
+                    "component calls cannot be evaluated without a component library: "
+                            + call.componentName());
+            case Expression.ComponentOutput output -> throw new IllegalArgumentException(
+                    "component output references cannot be evaluated without a compiled instance: "
+                            + output.instanceName() + "." + output.outputName());
         };
     }
 

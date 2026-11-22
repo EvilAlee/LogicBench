@@ -157,6 +157,8 @@ public final class ExpressionCompiler {
         Map<String, Assignment> assignmentsByName = new LinkedHashMap<>();
         for (Statement statement : statements) {
             Assignment assignment = parseStatement(statement);
+            assignment = new Assignment(assignment.name(), assignment.kind(),
+                    expandLegacyPartCalls(assignment.expression()));
             if (assignmentsByName.putIfAbsent(assignment.name(), assignment) != null) {
                 throw new IllegalArgumentException(
                         assignment.kind() == AssignmentKind.OUTPUT
@@ -285,6 +287,41 @@ public final class ExpressionCompiler {
         return new Compilation(netlist, expressions, reusedOutputNames);
     }
 
+
+    /*
+     * The low-level netlist compiler deliberately remains the legacy gate-expansion
+     * path. The typed dialog uses ComponentExpressionCompiler for boxed instances.
+     */
+    private static Expression expandLegacyPartCalls(Expression expression) {
+        return switch (expression) {
+            case Expression.Constant constant -> constant;
+            case Expression.Variable variable -> variable;
+            case Expression.Unary unary -> new Expression.Unary(
+                    unary.operator(), expandLegacyPartCalls(unary.operand()));
+            case Expression.Binary binary -> new Expression.Binary(
+                    binary.operator(), expandLegacyPartCalls(binary.left()),
+                    expandLegacyPartCalls(binary.right()));
+            case Expression.ComponentOutput output -> throw new IllegalArgumentException(
+                    "instance output references require boxed component-call compilation: "
+                            + output.instanceName() + "." + output.outputName());
+            case Expression.ComponentCall call -> {
+                List<Expression> arguments = call.arguments().stream()
+                        .map(ExpressionCompiler::expandLegacyPartCalls).toList();
+                Expression.PartKind kind;
+                try {
+                    kind = Expression.PartKind.valueOf(
+                            call.componentName().toUpperCase(java.util.Locale.ROOT));
+                } catch (IllegalArgumentException exception) {
+                    throw new IllegalArgumentException(
+                            "component call '" + call.componentName()
+                                    + "' requires the component library instance compiler");
+                }
+                yield new Expression.PartCall(kind, arguments);
+            }
+            case Expression.PartCall part -> part;
+        };
+    }
+
     private record SequentialBuild(Netlist netlist, SequentialCircuit sequentialCircuit) {
     }
 
@@ -319,6 +356,8 @@ public final class ExpressionCompiler {
             case Expression.Binary binary ->
                     containsPartCall(binary.left()) || containsPartCall(binary.right());
             case Expression.PartCall ignored -> true;
+            case Expression.ComponentCall ignored -> true;
+            case Expression.ComponentOutput ignored -> false;
         };
     }
 
@@ -331,6 +370,9 @@ public final class ExpressionCompiler {
                     containsConstant(binary.left()) || containsConstant(binary.right());
             case Expression.PartCall call -> call.arguments().stream()
                     .anyMatch(ExpressionCompiler::containsConstant);
+            case Expression.ComponentCall call -> call.arguments().stream()
+                    .anyMatch(ExpressionCompiler::containsConstant);
+            case Expression.ComponentOutput ignored -> false;
         };
     }
 
@@ -360,6 +402,10 @@ public final class ExpressionCompiler {
                 for (int index = 0; index < argumentLimit; index++) {
                     collectClockNames(call.arguments().get(index), names);
                 }
+            }
+            case Expression.ComponentCall call -> call.arguments().forEach(argument ->
+                    collectClockNames(argument, names));
+            case Expression.ComponentOutput ignored -> {
             }
         }
     }
@@ -439,6 +485,13 @@ public final class ExpressionCompiler {
             }
             case Expression.PartCall call -> call.arguments().forEach(argument ->
                     collectRawReferences(argument, true, references));
+            case Expression.ComponentCall call -> call.arguments().forEach(argument ->
+                    collectRawReferences(argument, true, references));
+            case Expression.ComponentOutput output -> {
+                if (!insidePart) {
+                    references.add(output.instanceName());
+                }
+            }
         }
     }
 
@@ -526,6 +579,11 @@ public final class ExpressionCompiler {
                     yield gate.output();
                 }
                 case Expression.PartCall call -> expandPart(call);
+                case Expression.ComponentCall call -> throw new IllegalArgumentException(
+                        "component call requires instance-aware compilation: " + call.componentName());
+                case Expression.ComponentOutput output -> throw new IllegalArgumentException(
+                        "component output requires instance-aware compilation: "
+                                + output.instanceName() + "." + output.outputName());
             };
         }
 
@@ -764,6 +822,12 @@ public final class ExpressionCompiler {
                             .map(argument -> expandReferences(argument, assignmentsByName,
                                     expandedAssignments, expanding))
                             .toList());
+            case Expression.ComponentCall call -> new Expression.ComponentCall(
+                    call.componentName(), call.arguments().stream()
+                            .map(argument -> expandReferences(argument, assignmentsByName,
+                                    expandedAssignments, expanding))
+                            .toList());
+            case Expression.ComponentOutput output -> output;
         };
     }
 
@@ -1049,6 +1113,10 @@ public final class ExpressionCompiler {
                 case Expression.PartCall call -> new Expression.PartCall(
                         call.kind(), call.arguments().stream()
                                 .map(Builder::simplify).toList());
+                case Expression.ComponentCall call -> new Expression.ComponentCall(
+                        call.componentName(), call.arguments().stream()
+                                .map(Builder::simplify).toList());
+                case Expression.ComponentOutput output -> output;
             };
         }
 

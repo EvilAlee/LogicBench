@@ -156,17 +156,7 @@ class CircuitDescriberTest {
     }
 
     @Test
-    void componentInstancesAndMoreThanFourHundredGatesAreRefused() throws Exception {
-        Schematic withInstance = new Schematic(DEFINITIONS);
-        ComponentDefinition definition = componentLibrary().get("FA");
-        withInstance.addInstance(definition, 100, 100, Facing.EAST);
-        IllegalArgumentException instanceFailure = assertThrows(
-                IllegalArgumentException.class,
-                () -> CircuitDescriber.describe(withInstance));
-        assertEquals(
-                "Circuit export does not support component instances yet.",
-                instanceFailure.getMessage());
-
+    void moreThanFourHundredGatesAreRefused() {
         Schematic oversized = new Schematic(DEFINITIONS);
         for (int index = 0; index < 401; index++) {
             oversized.add(new PlacedComponent(

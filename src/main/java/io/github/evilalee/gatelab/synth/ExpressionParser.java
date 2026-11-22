@@ -14,7 +14,7 @@ public final class ExpressionParser {
     private enum Kind {
         IDENTIFIER, ZERO, ONE,
         NOT, AND, NAND, XOR, XNOR, OR, NOR,
-        APOSTROPHE, LEFT_PAREN, RIGHT_PAREN, COMMA, END
+        APOSTROPHE, LEFT_PAREN, RIGHT_PAREN, COMMA, DOT, END
     }
 
     private record Token(Kind kind, String text, int position) {
@@ -100,7 +100,14 @@ public final class ExpressionParser {
         if (match(Kind.IDENTIFIER)) {
             Token identifier = previous();
             if (match(Kind.LEFT_PAREN)) {
-                return parsePartCall(identifier);
+                return parseComponentCall(identifier);
+            }
+            if (match(Kind.DOT)) {
+                Token output = peek();
+                if (!match(Kind.IDENTIFIER)) {
+                    throw error(output, "expected an output pin name after '.'");
+                }
+                return new Expression.ComponentOutput(identifier.text(), previous().text());
             }
             return new Expression.Variable(identifier.text());
         }
@@ -115,35 +122,18 @@ public final class ExpressionParser {
         throw error(peek(), "expected an identifier, constant, or '('");
     }
 
-    private Expression parsePartCall(Token identifier) {
-        Expression.PartKind kind;
-        try {
-            kind = Expression.PartKind.valueOf(identifier.text().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException exception) {
-            throw error(identifier, "unknown part '" + identifier.text()
-                    + "'; expected DLATCH, DFF, TFF, or JKFF");
-        }
-
+    private Expression parseComponentCall(Token identifier) {
         List<Expression> arguments = new ArrayList<>();
         if (!match(Kind.RIGHT_PAREN)) {
             do {
                 arguments.add(parseOr());
             } while (match(Kind.COMMA));
             if (!match(Kind.RIGHT_PAREN)) {
-                throw error(peek(), "expected ',' or ')' in " + kind + " arguments");
+                throw error(peek(), "expected ',' or ')' in " + identifier.text() + " arguments");
             }
         }
 
-        if (arguments.size() != kind.argumentCount()) {
-            throw error(identifier, kind + " requires " + kind.argumentCount()
-                    + " arguments, got " + arguments.size());
-        }
-        if (kind.clocked()
-                && !(arguments.getLast() instanceof Expression.Variable)) {
-            throw error(identifier, "CLK argument to " + kind
-                    + " must be a plain identifier (for example, CLK)");
-        }
-        return new Expression.PartCall(kind, arguments);
+        return new Expression.ComponentCall(identifier.text(), arguments);
     }
 
     private boolean match(Kind... kinds) {
@@ -218,6 +208,10 @@ public final class ExpressionParser {
                 }
                 case ',' -> {
                     result.add(new Token(Kind.COMMA, ",", index++));
+                    continue;
+                }
+                case '.' -> {
+                    result.add(new Token(Kind.DOT, ".", index++));
                     continue;
                 }
                 default -> {

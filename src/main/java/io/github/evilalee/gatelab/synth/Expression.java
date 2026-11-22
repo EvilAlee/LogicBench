@@ -6,7 +6,8 @@ import java.util.Objects;
 
 /** Immutable Boolean expression abstract syntax tree. */
 public sealed interface Expression
-        permits Expression.Constant, Expression.Variable, Expression.Unary, Expression.Binary, Expression.PartCall {
+        permits Expression.Constant, Expression.Variable, Expression.Unary, Expression.Binary,
+                Expression.PartCall, Expression.ComponentCall, Expression.ComponentOutput {
 
     /** Distinct variable names in left-to-right source order. */
     default List<String> variables() {
@@ -27,6 +28,9 @@ public sealed interface Expression
             }
             case PartCall call -> call.arguments().forEach(argument ->
                     collectVariables(argument, names));
+            case ComponentCall call -> call.arguments().forEach(argument ->
+                    collectVariables(argument, names));
+            case ComponentOutput ignored -> { }
         }
     }
 
@@ -105,6 +109,22 @@ public sealed interface Expression
                 throw new IllegalArgumentException(
                         "CLK argument to " + kind + " must be a plain identifier");
             }
+        }
+    }
+
+    /** A call resolved against ComponentLibrary by the instance-aware compiler. */
+    record ComponentCall(String componentName, List<Expression> arguments) implements Expression {
+        public ComponentCall {
+            componentName = requireIdentifier(componentName, "component name");
+            arguments = List.copyOf(Objects.requireNonNull(arguments, "arguments"));
+        }
+    }
+
+    /** A named output pin of an instance introduced by an assignment such as U0 := FA(...). */
+    record ComponentOutput(String instanceName, String outputName) implements Expression {
+        public ComponentOutput {
+            instanceName = requireIdentifier(instanceName, "instance name");
+            outputName = requireIdentifier(outputName, "output name");
         }
     }
 

@@ -22,6 +22,7 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
+- feature-component-calls: typed expressions create library boxes by default, support multi-output selectors and feedback through sequential instances; legacy sequential expansion remains explicit; CircuitDescriber round-trips boxed instances.
 - fix-instance-selection: component box instances participate in mixed click/marquee selection, drag, rotate, delete and undo/redo; instance pins use validated wire-follow routing.
 - feature-expression-feedback: resolve all named expression definitions independent of line order, and build feedback schematics through the existing feedback-lane layout path with connectivity verification.
 - feature-select-net: double-click wire selection expands to the full Connectivity net; net collection tests cover junction branches and separate nets.
@@ -42,6 +43,7 @@
 - Gates are 2-input only until the M9a/M9b work is complete.
 
 ## Decisions
+- Typed expression calls resolve through ComponentLibrary into boxed instances by default; the typed dialog exposes legacy sequential gate expansion explicitly. AI validation remains on the original gate-expansion compiler path with raw feedback disabled. SchematicCompiler remains the single schematic-to-engine flattening path. Tidy still refuses instance-containing schematics until its extraction/layout path is hierarchical.
 - M9a stores only non-default size and inputs overrides in each component's attrs map; Facing remains top-level. Variant choices are derived from the matching family entries in gates.json; unavailable combinations are rejected.
 - M9a tool-attribute values are remembered per component family for the current session and copied into subsequently placed components.
 - Save files contain version, components (including input HIGH state), optional non-empty IO labels, and geometric wires only.

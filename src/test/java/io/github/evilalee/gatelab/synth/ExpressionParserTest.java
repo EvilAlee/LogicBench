@@ -91,6 +91,21 @@ class ExpressionParserTest {
     }
 
     @Test
+    void libraryCallsAndInstanceOutputReferencesHaveDistinctAstNodes() {
+        Expression.ComponentCall call = assertInstanceOf(
+                Expression.ComponentCall.class, ExpressionParser.parse("FA(A, B, CIN)"));
+        assertEquals("FA", call.componentName());
+        assertEquals(java.util.List.of("A", "B", "CIN"), call.arguments().stream()
+                .flatMap(argument -> argument.variables().stream()).toList());
+
+        Expression.ComponentOutput output = assertInstanceOf(
+                Expression.ComponentOutput.class, ExpressionParser.parse("U0.COUT"));
+        assertEquals("U0", output.instanceName());
+        assertEquals("COUT", output.outputName());
+        assertTrue(output.variables().isEmpty());
+    }
+
+    @Test
     void missingReferenceAssignmentIsReportedByThePureEvaluator() {
         assertThrows(IllegalArgumentException.class,
                 () -> ExpressionEvaluator.evaluate(

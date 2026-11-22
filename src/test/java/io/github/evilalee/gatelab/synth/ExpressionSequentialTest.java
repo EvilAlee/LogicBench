@@ -102,12 +102,13 @@ class ExpressionSequentialTest {
     }
 
     @Test
-    void clockArgumentMustBeAPlainIdentifier() {
-        ParseException exception = assertThrows(
-                ParseException.class,
-                () -> ExpressionParser.parse("DFF(D, NOT CLK)"));
-        assertTrue(exception.detail().contains("CLK argument"));
-        assertTrue(exception.detail().contains("plain identifier"));
+    void parserLeavesLibraryClockPortValidationToComponentResolution() {
+        Expression parsed = ExpressionParser.parse("DFF(D, NOT CLK)");
+        assertTrue(parsed instanceof Expression.ComponentCall);
+        Expression.ComponentCall call = (Expression.ComponentCall) parsed;
+        assertEquals("DFF", call.componentName());
+        assertEquals(2, call.arguments().size());
+        assertTrue(call.arguments().getLast() instanceof Expression.Unary);
     }
 
     @Test

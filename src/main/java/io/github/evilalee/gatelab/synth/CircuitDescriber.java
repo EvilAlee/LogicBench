@@ -1,5 +1,10 @@
 package io.github.evilalee.gatelab.synth;
 
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentInstance;
+import io.github.evilalee.gatelab.model.Facing;
+import io.github.evilalee.gatelab.model.GateDef;
+import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
@@ -20,6 +25,8 @@ import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Converts a gate schematic or netlist into deterministic named Boolean expressions. */
 public final class CircuitDescriber {
@@ -65,6 +72,17 @@ public final class CircuitDescriber {
     private record GraphSource(Netlist netlist, SignalMappings mappings) {
     }
 
+    private record BoxExport(
+            ComponentInstance instance,
+            ComponentDefinition definition,
+            String expressionName,
+            String sourceIdPrefix,
+            Map<String, String> sourceNamesByPort,
+            Map<String, String> sinkNamesByPort,
+            Map<String, String> sourceIdsByName,
+            Map<String, String> sinkIdsByName) {
+    }
+
     private record StrongComponent(List<String> gateIds) {
         private StrongComponent {
             gateIds = List.copyOf(gateIds);
@@ -82,8 +100,7 @@ public final class CircuitDescriber {
     public static Description describe(Schematic schematic) {
         Objects.requireNonNull(schematic, "schematic");
         if (!schematic.componentInstances().isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Circuit export does not support component instances yet.");
+            return describeWithInstances(schematic);
         }
 
         long gateCount = schematic.components().stream()
@@ -120,6 +137,239 @@ public final class CircuitDescriber {
                             gateIds, constants));
         }
         return describeGraph(source.netlist(), source.mappings());
+    }
+
+    /**
+     * Converts each box boundary into temporary Input/Output terminals, describes
+     * the surrounding gate graph with the existing exporter, then reconstructs
+     * reusable calls around those boundary expressions.
+     */
+    private static Description describeWithInstances(Schematic source) {
+        List<ComponentInstance> instances = source.componentInstances().stream()
+                .sorted(Comparator.comparing(ComponentInstance::id)).toList();
+        long gateCount = source.components().stream()
+                .filter(component -> !isBoundaryOrConstant(component.typeId()))
+                .count();
+        for (ComponentInstance instance : instances) {
+            ComponentDefinition definition = source.componentDefinitionFor(instance);
+            gateCount += definition.internalCircuit().components().stream()
+                    .filter(component -> !isBoundaryOrConstant(component.typeId())).count();
+        }
+        requireGateLimit(gateCount);
+
+        PortNames ordinaryPorts = assignPortNames(source);
+        Set<String> usedNames = new LinkedHashSet<>(ordinaryPorts.byComponentId().values());
+        Map<String, String> usedInstanceNames = new LinkedHashMap<>();
+        List<BoxExport> boxExports = new ArrayList<>();
+        Set<String> usedComponentIds = source.components().stream()
+                .map(PlacedComponent::id)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+
+        for (int index = 0; index < instances.size(); index++) {
+            ComponentInstance instance = instances.get(index);
+            ComponentDefinition definition = source.componentDefinitionFor(instance);
+            String rawName = instance.label().isBlank()
+                    ? instance.id() : instance.label();
+            String expressionName = uniqueName(sanitizeIdentifier(rawName), usedNames);
+            usedInstanceNames.put(instance.id(), expressionName);
+
+            Map<String, String> sourceNames = new LinkedHashMap<>();
+            Map<String, String> sinkNames = new LinkedHashMap<>();
+            Map<String, String> sourceIds = new LinkedHashMap<>();
+            Map<String, String> sinkIds = new LinkedHashMap<>();
+            for (ComponentDefinition.Port port : definition.outputPorts()) {
+                String pseudoName = uniqueName(
+                        sanitizeIdentifier("BoxSource" + index + expressionName + port.name()),
+                        usedNames);
+                String pseudoId = uniqueSyntheticId(
+                        "export-box-source-" + index + "-" + port.name(), usedComponentIds);
+                sourceNames.put(port.name(), pseudoName);
+                sourceIds.put(pseudoName, pseudoId);
+            }
+            for (ComponentDefinition.Port port : definition.inputPorts()) {
+                String pseudoName = uniqueName(
+                        sanitizeIdentifier("BoxSink" + index + expressionName + port.name()),
+                        usedNames);
+                String pseudoId = uniqueSyntheticId(
+                        "export-box-sink-" + index + "-" + port.name(), usedComponentIds);
+                sinkNames.put(port.name(), pseudoName);
+                sinkIds.put(pseudoName, pseudoId);
+            }
+            boxExports.add(new BoxExport(
+                    instance, definition, expressionName, "Box" + index,
+                    Map.copyOf(sourceNames), Map.copyOf(sinkNames),
+                    Map.copyOf(sourceIds), Map.copyOf(sinkIds)));
+        }
+
+        Schematic temporary = new Schematic(source.gateDefinitions());
+        temporary.setUndefinedInputMode(source.undefinedInputMode());
+        for (PlacedComponent component : source.components()) {
+            temporary.add(component);
+            if (component.typeId().equals("input") && source.inputValue(component.id())) {
+                temporary.setInputValue(component.id(), true);
+            } else if (component.typeId().equals("clock") && source.clockValue(component.id())) {
+                temporary.setClockValue(component.id(), true);
+            }
+        }
+
+        GateDef inputDefinition = findNarrowDefinition(source, "input", 0);
+        GateDef outputDefinition = findNarrowDefinition(source, "output", 1);
+        for (BoxExport box : boxExports) {
+            Map<String, ComponentInstance.PinGeometry> geometryByName = new LinkedHashMap<>();
+            box.instance().geometry(box.definition()).pins().forEach(pin ->
+                    geometryByName.put(pin.name(), pin));
+            for (ComponentDefinition.Port port : box.definition().outputPorts()) {
+                ComponentInstance.PinGeometry pin = geometryByName.get(port.name());
+                PlacedComponent pseudo = sourceAtPin(
+                        box.sourceIdsByName().get(box.sourceNamesByPort().get(port.name())),
+                        inputDefinition, pin.x(), pin.y(), box.sourceNamesByPort().get(port.name()));
+                temporary.add(pseudo);
+            }
+            for (ComponentDefinition.Port port : box.definition().inputPorts()) {
+                ComponentInstance.PinGeometry pin = geometryByName.get(port.name());
+                PlacedComponent pseudo = sinkAtPin(
+                        box.sinkIdsByName().get(box.sinkNamesByPort().get(port.name())),
+                        outputDefinition, pin.x(), pin.y(), box.sinkNamesByPort().get(port.name()));
+                temporary.add(pseudo);
+            }
+        }
+        for (WireSegment wire : source.wires()) {
+            temporary.addWire(wire);
+        }
+
+        Description boundaryDescription = describe(temporary);
+        Map<String, String> replacements = new LinkedHashMap<>();
+        Set<String> syntheticSinkIds = new HashSet<>();
+        Map<String, Map<String, String>> argumentsByInstance = new LinkedHashMap<>();
+        for (BoxExport box : boxExports) {
+            Map<String, String> arguments = new LinkedHashMap<>();
+            argumentsByInstance.put(box.expressionName(), arguments);
+            for (Map.Entry<String, String> sourceName : box.sourceNamesByPort().entrySet()) {
+                replacements.put(sourceName.getValue(),
+                        box.expressionName() + "." + sourceName.getKey());
+            }
+            for (String sinkId : box.sinkIdsByName().values()) {
+                syntheticSinkIds.add(sinkId);
+            }
+        }
+
+        Map<String, String> emittedNameByComponentId = new HashMap<>();
+        boundaryDescription.componentIds().forEach((name, id) ->
+                emittedNameByComponentId.putIfAbsent(id, name));
+        Map<String, String> sinkExpressionById = new HashMap<>();
+        for (String line : boundaryDescription.text().split("\\R")) {
+            int separator = line.indexOf(" = ");
+            if (separator < 0) {
+                continue;
+            }
+            String left = line.substring(0, separator);
+            String right = line.substring(separator + 3);
+            String componentId = boundaryDescription.componentIds().get(left);
+            if (componentId != null && syntheticSinkIds.contains(componentId)) {
+                sinkExpressionById.put(componentId, replaceSignalNames(right, replacements));
+            }
+        }
+
+        List<String> callLines = new ArrayList<>();
+        for (BoxExport box : boxExports) {
+            List<String> arguments = new ArrayList<>();
+            for (ComponentDefinition.Port port : box.definition().inputPorts()) {
+                String sinkId = box.sinkIdsByName().get(box.sinkNamesByPort().get(port.name()));
+                String argument = sinkExpressionById.get(sinkId);
+                if (argument == null) {
+                    throw new IllegalArgumentException(
+                            "cannot export component instance " + box.expressionName()
+                                    + ": no driven expression found for input " + port.name());
+                }
+                arguments.add(argument);
+            }
+            callLines.add(box.expressionName() + " := " + box.definition().name()
+                    + "(" + String.join(", ", arguments) + ")");
+        }
+
+        List<String> expressionLines = new ArrayList<>();
+        for (String line : boundaryDescription.text().split("\\R")) {
+            int separator = line.indexOf(" = ");
+            if (separator >= 0) {
+                String left = line.substring(0, separator);
+                String componentId = boundaryDescription.componentIds().get(left);
+                if (componentId != null && syntheticSinkIds.contains(componentId)) {
+                    continue;
+                }
+            }
+            expressionLines.add(replaceSignalNames(line, replacements));
+        }
+        String text = String.join("\n", concat(callLines, expressionLines));
+        Map<String, String> componentIds = new LinkedHashMap<>();
+        boundaryDescription.componentIds().forEach((name, id) -> {
+            if (!usedSyntheticId(boxExports, id)) {
+                componentIds.put(name, id);
+            }
+        });
+        for (BoxExport box : boxExports) {
+            componentIds.put(box.expressionName(), box.instance().id());
+        }
+        return new Description(text, componentIds);
+    }
+
+    private static boolean usedSyntheticId(List<BoxExport> boxes, String id) {
+        return boxes.stream().anyMatch(box ->
+                box.sourceIdsByName().containsValue(id) || box.sinkIdsByName().containsValue(id));
+    }
+
+    private static String uniqueSyntheticId(String base, Set<String> used) {
+        String candidate = base;
+        int suffix = 2;
+        while (!used.add(candidate)) {
+            candidate = base + "-" + suffix++;
+        }
+        return candidate;
+    }
+
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> result = new ArrayList<>(first.size() + second.size());
+        result.addAll(first);
+        result.addAll(second);
+        return result;
+    }
+
+    private static String replaceSignalNames(String expression, Map<String, String> replacements) {
+        String result = expression;
+        List<String> names = replacements.keySet().stream()
+                .sorted(Comparator.comparingInt(String::length).reversed()).toList();
+        for (String name : names) {
+            Pattern pattern = Pattern.compile(
+                    "(?<![A-Za-z0-9_])" + Pattern.quote(name) + "(?![A-Za-z0-9_])");
+            result = pattern.matcher(result).replaceAll(
+                    Matcher.quoteReplacement(replacements.get(name)));
+        }
+        return result;
+    }
+
+    private static GateDef findNarrowDefinition(
+            Schematic schematic, String family, int inputCount) {
+        return schematic.gateDefinitions().stream()
+                .filter(definition -> definition.family().equals(family)
+                        && definition.size().equals("narrow")
+                        && definition.inputCount() == inputCount)
+                .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                        "gate catalogue is missing " + family + " with " + inputCount + " inputs"));
+    }
+
+    private static PlacedComponent sourceAtPin(
+            String id, GateDef definition, int pinX, int pinY, String label) {
+        GateGeometry.Offset pin = GateGeometry.outputOffset(definition, Facing.EAST);
+        return new PlacedComponent(
+                id, definition.family(), pinX - pin.x(), pinY - pin.y(),
+                Facing.EAST, Map.of(), label);
+    }
+
+    private static PlacedComponent sinkAtPin(
+            String id, GateDef definition, int pinX, int pinY, String label) {
+        GateGeometry.Offset pin = GateGeometry.inputOffsets(definition, Facing.EAST).getFirst();
+        return new PlacedComponent(
+                id, definition.family(), pinX - pin.x(), pinY - pin.y(),
+                Facing.EAST, Map.of(), label);
     }
 
     /** Describes a netlist directly; its original signal ids are retained in the component map. */

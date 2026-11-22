@@ -413,6 +413,11 @@ public final class AiCircuitDialog extends JDialog {
             case Expression.PartCall call -> call.kind() + "("
                     + String.join(", ", call.arguments().stream()
                             .map(AiCircuitDialog::formatExpression).toList()) + ")";
+            case Expression.ComponentCall call -> call.componentName() + "("
+                    + String.join(", ", call.arguments().stream()
+                            .map(AiCircuitDialog::formatExpression).toList()) + ")";
+            case Expression.ComponentOutput output ->
+                    output.instanceName() + "." + output.outputName();
             case Expression.Binary binary -> {
                 String operator = switch (binary.operator()) {
                     case AND -> "&";
