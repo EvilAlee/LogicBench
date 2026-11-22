@@ -1318,7 +1318,7 @@ public final class AiCircuitService {
                         List.of("This request requires boxed library component(s) "
                                 + missingComponents + ". Return an expressions answer with one or more "
                                 + "instances of each requested component; do not substitute a gate-only "
-                                + circuit or template."), List.of(),
+                                + "circuit or template."), List.of(),
                         answer.specification() != null || !expectedRowsText.isBlank());
             }
         }
