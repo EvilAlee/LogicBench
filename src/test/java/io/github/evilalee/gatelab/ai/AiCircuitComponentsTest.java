@@ -22,20 +22,24 @@ class AiCircuitComponentsTest {
     @TempDir Path directory;
 
     private static final class ScriptedProvider implements AiProvider {
-        private final String response;
+        private final List<String> responses;
+        private final List<List<Turn>> conversations = new ArrayList<>();
         private int calls;
         private JsonObject schema;
         private String prompt = "";
 
-        private ScriptedProvider(String response) {
-            this.response = response;
+        private ScriptedProvider(String... responses) {
+            this.responses = List.of(responses);
+            if (this.responses.isEmpty()) throw new IllegalArgumentException("at least one response is required");
         }
 
         @Override
         public String complete(String systemPrompt, List<Turn> conversation, JsonObject schema) {
-            calls++;
+            conversations.add(List.copyOf(conversation));
             this.schema = schema.deepCopy();
             this.prompt = systemPrompt;
+            String response = responses.get(Math.min(calls, responses.size() - 1));
+            calls++;
             return response;
         }
     }
@@ -48,6 +52,19 @@ class AiCircuitComponentsTest {
                                      List<ComponentDefinition> components) {
         return new AiCircuitService(provider, GateLibrary.load().all(),
                 components, cache, null);
+    }
+
+    private static String hybridTemplateFullAdderAnswer() {
+        return """
+                {
+                  "kind": "expressions",
+                  "summary": "4-bit ripple-carry adder built from full adder blocks",
+                  "template": {
+                    "generator": "ripple_adder",
+                    "params": {"n": "4", "carryIn": "yes"}
+                  }
+                }
+                """;
     }
 
     private static String fourBitFullAdderAnswer() {
@@ -108,6 +125,14 @@ class AiCircuitComponentsTest {
         spec.add("rules", rules);
         root.add("spec", spec);
         return root.toString();
+    }
+
+    private static List<String> toStrings(JsonArray values) {
+        List<String> result = new ArrayList<>();
+        for (int index = 0; index < values.size(); index++) {
+            result.add(values.get(index).getAsString());
+        }
+        return result;
     }
 
     private static JsonArray pins(String... values) {
@@ -198,6 +223,35 @@ class AiCircuitComponentsTest {
         assertTrue(provider.prompt.indexOf("U0 := FA(A0, B0, C0)")
                 < provider.prompt.indexOf("Library component catalog"));
         assertTrue(provider.schema.getAsJsonObject("properties").has("instances"));
+        assertFalse(provider.schema.getAsJsonObject("properties").has("template"));
+        assertEquals(List.of("kind", "summary", "inputs", "outputs", "instances"),
+                toStrings(provider.schema.getAsJsonArray("required")));
+        assertEquals(List.of("expressions"),
+                toStrings(provider.schema.getAsJsonObject("properties")
+                        .getAsJsonObject("kind").getAsJsonArray("enum")));
+    }
+
+    @Test
+    void explicitFullAdderRequestRejectsHybridTemplateAndRetriesWithBoxedInstances()
+            throws Exception {
+        String description = "Create a four bit adder using the full adder library component.";
+        ScriptedProvider provider = new ScriptedProvider(
+                hybridTemplateFullAdderAnswer(), fourBitFullAdderAnswer());
+
+        AiCircuitService.Result result = service(provider, null, definitions()).generate(
+                description, false, false, "", true, true, true);
+
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status(),
+                result.attemptLog().toString());
+        assertEquals(2, provider.calls);
+        assertEquals(4, result.schematic().componentInstances().size());
+        assertEquals(Map.of("FA", 4), result.componentUseCounts());
+        assertFalse(provider.schema.getAsJsonObject("properties").has("template"));
+        assertTrue(provider.prompt.startsWith("HIGHEST PRIORITY — REQUIRED LIBRARY BOXES:"));
+        assertTrue(provider.conversations.get(1).stream().anyMatch(turn ->
+                turn.text().contains("This request explicitly requires boxed library component(s) [FA]")));
+        assertTrue(result.attemptLog().stream().noneMatch(line ->
+                line.contains("Matched deterministic") || line.contains("Template: ripple_adder")));
     }
 
     @Test
