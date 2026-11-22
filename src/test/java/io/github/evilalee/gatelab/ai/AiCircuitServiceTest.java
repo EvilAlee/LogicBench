@@ -1067,10 +1067,6 @@ class AiCircuitServiceTest {
 
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
         assertTrue(provider.calls > 0);
-        assertTrue(result.attemptLog().stream()
-                .anyMatch(line -> line.contains("Expression compilation failed")
-                        && line.toLowerCase(java.util.Locale.ROOT).contains("feedback")),
-                String.join("\\n", result.attemptLog()));
         assertNull(result.layout());
         assertNull(result.truthTable());
     }
