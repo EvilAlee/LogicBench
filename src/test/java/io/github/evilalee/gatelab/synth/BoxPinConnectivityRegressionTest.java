@@ -11,6 +11,7 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.sim.PinStateHelper;
 import io.github.evilalee.gatelab.synth.ComponentExpressionCompiler;
 import io.github.evilalee.gatelab.synth.CircuitDescriber.Description;
 import org.junit.jupiter.api.Test;
@@ -143,7 +144,90 @@ class BoxPinConnectivityRegressionTest {
                     facing + " sum");
             assertEquals(Value.ONE, result.outputValues().get(probes.get("COUT").id()),
                     facing + " carry");
+
+            PinStateHelper.Result pinStates = PinStateHelper.analyze(schematic, result);
+            assertTrue(pinStates.pins().values().stream().noneMatch(pin ->
+                            pin.state() == PinStateHelper.State.UNCONNECTED),
+                    facing + " every rotated box and source pin is connected");
+            assertPinValuesMatchSimulator(schematic, result, pinStates);
             index++;
+        }
+    }
+
+    @Test
+    void pinStatesReportGateConnectionsUnconnectedPinsAndDanglingWireEnds() {
+        Schematic schematic = new Schematic(GATES);
+        PlacedComponent and = schematic.add("and", 200, 200, Facing.EAST);
+        PlacedComponent isolatedNor = schematic.add("nor", 800, 200, Facing.EAST);
+        PlacedComponent source = addInput(schematic, "SOURCE", 20, 200, true);
+        PlacedComponent probe = addOutput(schematic, "PROBE", 400, 200);
+
+        connectL(schematic, pin(schematic, source.id(), "out"),
+                pin(schematic, and.id(), "in0"), true);
+        connectL(schematic, pin(schematic, and.id(), "out"),
+                pin(schematic, probe.id(), "in0"), true);
+        schematic.addWire(600, 600, 640, 600);
+
+        SchematicCompiler.SimulationResult simulation =
+                SchematicCompiler.compileAndSettle(schematic);
+        PinStateHelper.Result states = PinStateHelper.analyze(schematic, simulation);
+
+        assertEquals(PinStateHelper.State.CONNECTED_ONE,
+                states.requirePin(source.id(), "out").state());
+        assertEquals(PinStateHelper.State.CONNECTED_ONE,
+                states.requirePin(and.id(), "in0").state());
+        assertEquals(PinStateHelper.State.UNCONNECTED,
+                states.requirePin(and.id(), "in1").state());
+        assertEquals(PinStateHelper.State.CONNECTED_X,
+                states.requirePin(and.id(), "out").state());
+        assertEquals(PinStateHelper.State.CONNECTED_X,
+                states.requirePin(probe.id(), "in0").state());
+        for (String pinId : List.of("in0", "in1", "out")) {
+            assertEquals(PinStateHelper.State.UNCONNECTED,
+                    states.requirePin(isolatedNor.id(), pinId).state(),
+                    "isolated gate pin " + pinId);
+        }
+
+        assertEquals(Set.of(
+                new Connectivity.Point(600, 600),
+                new Connectivity.Point(640, 600)), states.danglingWireEnds());
+        assertPinValuesMatchSimulator(schematic, simulation, states);
+    }
+
+    @Test
+    void pinStatesCoverLatchToAdderBoxesFanoutAndUnknownResetState() throws Exception {
+        ComponentLibrary library = ComponentLibrary.load(GATES, directory);
+        List<Fixture> fixtures = List.of(circuitA(library), circuitB(library));
+
+        for (Fixture fixture : fixtures) {
+            SchematicCompiler.SimulationResult initial =
+                    SchematicCompiler.compileAndSettle(fixture.schematic());
+            PinStateHelper.Result initialStates =
+                    PinStateHelper.analyze(fixture.schematic(), initial);
+            assertEquals(PinStateHelper.State.CONNECTED_X,
+                    initialStates.requirePin(fixture.latch().id(), "Q").state(),
+                    fixture.name() + " reset Q stays unknown");
+            assertEquals(PinStateHelper.State.CONNECTED_X,
+                    initialStates.requirePin(fixture.latch().id(), "QN").state(),
+                    fixture.name() + " reset QN stays unknown");
+            assertPinValuesMatchSimulator(fixture.schematic(), initial, initialStates);
+
+            SchematicCompiler.SimulationResult settled = exerciseLatch(fixture);
+            PinStateHelper.Result settledStates =
+                    PinStateHelper.analyze(fixture.schematic(), settled);
+            assertTrue(settledStates.pins().values().stream().noneMatch(pin ->
+                            pin.state() == PinStateHelper.State.UNCONNECTED),
+                    fixture.name() + " all top-level pins are connected");
+            assertPinValuesMatchSimulator(fixture.schematic(), settled, settledStates);
+
+            if (fixture.adders().size() == 2) {
+                assertEquals(PinStateHelper.State.CONNECTED_ONE,
+                        settledStates.requirePin(fixture.latch().id(), "Q").state());
+                assertEquals(PinStateHelper.State.CONNECTED_ONE,
+                        settledStates.requirePin(fixture.adders().get(0).id(), "A").state());
+                assertEquals(PinStateHelper.State.CONNECTED_ONE,
+                        settledStates.requirePin(fixture.adders().get(1).id(), "B").state());
+            }
         }
     }
 
@@ -455,6 +539,32 @@ class BoxPinConnectivityRegressionTest {
             line.append(" didNotSettle=").append(result.oscillating())
                     .append(" tickBudgetHit=").append(result.oscillating());
             System.out.println("  " + line);
+        }
+    }
+
+    private static void assertPinValuesMatchSimulator(
+            Schematic schematic,
+            SchematicCompiler.SimulationResult simulation,
+            PinStateHelper.Result pinStates) {
+        assertEquals(schematic.pinPositions().size(), pinStates.pins().size());
+        for (PinStateHelper.Pin pin : pinStates.pins().values()) {
+            Connectivity.Net net = simulation.topology().nets().stream()
+                    .filter(candidate -> candidate.pins().contains(pin.position()))
+                    .findFirst().orElseThrow();
+            Value simulatorValue = simulation.netValues().getOrDefault(net, Value.X);
+            assertEquals(simulatorValue, pin.value(),
+                    pin.position() + " pin value matches simulator");
+
+            boolean connected = !net.segments().isEmpty() || net.pins().size() > 1;
+            PinStateHelper.State expected = !connected
+                    ? PinStateHelper.State.UNCONNECTED
+                    : switch (simulatorValue) {
+                        case ZERO -> PinStateHelper.State.CONNECTED_ZERO;
+                        case ONE -> PinStateHelper.State.CONNECTED_ONE;
+                        case X -> PinStateHelper.State.CONNECTED_X;
+                    };
+            assertEquals(expected, pin.state(),
+                    pin.position() + " pin state matches simulator net");
         }
     }
 
