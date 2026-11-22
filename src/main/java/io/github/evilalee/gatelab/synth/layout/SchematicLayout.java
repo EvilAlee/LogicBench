@@ -1,5 +1,7 @@
 package io.github.evilalee.gatelab.synth.layout;
 
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -124,6 +126,7 @@ public final class SchematicLayout {
         FEEDBACK,
         CONSTANT,
         GATE,
+        BOX,
         OUTPUT,
         DUMMY
     }
@@ -136,6 +139,9 @@ public final class SchematicLayout {
         private final String signal;
         private final String componentId;
         private final GateDef definition;
+        private final ComponentDefinition boxDefinition;
+        private final List<String> inputPinNames;
+        private final Map<String, String> outputSignalsByPin;
         private final List<Node> previous = new ArrayList<>();
         private final List<Node> next = new ArrayList<>();
         private int x;
@@ -156,6 +162,35 @@ public final class SchematicLayout {
             this.signal = signal;
             this.componentId = componentId;
             this.definition = definition;
+            this.boxDefinition = null;
+            this.inputPinNames = List.of();
+            this.outputSignalsByPin = signal == null ? Map.of() : Map.of("out", signal);
+        }
+
+        private Node(
+                String key,
+                NodeKind kind,
+                int column,
+                int slotHeight,
+                String componentId,
+                GateDef definition,
+                ComponentDefinition boxDefinition,
+                List<String> inputPinNames,
+                Map<String, String> outputSignalsByPin) {
+            this.key = key;
+            this.kind = kind;
+            this.column = column;
+            this.slotHeight = slotHeight;
+            this.signal = null;
+            this.componentId = componentId;
+            this.definition = definition;
+            this.boxDefinition = boxDefinition;
+            this.inputPinNames = List.copyOf(inputPinNames);
+            this.outputSignalsByPin = Map.copyOf(outputSignalsByPin);
+        }
+
+        private boolean isBox() {
+            return boxDefinition != null;
         }
 
         private boolean isDummy() {
@@ -168,7 +203,12 @@ public final class SchematicLayout {
             int channel,
             Node source,
             Node target,
-            int targetInputIndex) {
+            int targetInputIndex,
+            String targetPinName) {
+        private RouteStep(
+                String signal, int channel, Node source, Node target, int targetInputIndex) {
+            this(signal, channel, source, target, targetInputIndex, null);
+        }
     }
 
     private record ChannelSignal(int channel, String signal) {
@@ -818,7 +858,7 @@ public final class SchematicLayout {
             for (Node node : columns.get(column)) {
                 if (!node.isDummy()) {
                     columnWidths[column] = Math.max(
-                            columnWidths[column], node.definition.width());
+                            columnWidths[column], nodeWidth(node));
                 }
             }
         }
@@ -872,6 +912,8 @@ public final class SchematicLayout {
         for (Node node : allNodes(columns)) {
             if (node.isDummy()) {
                 node.x = columnLeft[node.column];
+            } else if (node.isBox()) {
+                node.x = columnLeft[node.column];
             } else {
                 node.x = columnLeft[node.column] + node.definition.origin().x();
             }
@@ -888,9 +930,16 @@ public final class SchematicLayout {
                         || node.kind == NodeKind.FEEDBACK || node.kind == NodeKind.CONSTANT
                         ? node.signal
                         : node.kind == NodeKind.OUTPUT ? outputLabelFor(node, netlist) : "";
-                schematic.add(new PlacedComponent(
-                        node.componentId, node.definition.family(), node.x, node.y,
-                        Facing.EAST, Map.of(), label));
+                if (node.isBox()) {
+                    schematic.addInstance(new ComponentInstance(
+                            node.boxDefinition.name(), node.boxDefinition.hash(),
+                            node.componentId, "", node.x, node.y, Facing.EAST),
+                            node.boxDefinition);
+                } else {
+                    schematic.add(new PlacedComponent(
+                            node.componentId, node.definition.family(), node.x, node.y,
+                            Facing.EAST, Map.of(), label));
+                }
             }
         }
 
@@ -1433,8 +1482,8 @@ public final class SchematicLayout {
             Node previous, Node current, int rowGap, boolean feedbackPacking) {
         int requiredGap = rowGap;
         if (feedbackPacking) {
-            int previousPins = previous.isDummy() ? 1 : previous.definition.inputs().size() + 1;
-            int currentPins = current.isDummy() ? 1 : current.definition.inputs().size() + 1;
+            int previousPins = previous.isDummy() ? 1 : nodePinCount(previous);
+            int currentPins = current.isDummy() ? 1 : nodePinCount(current);
             int pinBasedGap = 10 + 10 * Math.max(previousPins, currentPins);
             requiredGap = Math.max(requiredGap, pinBasedGap);
         }
@@ -1443,8 +1492,10 @@ public final class SchematicLayout {
     }
 
     private static int nodeTopOffset(Node node) {
-        return node.isDummy()
-                ? -DUMMY_SLOT_HEIGHT / 2
+        if (node.isDummy()) {
+            return -DUMMY_SLOT_HEIGHT / 2;
+        }
+        return node.isBox() ? 0
                 : GateGeometry.bounds(node.definition, Facing.EAST).y();
     }
 
@@ -1452,27 +1503,107 @@ public final class SchematicLayout {
         if (node.isDummy()) {
             return DUMMY_SLOT_HEIGHT / 2;
         }
+        if (node.isBox()) {
+            return boxHeight(node.boxDefinition);
+        }
         GateGeometry.Bounds bounds = GateGeometry.bounds(node.definition, Facing.EAST);
         return bounds.y() + bounds.height();
     }
 
     private static int sourcePinY(Node source) {
+        return sourcePinY(source, source.signal);
+    }
+
+    private static int sourcePinY(Node source, String signal) {
         if (source.isDummy()) {
             return source.y;
+        }
+        if (source.isBox()) {
+            return source.y + boxPinOffset(
+                    source.boxDefinition, outputPinForSignal(source, signal)).y();
         }
         GateGeometry.Offset offset = GateGeometry.outputOffset(source.definition, Facing.EAST);
         return source.y + (offset == null ? 0 : offset.y());
     }
 
-    private static int targetPinY(RouteStep step) {
+    private static int sourcePinX(Node source, String signal) {
+        if (source.isDummy()) {
+            return source.x;
+        }
+        if (source.isBox()) {
+            return source.x + boxPinOffset(
+                    source.boxDefinition, outputPinForSignal(source, signal)).x();
+        }
+        GateGeometry.Offset offset = GateGeometry.outputOffset(source.definition, Facing.EAST);
+        return source.x + (offset == null ? 0 : offset.x());
+    }
+
+    private static GateGeometry.Offset targetPinOffset(RouteStep step) {
         Node target = step.target();
-        if (target.isDummy()) {
-            return target.y;
+        if (target.isBox()) {
+            String name = step.targetPinName() != null
+                    ? step.targetPinName()
+                    : target.inputPinNames.get(step.targetInputIndex());
+            return boxPinOffset(target.boxDefinition, name);
         }
         int inputIndex = step.targetInputIndex();
-        GateGeometry.Offset offset = GateGeometry.pinOffset(
+        return GateGeometry.pinOffset(
                 target.definition, target.definition.inputs().get(inputIndex), Facing.EAST);
-        return target.y + offset.y();
+    }
+
+    private static int targetPinY(RouteStep step) {
+        Node target = step.target();
+        return target.isDummy() ? target.y : target.y + targetPinOffset(step).y();
+    }
+
+    private static int nodeWidth(Node node) {
+        return node.isBox() ? ComponentInstance.BOX_WIDTH : node.definition.width();
+    }
+
+    private static int nodePinCount(Node node) {
+        return node.isBox()
+                ? node.boxDefinition.ports().size()
+                : node.definition.inputs().size() + 1;
+    }
+
+    private static int boxHeight(ComponentDefinition definition) {
+        return Math.max(definition.inputPorts().size(), definition.outputPorts().size())
+                * ComponentInstance.PORT_SPACING + ComponentInstance.PORT_SPACING;
+    }
+
+    private static GateGeometry.Offset boxPinOffset(
+            ComponentDefinition definition, String pinName) {
+        int height = boxHeight(definition);
+        List<ComponentDefinition.Port> ports = definition.ports();
+        int inputCount = definition.inputPorts().size();
+        for (int index = 0; index < inputCount; index++) {
+            ComponentDefinition.Port port = definition.inputPorts().get(index);
+            if (port.name().equals(pinName)) {
+                int firstY = (height - (inputCount - 1) * ComponentInstance.PORT_SPACING) / 2;
+                return new GateGeometry.Offset(
+                        0, firstY + index * ComponentInstance.PORT_SPACING);
+            }
+        }
+        List<ComponentDefinition.Port> outputs = definition.outputPorts();
+        for (int index = 0; index < outputs.size(); index++) {
+            if (outputs.get(index).name().equals(pinName)) {
+                int firstY = (height - (outputs.size() - 1) * ComponentInstance.PORT_SPACING) / 2;
+                return new GateGeometry.Offset(
+                        ComponentInstance.BOX_WIDTH,
+                        firstY + index * ComponentInstance.PORT_SPACING);
+            }
+        }
+        throw new IllegalArgumentException(
+                "component " + definition.name() + " has no port " + pinName);
+    }
+
+    private static String outputPinForSignal(Node node, String signal) {
+        return node.outputSignalsByPin.entrySet().stream()
+                .filter(entry -> entry.getValue().equals(signal))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "component " + node.componentId + " has no output for signal " + signal));
     }
 
     private static int roundToGrid(double coordinate) {
@@ -1588,10 +1719,13 @@ public final class SchematicLayout {
         int minY = Integer.MAX_VALUE;
         for (Node node : nodes) {
             if (!node.isDummy()) {
-                GateGeometry.Bounds bounds = GateGeometry.bounds(
-                        node.definition, Facing.EAST);
-                minX = Math.min(minX, node.x + bounds.x());
-                minY = Math.min(minY, node.y + bounds.y());
+                GateGeometry.Bounds bounds = node.isBox()
+                        ? new GateGeometry.Bounds(
+                                node.x, node.y, ComponentInstance.BOX_WIDTH,
+                                boxHeight(node.boxDefinition))
+                        : GateGeometry.bounds(node.definition, Facing.EAST);
+                minX = Math.min(minX, node.x + (node.isBox() ? 0 : bounds.x()));
+                minY = Math.min(minY, node.y + (node.isBox() ? 0 : bounds.y()));
             }
         }
         for (WireSegment wire : wires) {
@@ -1664,7 +1798,7 @@ public final class SchematicLayout {
                 int maxY = Integer.MIN_VALUE;
                 for (RouteStep step : channelSteps) {
                     sources.add(step.source());
-                    int sourceY = step.source().y;
+                    int sourceY = sourcePinY(step.source(), step.signal());
                     int[] target = targetPoint(step, columnLeft);
                     minY = Math.min(minY, Math.min(sourceY, target[1]));
                     maxY = Math.max(maxY, Math.max(sourceY, target[1]));
@@ -1674,8 +1808,9 @@ public final class SchematicLayout {
                         .sorted(Comparator.comparing(node -> node.key)).toList();
                 for (Node source : orderedSources) {
                     int sourceX = source.isDummy()
-                            ? columnLeft[channel] : source.x;
-                    addWire(wires, sourceX, source.y, trunkX, source.y);
+                            ? columnLeft[channel] : sourcePinX(source, signal);
+                    int sourceY = sourcePinY(source, signal);
+                    addWire(wires, sourceX, sourceY, trunkX, sourceY);
                 }
 
                 addWire(wires, trunkX, minY, trunkX, maxY);
@@ -1693,14 +1828,7 @@ public final class SchematicLayout {
         if (target.isDummy()) {
             return new int[]{columnLeft[target.column], target.y};
         }
-        GateDef definition = target.definition;
-        int inputIndex = step.targetInputIndex();
-        if (inputIndex < 0 || inputIndex >= definition.inputs().size()) {
-            throw new IllegalStateException(
-                    "invalid input index " + inputIndex + " for " + target.componentId);
-        }
-        GateGeometry.Offset offset = GateGeometry.pinOffset(
-                definition, definition.inputs().get(inputIndex), Facing.EAST);
+        GateGeometry.Offset offset = targetPinOffset(step);
         return new int[]{target.x + offset.x(), target.y + offset.y()};
     }
 
