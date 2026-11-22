@@ -512,7 +512,7 @@ public final class AiCircuitService {
                 For four-bit addition requested with FA, instantiate four FA boxes and connect
                 each COUT to the next CIN. Do not include a "template" field.
                 """.formatted(String.join(", ", requiredComponents));
-        if (!useLibraryComponents) return templateNotice + systemPrompt();
+        if (!useLibraryComponents) return systemPrompt() + "\n\n" + templateNotice;
         String instructions = """
                 
                 Library component answers may add "instances": [
@@ -543,8 +543,9 @@ public final class AiCircuitService {
                 Put U0..U3 in "instances" order and C0..C3 in "signals" order; the compiler places each
                 carry signal after its source box and before the next box that consumes it.
                 """;
-        return componentPriority + templateNotice + systemPrompt() + "\n\n" + instructions + "\n"
-                + AiComponentCatalog.promptBlock(definitions, request);
+        return systemPrompt() + "\n\n" + instructions + "\n"
+                + AiComponentCatalog.promptBlock(definitions, request)
+                + "\n\n" + templateNotice + componentPriority;
     }
 
     /**
