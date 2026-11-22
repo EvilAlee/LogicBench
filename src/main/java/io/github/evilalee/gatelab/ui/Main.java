@@ -386,6 +386,12 @@ public final class Main {
         });
         view.add(showGateNames);
 
+        JCheckBoxMenuItem showPinDots = new JCheckBoxMenuItem("Show pin dots", true);
+        canvas.setShowPinDots(showPinDots.isSelected());
+        showPinDots.addActionListener(event ->
+                canvas.setShowPinDots(showPinDots.isSelected()));
+        view.add(showPinDots);
+
         JCheckBoxMenuItem showWaveforms = new JCheckBoxMenuItem("Show waveforms");
         showWaveforms.addActionListener(event ->
                 waveformVisibility.accept(showWaveforms.isSelected()));
