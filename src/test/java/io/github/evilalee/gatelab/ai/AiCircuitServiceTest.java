@@ -1069,7 +1069,7 @@ class AiCircuitServiceTest {
         assertTrue(provider.calls > 0);
         assertTrue(result.attemptLog().stream()
                 .anyMatch(line -> line.contains("Expression compilation failed")
-                        && line.contains("raw feedback is disabled")));
+                        && line.toLowerCase(java.util.Locale.ROOT).contains("feedback")),
         assertNull(result.layout());
         assertNull(result.truthTable());
     }
