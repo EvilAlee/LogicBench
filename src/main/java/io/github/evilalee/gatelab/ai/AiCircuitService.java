@@ -512,7 +512,10 @@ public final class AiCircuitService {
                 For four-bit addition requested with FA, instantiate four FA boxes and connect
                 each COUT to the next CIN. Do not include a "template" field.
                 """.formatted(String.join(", ", requiredComponents));
-        if (!useLibraryComponents) return systemPrompt() + "\n\n" + templateNotice;
+        if (!useLibraryComponents) {
+            return allowTemplateResponses ? systemPrompt()
+                    : systemPrompt() + "\n\n" + templateNotice;
+        }
         String instructions = """
                 
                 Library component answers may add "instances": [
@@ -2224,6 +2227,7 @@ public final class AiCircuitService {
 
     private static String serializeAnswer(Answer answer) {
         JsonObject root = new JsonObject();
+        root.addProperty("kind", "expressions");
         root.addProperty("summary", answer.summary());
         JsonArray inputs = new JsonArray();
         answer.inputs().forEach(inputs::add);
