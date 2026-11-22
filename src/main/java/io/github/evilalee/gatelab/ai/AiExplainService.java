@@ -124,7 +124,7 @@ public final class AiExplainService {
         }
     }
 
-    private record NamedSource(String id, String name) {
+    private record NamedSource(String id, String name, boolean clock) {
     }
 
     private AiExplainService() {
@@ -173,7 +173,8 @@ public final class AiExplainService {
                         ? (inputs ? "In" : "Out") + fallback
                         : component.label();
             }
-            result.add(new NamedSource(component.id(), name));
+            result.add(new NamedSource(
+                    component.id(), name, component.typeId().equals("clock")));
             fallback++;
         }
         return List.copyOf(result);
@@ -198,9 +199,6 @@ public final class AiExplainService {
     }
 
     private static boolean containsSequentialElement(Schematic schematic) {
-        for (PlacedComponent component : schematic.components()) {
-            if (component.typeId().equals("clock")) return true;
-        }
         Set<String> visited = new HashSet<>();
         for (ComponentInstance instance : schematic.componentInstances()) {
             if (containsClockPortOrNestedClock(
@@ -287,8 +285,13 @@ public final class AiExplainService {
             String inputBits = pad(rowIndex.toString(2), inputs.size());
             Schematic rowSchematic = source.copy();
             for (int index = 0; index < inputs.size(); index++) {
-                rowSchematic.setInputValue(inputs.get(index).id(),
-                        inputBits.charAt(index) == '1');
+                if (inputs.get(index).clock()) {
+                    rowSchematic.setClockValue(inputs.get(index).id(),
+                            inputBits.charAt(index) == '1');
+                } else {
+                    rowSchematic.setInputValue(inputs.get(index).id(),
+                            inputBits.charAt(index) == '1');
+                }
             }
             SchematicCompiler.SimulationResult result =
                     SchematicCompiler.compileAndSettle(rowSchematic);

@@ -97,7 +97,7 @@ class AiExplainServiceTest {
         assertEquals("SYSTEM PROMPT\n" + provider.systemPrompts.getFirst()
                         + "\n\nUSER MESSAGE\n" + provider.conversations.getFirst().getFirst().text(),
                 prepared.previewText());
-        assertEquals(3, result.steps().size());
+        assertEquals(2, result.steps().size());
     }
 
     @Test
