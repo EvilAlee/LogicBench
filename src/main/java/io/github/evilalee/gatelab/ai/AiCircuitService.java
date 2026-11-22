@@ -37,6 +37,29 @@ import java.util.regex.Pattern;
 public final class AiCircuitService {
     public enum Status { VERIFIED, BUILT, UNVERIFIED, UNAVAILABLE }
 
+    public enum ExplanationStatus { EXPLAINED, INVALID_RESPONSE, UNAVAILABLE }
+
+    public record ExplanationResult(
+            int attemptCount,
+            ExplanationStatus status,
+            String summary,
+            List<String> steps,
+            List<String> notable,
+            List<String> attemptLog,
+            String answeredBy,
+            List<String> modelAttempts) {
+        public ExplanationResult {
+            if (attemptCount < 0) throw new IllegalArgumentException("attemptCount must not be negative");
+            Objects.requireNonNull(status, "status");
+            summary = summary == null ? "" : summary;
+            steps = List.copyOf(steps == null ? List.of() : steps);
+            notable = List.copyOf(notable == null ? List.of() : notable);
+            attemptLog = List.copyOf(attemptLog == null ? List.of() : attemptLog);
+            answeredBy = answeredBy == null ? "" : answeredBy;
+            modelAttempts = List.copyOf(modelAttempts == null ? List.of() : modelAttempts);
+        }
+    }
+
     @FunctionalInterface
     interface Sleeper {
         void sleep(long milliseconds) throws InterruptedException;
@@ -648,8 +671,145 @@ public final class AiCircuitService {
      * skipped for the rest of this generation request; transient failures advance
      * to the next model and only trigger a new round after all remaining models fail.
      */
+    /** Structured output schema for read-only circuit explanations. */
+    public static JsonObject explanationResponseSchema() {
+        JsonObject properties = new JsonObject();
+        JsonObject summary = new JsonObject();
+        summary.addProperty("type", "STRING");
+        properties.add("summary", summary);
+
+        JsonObject stringItem = new JsonObject();
+        stringItem.addProperty("type", "STRING");
+        JsonObject steps = new JsonObject();
+        steps.addProperty("type", "ARRAY");
+        steps.add("items", stringItem);
+        properties.add("steps", steps);
+
+        JsonObject notable = new JsonObject();
+        notable.addProperty("type", "ARRAY");
+        notable.add("items", stringItem.deepCopy());
+        properties.add("notable", notable);
+
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "OBJECT");
+        schema.add("properties", properties);
+        schema.add("required", stringArray("summary", "steps"));
+        schema.addProperty("additionalProperties", false);
+        return schema;
+    }
+
+    /** Applies the same provider redaction used for the Explain user turn. */
+    public String redactForProvider(String text) {
+        return provider.redact(Objects.requireNonNull(text, "text"));
+    }
+
+    /**
+     * Requests a read-only explanation. This path deliberately does not consult or
+     * update AiCache, build a layout, run generation verification, or create a circuit.
+     */
+    public ExplanationResult explain(String explainSystemPrompt, String requestText)
+            throws InterruptedException {
+        Objects.requireNonNull(explainSystemPrompt, "explainSystemPrompt");
+        Objects.requireNonNull(requestText, "requestText");
+        List<String> log = new ArrayList<>();
+        List<String> allModelAttempts = new ArrayList<>();
+        List<Turn> conversation = new ArrayList<>();
+        conversation.add(new Turn(Turn.Role.USER, provider.redact(requestText)));
+        Set<String> skippedModels = new LinkedHashSet<>();
+
+        for (int attempt = 1; attempt <= AiCircuitLimits.MAX_ATTEMPTS; attempt++) {
+            log.add("Explanation attempt " + attempt + ": requesting a model answer.");
+            ModelAnswer response;
+            try {
+                response = completeWithModelFallback(
+                        conversation, log, skippedModels,
+                        explainSystemPrompt, explanationResponseSchema());
+                allModelAttempts.addAll(response.modelAttempts());
+            } catch (ProviderFailure failure) {
+                allModelAttempts.addAll(failure.modelAttempts());
+                String reason = provider.redact(unavailableReason(failure));
+                log.add("AI unavailable: " + reason);
+                return new ExplanationResult(attempt - 1, ExplanationStatus.UNAVAILABLE,
+                        "UNAVAILABLE: " + reason, List.of(), List.of(), log,
+                        "", allModelAttempts);
+            }
+
+            String safeRaw = provider.redact(response.raw());
+            conversation.add(new Turn(Turn.Role.MODEL, safeRaw));
+            try {
+                JsonElement parsed = JsonParser.parseString(stripCodeFence(safeRaw));
+                if (!parsed.isJsonObject()) {
+                    throw new IllegalArgumentException("response must be a JSON object");
+                }
+                JsonObject object = parsed.getAsJsonObject();
+                Set<String> allowed = Set.of("summary", "steps", "notable");
+                Set<String> actual = new LinkedHashSet<>(object.keySet());
+                Set<String> extra = new LinkedHashSet<>(actual);
+                extra.removeAll(allowed);
+                if (!extra.isEmpty()) {
+                    throw new IllegalArgumentException("unexpected response fields: " + extra);
+                }
+                if (!actual.containsAll(Set.of("summary", "steps"))) {
+                    Set<String> missing = new LinkedHashSet<>(Set.of("summary", "steps"));
+                    missing.removeAll(actual);
+                    throw new IllegalArgumentException("missing response fields: " + missing);
+                }
+                String answerSummary = requireString(object.get("summary"), "summary").trim();
+                if (answerSummary.isEmpty()) {
+                    throw new IllegalArgumentException("summary must not be empty");
+                }
+                List<String> steps = parseExplanationList(
+                        requireArray(object, "steps"), "steps");
+                if (steps.isEmpty()) {
+                    throw new IllegalArgumentException("steps must contain at least one item");
+                }
+                List<String> notable = object.has("notable")
+                        ? parseExplanationList(requireArray(object, "notable"), "notable")
+                        : List.of();
+                log.add("Explanation response parsed successfully via " + response.model() + ".");
+                return new ExplanationResult(attempt, ExplanationStatus.EXPLAINED,
+                        answerSummary, steps, notable, log, response.model(), allModelAttempts);
+            } catch (RuntimeException malformed) {
+                String reason = provider.redact(malformed.getMessage() == null
+                        ? "invalid explanation response" : malformed.getMessage());
+                log.add("Explanation JSON/schema error: " + reason);
+                if (attempt < AiCircuitLimits.MAX_ATTEMPTS) {
+                    conversation.add(new Turn(Turn.Role.USER,
+                            "Your previous explanation response was invalid: " + reason
+                                    + ". Return only valid JSON with required string summary, "
+                                    + "steps array of strings, and optional notable array of strings."));
+                }
+            }
+        }
+        return new ExplanationResult(AiCircuitLimits.MAX_ATTEMPTS,
+                ExplanationStatus.INVALID_RESPONSE,
+                "AI returned an invalid explanation after "
+                        + AiCircuitLimits.MAX_ATTEMPTS + " attempts.",
+                List.of(), List.of(), log, "", allModelAttempts);
+    }
+
+    private static List<String> parseExplanationList(JsonArray values, String label) {
+        List<String> result = new ArrayList<>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            String value = requireString(values.get(index), label + "[" + index + "]").trim();
+            if (value.isEmpty()) {
+                throw new IllegalArgumentException(label + "[" + index + "] must not be empty");
+            }
+            result.add(value);
+        }
+        return List.copyOf(result);
+    }
+
     private ModelAnswer completeWithModelFallback(
             List<Turn> conversation, List<String> log, Set<String> skippedModels)
+            throws ProviderFailure, InterruptedException {
+        return completeWithModelFallback(
+                conversation, log, skippedModels, systemPrompt(), responseSchema());
+    }
+
+    private ModelAnswer completeWithModelFallback(
+            List<Turn> conversation, List<String> log, Set<String> skippedModels,
+            String selectedSystemPrompt, JsonObject selectedSchema)
             throws ProviderFailure, InterruptedException {
         List<String> models = provider.models();
         if (models == null || models.isEmpty()) models = List.of("default");
@@ -662,8 +822,8 @@ public final class AiCircuitService {
             for (String model : uniqueModels) {
                 if (skippedModels.contains(model)) continue;
                 try {
-                    String raw = provider.complete(model, systemPrompt(),
-                            List.copyOf(conversation), responseSchema());
+                    String raw = provider.complete(model, selectedSystemPrompt,
+                            List.copyOf(conversation), selectedSchema);
                     String safeModel = provider.redact(model);
                     String outcome = safeModel + ": 200 OK";
                     modelAttempts.add(outcome);

@@ -2,15 +2,18 @@ package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.ai.AiCache;
 import io.github.evilalee.gatelab.ai.AiCircuitService;
+import io.github.evilalee.gatelab.ai.AiExplainService;
 import io.github.evilalee.gatelab.ai.AiConfig;
 import io.github.evilalee.gatelab.ai.AiConnectionTester;
 import io.github.evilalee.gatelab.ai.GeminiProvider;
+import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.synth.Expression;
 import io.github.evilalee.gatelab.synth.NamedExpression;
 import io.github.evilalee.gatelab.synth.TruthTable;
 
 import javax.swing.BorderFactory;
+import javax.swing.JComboBox;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JDialog;
@@ -28,6 +31,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -54,10 +58,16 @@ public final class AiCircuitDialog extends JDialog {
     private final JTextArea description = new JTextArea(5, 64);
     private final JTextArea logArea = new JTextArea(7, 64);
     private final JTextArea expressionsArea = new JTextArea(6, 64);
+    private final JTextArea explanationArea = new JTextArea(12, 42);
+    private final JTextArea explainFactsArea = new JTextArea(12, 36);
     private final JLabel keyStatus = new JLabel();
     private final JLabel setupHelp = new JLabel(" ");
+    private final JLabel modeHint = new JLabel(
+            "Describe the circuit behavior, inputs and requested outputs.");
     private final JLabel summary = new JLabel(" ");
     private final JLabel statusBadge = new JLabel("READY", SwingConstants.CENTER);
+    private final JComboBox<String> modeSelector =
+            new JComboBox<>(new String[]{"Generate", "Explain"});
     private final TruthTableModel tableModel;
     private final JTable truthTable;
     private final JButton generateButton = new JButton("Generate");
@@ -65,13 +75,31 @@ public final class AiCircuitDialog extends JDialog {
     private final JButton placeButton = new JButton("Place circuit");
     private final JButton testConnectionButton = new JButton("Test connection");
     private final JButton copyExpressionsButton = new JButton("Copy expressions");
+    private final JButton previewExplainButton = new JButton("Show what will be sent");
     private final JCheckBox optimizeInvertingGates =
             new JCheckBox("Optimize with NAND/NOR/XNOR", true);
     private final JCheckBox useTemplates = createUseTemplatesCheckbox();
     private final JTextArea expectedRows = new JTextArea(2, 64);
+    private final JScrollPane expectedRowsScroll = new JScrollPane(expectedRows);
+    private final JPanel generationOptions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+    private final JPanel resultCards = new JPanel(new CardLayout());
+    private final JScrollPane descriptionScroll;
 
     private SwingWorker<?, ?> activeWorker;
     private AiCircuitService.Result currentResult;
+    private AiExplainService.PreparedRequest preparedExplainRequest;
+    private long preparedExplainRevision = -1;
+    private String generatePromptText = "";
+    private String explainQuestionText = AiExplainService.DEFAULT_QUESTION;
+    private String preparedExplainQuestion = "";
+    private String generateButtonText = "Generate";
+    private String lastSelectedMode = "Generate";
+    private boolean updatingModeSelection;
+
+    private record ExplainWork(
+            AiExplainService.PreparedRequest request,
+            AiCircuitService.ExplanationResult result) {
+    }
 
     private AiCircuitDialog(JFrame owner, CanvasPanel canvas, boolean cacheOnly) {
         super(owner, "From description (AI)", ModalityType.APPLICATION_MODAL);
@@ -90,22 +118,24 @@ public final class AiCircuitDialog extends JDialog {
 
         JPanel top = new JPanel(new BorderLayout(4, 4));
         top.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-        JLabel hint = new JLabel("Describe the circuit behavior, inputs and requested outputs.");
-        top.add(hint, BorderLayout.NORTH);
+        JPanel modeHeader = new JPanel(new BorderLayout(8, 0));
+        modeHeader.add(modeHint, BorderLayout.CENTER);
+        modeHeader.add(modeSelector, BorderLayout.EAST);
+        top.add(modeHeader, BorderLayout.NORTH);
         description.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         description.setLineWrap(true);
         description.setWrapStyleWord(true);
         description.getDocument().addDocumentListener(new DocumentListener() {
-            @Override public void insertUpdate(DocumentEvent event) { invalidateResult(); }
-            @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
-            @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
+            @Override public void insertUpdate(DocumentEvent event) { descriptionChanged(); }
+            @Override public void removeUpdate(DocumentEvent event) { descriptionChanged(); }
+            @Override public void changedUpdate(DocumentEvent event) { descriptionChanged(); }
         });
         expectedRows.getDocument().addDocumentListener(new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent event) { invalidateResult(); }
             @Override public void removeUpdate(DocumentEvent event) { invalidateResult(); }
             @Override public void changedUpdate(DocumentEvent event) { invalidateResult(); }
         });
-        JScrollPane descriptionScroll = new JScrollPane(description);
+        descriptionScroll = new JScrollPane(description);
         descriptionScroll.setBorder(BorderFactory.createTitledBorder("Circuit description"));
         top.add(descriptionScroll, BorderLayout.CENTER);
 
@@ -115,13 +145,11 @@ public final class AiCircuitDialog extends JDialog {
         setupHelp.setForeground(new Color(145, 88, 0));
         keyPanel.add(keyStatus, BorderLayout.NORTH);
         keyPanel.add(setupHelp, BorderLayout.CENTER);
-        JPanel generationOptions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         generationOptions.add(useTemplates);
         generationOptions.add(optimizeInvertingGates);
         keyPanel.add(generationOptions, BorderLayout.EAST);
         expectedRows.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         expectedRows.setLineWrap(false);
-        JScrollPane expectedRowsScroll = new JScrollPane(expectedRows);
         expectedRowsScroll.setPreferredSize(new Dimension(500, 58));
         expectedRowsScroll.setBorder(
                 BorderFactory.createTitledBorder("Expected rows (optional)"));
@@ -169,7 +197,26 @@ public final class AiCircuitDialog extends JDialog {
         JSplitPane detailSplit = new JSplitPane(
                 JSplitPane.VERTICAL_SPLIT, expressionScroll, tableScroll);
         detailSplit.setResizeWeight(0.35);
-        resultPanel.add(detailSplit, BorderLayout.CENTER);
+        resultCards.add(detailSplit, "generate");
+
+        explanationArea.setEditable(false);
+        explanationArea.setLineWrap(true);
+        explanationArea.setWrapStyleWord(true);
+        JScrollPane explanationScroll = new JScrollPane(explanationArea);
+        explanationScroll.setBorder(BorderFactory.createTitledBorder(
+                "AI explanation, not verified"));
+
+        explainFactsArea.setEditable(false);
+        explainFactsArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        explainFactsArea.setLineWrap(false);
+        JScrollPane factsScroll = new JScrollPane(explainFactsArea);
+        factsScroll.setBorder(BorderFactory.createTitledBorder("Engine facts"));
+
+        JSplitPane explainSplit = new JSplitPane(
+                JSplitPane.HORIZONTAL_SPLIT, explanationScroll, factsScroll);
+        explainSplit.setResizeWeight(0.62);
+        resultCards.add(explainSplit, "explain");
+        resultPanel.add(resultCards, BorderLayout.CENTER);
 
         JSplitPane mainSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, logScroll, resultPanel);
         mainSplit.setResizeWeight(0.25);
@@ -178,14 +225,22 @@ public final class AiCircuitDialog extends JDialog {
 
         placeButton.setEnabled(false);
         cancelButton.addActionListener(event -> cancelOrClose());
-        generateButton.addActionListener(event ->
-                generate("Regenerate".equals(generateButton.getText())));
+        generateButton.addActionListener(event -> {
+            if (isExplainMode()) {
+                explain();
+            } else {
+                generate("Regenerate".equals(generateButton.getText()));
+            }
+        });
+        modeSelector.addActionListener(event -> changeMode());
+        previewExplainButton.addActionListener(event -> previewExplain());
         placeButton.addActionListener(event -> place());
         testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
         testConnectionButton.addActionListener(event -> testConnection());
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 8));
         buttons.add(testConnectionButton);
+        buttons.add(previewExplainButton);
         buttons.add(placeButton);
         buttons.add(cancelButton);
         buttons.add(generateButton);
@@ -197,6 +252,8 @@ public final class AiCircuitDialog extends JDialog {
         if (!config.hasApiKey()) {
             appendLog("No Gemini API key configured. Bundled and user caches remain available.");
         }
+        previewExplainButton.setVisible(false);
+        updateModePresentation();
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent event) {
                 cancelWorker();
@@ -231,6 +288,248 @@ public final class AiCircuitDialog extends JDialog {
                 + config.configFile() + " or set GEMINI_API_KEY.";
     }
 
+    private boolean isExplainMode() {
+        return "Explain".equals(modeSelector.getSelectedItem());
+    }
+
+    private void descriptionChanged() {
+        if (updatingModeSelection) return;
+        if (isExplainMode()) {
+            explainQuestionText = description.getText();
+            preparedExplainRequest = null;
+            preparedExplainRevision = -1;
+            explanationArea.setText("");
+            explainFactsArea.setText("");
+        } else {
+            generatePromptText = description.getText();
+            invalidateResult();
+        }
+    }
+
+    private void changeMode() {
+        if (activeWorker != null) {
+            updatingModeSelection = true;
+            modeSelector.setSelectedItem(lastSelectedMode);
+            updatingModeSelection = false;
+            return;
+        }
+        String selected = Objects.toString(modeSelector.getSelectedItem(), "Generate");
+        if (selected.equals(lastSelectedMode)) return;
+        if ("Generate".equals(lastSelectedMode)) {
+            generatePromptText = description.getText();
+        } else {
+            explainQuestionText = description.getText();
+        }
+
+        updatingModeSelection = true;
+        description.setText("Explain".equals(selected)
+                ? (explainQuestionText.isBlank()
+                    ? AiExplainService.DEFAULT_QUESTION : explainQuestionText)
+                : generatePromptText);
+        updatingModeSelection = false;
+        lastSelectedMode = selected;
+        preparedExplainRequest = null;
+        preparedExplainRevision = -1;
+        preparedExplainQuestion = "";
+        updateModePresentation();
+        if (isExplainMode()) {
+            explanationArea.setText("");
+            explainFactsArea.setText("");
+            summary.setText(" ");
+            statusBadge.setText("READY");
+            statusBadge.setBackground(new Color(235, 235, 235));
+            placeButton.setEnabled(false);
+        } else if (currentResult != null) {
+            showResult(currentResult);
+        } else {
+            summary.setText(" ");
+            statusBadge.setText("READY");
+            statusBadge.setBackground(new Color(235, 235, 235));
+        }
+    }
+
+    private void updateModePresentation() {
+        boolean explain = isExplainMode();
+        modeHint.setText(explain
+                ? "Ask about the circuit currently open in the editor."
+                : "Describe the circuit behavior, inputs and requested outputs.");
+        descriptionScroll.setBorder(BorderFactory.createTitledBorder(
+                explain ? "Question" : "Circuit description"));
+        generationOptions.setVisible(!explain);
+        expectedRowsScroll.setVisible(!explain);
+        placeButton.setVisible(!explain);
+        copyExpressionsButton.setVisible(!explain);
+        previewExplainButton.setVisible(explain);
+        generateButton.setText(explain ? "Explain" : generateButtonText);
+        ((CardLayout) resultCards.getLayout()).show(
+                resultCards, explain ? "explain" : "generate");
+        revalidate();
+        repaint();
+    }
+
+    private void setExplainBusy(boolean busy) {
+        generateButton.setEnabled(!busy);
+        previewExplainButton.setEnabled(!busy);
+        modeSelector.setEnabled(!busy);
+        description.setEditable(!busy);
+        testConnectionButton.setEnabled(!busy && config.hasApiKey() && !cacheOnly);
+        placeButton.setEnabled(false);
+    }
+
+    private void previewExplain() {
+        if (!isExplainMode() || activeWorker != null) return;
+        String question = description.getText().isBlank()
+                ? AiExplainService.DEFAULT_QUESTION : description.getText().trim();
+        Schematic snapshot = canvas.schematic().copy();
+        long revision = canvas.schematic().modificationCount();
+        setExplainBusy(true);
+        appendLog("Preparing the exact Explain request from the open circuit.");
+        activeWorker = new SwingWorker<AiExplainService.PreparedRequest, Void>() {
+            @Override
+            protected AiExplainService.PreparedRequest doInBackground() {
+                return AiExplainService.prepare(snapshot, question);
+            }
+
+            @Override
+            protected void done() {
+                activeWorker = null;
+                setExplainBusy(false);
+                try {
+                    preparedExplainRequest = get();
+                    preparedExplainRevision = revision;
+                    preparedExplainQuestion = question;
+                    showExplainPreview(preparedExplainRequest);
+                } catch (CancellationException exception) {
+                    appendLog("Explain preview cancelled.");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    showExplainPreparationFailure("Explain preview interrupted.");
+                } catch (ExecutionException exception) {
+                    Throwable cause = exception.getCause();
+                    showExplainPreparationFailure(
+                            cause == null ? "Could not prepare Explain request."
+                                    : safeMessage(cause));
+                }
+            }
+        };
+        activeWorker.execute();
+    }
+
+    private void showExplainPreview(AiExplainService.PreparedRequest request) {
+        String exactText = "SYSTEM PROMPT\\n" + request.systemPrompt()
+                + "\\n\\nUSER MESSAGE\\n"
+                + service.redactForProvider(request.requestText());
+        JTextArea preview = new JTextArea(exactText, 24, 88);
+        preview.setEditable(false);
+        preview.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        preview.setLineWrap(false);
+        JScrollPane scroll = new JScrollPane(preview);
+        JOptionPane.showMessageDialog(this, scroll,
+                "Exact text sent to the AI provider", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void explain() {
+        if (!isExplainMode() || activeWorker != null) return;
+        String question = description.getText().isBlank()
+                ? AiExplainService.DEFAULT_QUESTION : description.getText().trim();
+        Schematic snapshot = canvas.schematic().copy();
+        long revision = canvas.schematic().modificationCount();
+        AiExplainService.PreparedRequest reusable =
+                preparedExplainRequest != null
+                        && preparedExplainRevision == revision
+                        && question.equals(preparedExplainQuestion)
+                        ? preparedExplainRequest : null;
+
+        explanationArea.setText("");
+        explainFactsArea.setText("");
+        summary.setText("Explaining the currently open circuit...");
+        statusBadge.setText("WORKING");
+        appendLog("Preparing circuit export and engine facts.");
+        setExplainBusy(true);
+        activeWorker = new SwingWorker<ExplainWork, Void>() {
+            @Override
+            protected ExplainWork doInBackground() throws Exception {
+                AiExplainService.PreparedRequest request = reusable == null
+                        ? AiExplainService.prepare(snapshot, question) : reusable;
+                AiCircuitService.ExplanationResult result;
+                if (cacheOnly) {
+                    result = new AiCircuitService.ExplanationResult(
+                            0, AiCircuitService.ExplanationStatus.UNAVAILABLE,
+                            "UNAVAILABLE: Explain mode requires a live provider; generation cache is not used.",
+                            List.of(), List.of(), List.of(), "", List.of());
+                } else {
+                    result = service.explain(request.systemPrompt(), request.requestText());
+                }
+                return new ExplainWork(request, result);
+            }
+
+            @Override
+            protected void done() {
+                activeWorker = null;
+                setExplainBusy(false);
+                try {
+                    ExplainWork work = get();
+                    preparedExplainRequest = work.request();
+                    preparedExplainRevision = revision;
+                    preparedExplainQuestion = question;
+                    for (String line : work.result().attemptLog()) appendLog(line);
+                    showExplainResult(work.request(), work.result());
+                } catch (CancellationException exception) {
+                    appendLog("Explain request cancelled.");
+                    statusBadge.setText("CANCELLED");
+                    summary.setText("Explain request was cancelled.");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    showExplainPreparationFailure("Explain request interrupted.");
+                } catch (ExecutionException exception) {
+                    Throwable cause = exception.getCause();
+                    showExplainPreparationFailure(
+                            cause == null ? "Could not explain this circuit." : safeMessage(cause));
+                }
+            }
+        };
+        activeWorker.execute();
+    }
+
+    private void showExplainResult(
+            AiExplainService.PreparedRequest request,
+            AiCircuitService.ExplanationResult result) {
+        StringBuilder text = new StringBuilder(result.summary());
+        if (!result.steps().isEmpty()) {
+            text.append("\n\nSteps\n");
+            for (int index = 0; index < result.steps().size(); index++) {
+                text.append(index + 1).append(". ").append(result.steps().get(index)).append('\n');
+            }
+        }
+        if (!result.notable().isEmpty()) {
+            text.append("\nNotable\n");
+            for (String item : result.notable()) text.append("• ").append(item).append('\n');
+        }
+        explanationArea.setText(config.redact(text.toString().stripTrailing()));
+        explainFactsArea.setText(config.redact(request.facts().format()));
+        explanationArea.setCaretPosition(0);
+        explainFactsArea.setCaretPosition(0);
+        summary.setText("AI explanation, not verified");
+        statusBadge.setBackground(new Color(235, 235, 235));
+        switch (result.status()) {
+            case EXPLAINED -> statusBadge.setText("NOT VERIFIED");
+            case INVALID_RESPONSE -> statusBadge.setText("INVALID RESPONSE");
+            case UNAVAILABLE -> statusBadge.setText("UNAVAILABLE");
+        }
+        placeButton.setEnabled(false);
+    }
+
+    private void showExplainPreparationFailure(String message) {
+        message = config.redact(message);
+        appendLog(message);
+        explanationArea.setText(message);
+        explainFactsArea.setText("");
+        summary.setText("AI explanation, not verified");
+        statusBadge.setText("NOT SENT");
+        statusBadge.setBackground(new Color(250, 235, 195));
+        placeButton.setEnabled(false);
+    }
+
     private void generate(boolean bypassCache) {
         String prompt = description.getText().trim();
         if (prompt.isEmpty() || activeWorker != null) return;
@@ -248,6 +547,7 @@ public final class AiCircuitDialog extends JDialog {
         optimizeInvertingGates.setEnabled(false);
         useTemplates.setEnabled(false);
         expectedRows.setEditable(false);
+        modeSelector.setEnabled(false);
         activeWorker = new SwingWorker<AiCircuitService.Result, Void>() {
             @Override
             protected AiCircuitService.Result doInBackground() throws Exception {
@@ -258,6 +558,7 @@ public final class AiCircuitDialog extends JDialog {
             protected void done() {
                 activeWorker = null;
                 generateButton.setEnabled(true);
+                modeSelector.setEnabled(true);
                 description.setEditable(true);
                 optimizeInvertingGates.setEnabled(true);
                 useTemplates.setEnabled(true);
@@ -265,7 +566,10 @@ public final class AiCircuitDialog extends JDialog {
                 testConnectionButton.setEnabled(config.hasApiKey() && !cacheOnly);
                 try {
                     currentResult = get();
-                    if (!cacheOnly) generateButton.setText("Regenerate");
+                    if (!cacheOnly) {
+                        generateButtonText = "Regenerate";
+                        if (!isExplainMode()) generateButton.setText(generateButtonText);
+                    }
                     for (String line : currentResult.attemptLog()) appendLog(line);
                     showResult(currentResult);
                 } catch (CancellationException exception) {
@@ -287,7 +591,8 @@ public final class AiCircuitDialog extends JDialog {
     private void invalidateResult() {
         if (activeWorker != null) return;
         currentResult = null;
-        generateButton.setText("Generate");
+        generateButtonText = "Generate";
+        if (!isExplainMode()) generateButton.setText(generateButtonText);
         placeButton.setEnabled(false);
         expressionsArea.setText("");
         copyExpressionsButton.setEnabled(false);
@@ -434,7 +739,7 @@ public final class AiCircuitDialog extends JDialog {
     }
 
     private void place() {
-        if (currentResult == null || currentResult.layout() == null) return;
+        if (isExplainMode() || currentResult == null || currentResult.layout() == null) return;
         if (currentResult.status() == AiCircuitService.Status.UNVERIFIED) {
             String rows = config.redact(String.join("\n", currentResult.mismatchingRows()));
             int answer = JOptionPane.showConfirmDialog(
