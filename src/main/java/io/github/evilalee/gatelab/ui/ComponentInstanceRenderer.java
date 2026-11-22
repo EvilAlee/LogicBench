@@ -18,20 +18,25 @@ public final class ComponentInstanceRenderer {
     private static final Color FALLBACK_BACKGROUND = Color.WHITE;
     private static final Color FALLBACK_FOREGROUND = Color.DARK_GRAY;
 
+    /** Keeps the original all-in-one renderer for previews and other simple callers. */
     public void render(
             Graphics2D graphics,
             ComponentInstance instance,
             ComponentDefinition definition,
             ComponentInstance.Geometry geometry,
             double scale) {
-        Objects.requireNonNull(graphics, "graphics");
-        Objects.requireNonNull(instance, "instance");
-        Objects.requireNonNull(definition, "definition");
-        Objects.requireNonNull(geometry, "geometry");
-        if (!Double.isFinite(scale) || scale <= 0.0) {
-            throw new IllegalArgumentException("scale must be finite and positive");
-        }
+        renderSymbol(graphics, instance, definition, geometry, scale);
+        renderLabels(graphics, instance, definition, geometry, scale);
+    }
 
+    /** Draws the box, border, pin stubs and clock markers, leaving text for a later pass. */
+    public void renderSymbol(
+            Graphics2D graphics,
+            ComponentInstance instance,
+            ComponentDefinition definition,
+            ComponentInstance.Geometry geometry,
+            double scale) {
+        requireArguments(graphics, instance, definition, geometry, scale);
         Graphics2D g2 = (Graphics2D) graphics.create();
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
@@ -44,13 +49,47 @@ public final class ComponentInstanceRenderer {
             Color background = uiColor("Panel.background", FALLBACK_BACKGROUND);
             Color border = uiColor("Component.borderColor",
                     uiColor("Separator.foreground", FALLBACK_FOREGROUND));
-            Color foreground = uiColor("Label.foreground", FALLBACK_FOREGROUND);
 
             g2.setColor(background);
             g2.fillRect(x, y, geometry.width(), geometry.height());
             g2.setColor(border);
             g2.setStroke(new BasicStroke((float) (1.4 / scale)));
             g2.drawRect(x, y, geometry.width(), geometry.height());
+
+            for (ComponentInstance.PinGeometry pin : geometry.pins()) {
+                int outward = pin.direction() == ComponentDefinition.Direction.IN ? -9 : 9;
+                GateGeometry.Offset direction = GateGeometry.rotate(
+                        new GateGeometry.Offset(outward, 0), instance.rotation());
+                int endX = pin.x() + direction.x();
+                int endY = pin.y() + direction.y();
+
+                // The line ends at the model-owned pin; rotation changes only its visual side.
+                g2.setStroke(new BasicStroke((float) (1.0 / scale)));
+                g2.drawLine(pin.x(), pin.y(), endX, endY);
+                if (pin.isClock()) {
+                    g2.drawRect(pin.x() - 4, pin.y() - 4, 8, 8);
+                }
+            }
+        } finally {
+            g2.dispose();
+        }
+    }
+
+    /** Draws definition, instance and port names after terminal status markers. */
+    public void renderLabels(
+            Graphics2D graphics,
+            ComponentInstance instance,
+            ComponentDefinition definition,
+            ComponentInstance.Geometry geometry,
+            double scale) {
+        requireArguments(graphics, instance, definition, geometry, scale);
+        Graphics2D g2 = (Graphics2D) graphics.create();
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            int x = instance.x();
+            int y = instance.y();
+            Color foreground = uiColor("Label.foreground", FALLBACK_FOREGROUND);
 
             String title = definition.name();
             g2.setColor(foreground);
@@ -83,14 +122,6 @@ public final class ComponentInstanceRenderer {
                 int endX = pin.x() + direction.x();
                 int endY = pin.y() + direction.y();
 
-                // The line ends at the model-owned pin; rotating only changes its visual side.
-                g2.setStroke(new BasicStroke((float) (1.0 / scale)));
-                g2.drawLine(pin.x(), pin.y(), endX, endY);
-                g2.fillOval(pin.x() - 2, pin.y() - 2, 4, 4);
-                if (pin.isClock()) {
-                    g2.drawRect(pin.x() - 4, pin.y() - 4, 8, 8);
-                }
-
                 int textX = endX + (direction.x() < 0
                         ? -pinMetrics.stringWidth(pin.name()) - 3
                         : direction.x() > 0 ? 3 : -pinMetrics.stringWidth(pin.name()) / 2);
@@ -101,6 +132,21 @@ public final class ComponentInstanceRenderer {
             }
         } finally {
             g2.dispose();
+        }
+    }
+
+    private static void requireArguments(
+            Graphics2D graphics,
+            ComponentInstance instance,
+            ComponentDefinition definition,
+            ComponentInstance.Geometry geometry,
+            double scale) {
+        Objects.requireNonNull(graphics, "graphics");
+        Objects.requireNonNull(instance, "instance");
+        Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(geometry, "geometry");
+        if (!Double.isFinite(scale) || scale <= 0.0) {
+            throw new IllegalArgumentException("scale must be finite and positive");
         }
     }
 
