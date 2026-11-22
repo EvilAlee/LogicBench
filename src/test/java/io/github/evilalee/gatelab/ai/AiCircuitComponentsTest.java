@@ -247,7 +247,8 @@ class AiCircuitComponentsTest {
         assertEquals(4, result.schematic().componentInstances().size());
         assertEquals(Map.of("FA", 4), result.componentUseCounts());
         assertFalse(provider.schema.getAsJsonObject("properties").has("template"));
-        assertTrue(provider.prompt.startsWith("HIGHEST PRIORITY — REQUIRED LIBRARY BOXES:"));
+        assertTrue(provider.prompt.endsWith("Do not include a \"template\" field.\n"));
+        assertTrue(provider.prompt.contains("HIGHEST PRIORITY — REQUIRED LIBRARY BOXES:"));
         assertTrue(provider.conversations.get(1).stream().anyMatch(turn ->
                 turn.text().contains("This request explicitly requires boxed library component(s) [FA]")));
         assertTrue(result.attemptLog().stream().noneMatch(line ->
