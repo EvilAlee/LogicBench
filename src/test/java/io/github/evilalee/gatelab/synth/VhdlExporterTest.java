@@ -235,10 +235,12 @@ class VhdlExporterTest {
     }
 
     private static void connect(
-            Schematic schematic, String sourceId, String sourcePin,
-            String targetId, String targetPin) {
-        Connectivity.PinPosition source = pin(schematic, sourceId, sourcePin);
-        Connectivity.PinPosition target = pin(schematic, targetId, targetPin);
+            Schematic schematic, String sourceIdOrLabel, String sourcePin,
+            String targetIdOrLabel, String targetPin) {
+        String sourceComponentId = componentId(schematic, sourceIdOrLabel);
+        String targetComponentId = componentId(schematic, targetIdOrLabel);
+        Connectivity.PinPosition source = pin(schematic, sourceComponentId, sourcePin);
+        Connectivity.PinPosition target = pin(schematic, targetComponentId, targetPin);
         schematic.addWire(source.x(), source.y(), target.x(), source.y());
         schematic.addWire(target.x(), source.y(), target.x(), target.y());
     }
@@ -251,11 +253,49 @@ class VhdlExporterTest {
     }
 
     private static Connectivity.PinPosition pin(
-            Schematic schematic, String componentId, String pinId) {
+            Schematic schematic, String componentIdOrLabel, String pinId) {
+        String componentId = componentId(schematic, componentIdOrLabel);
         return schematic.pinPositions().stream()
                 .filter(position -> position.componentId().equals(componentId)
                         && position.pinId().equals(pinId))
-                .findFirst().orElseThrow();
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No pin " + pinId + " on schematic component " + componentIdOrLabel
+                                + " (resolved id " + componentId + ")"));
+    }
+
+    private static String componentId(Schematic schematic, String idOrLabel) {
+        for (PlacedComponent component : schematic.components()) {
+            if (component.id().equals(idOrLabel)) {
+                return component.id();
+            }
+        }
+        for (ComponentInstance instance : schematic.componentInstances()) {
+            if (instance.id().equals(idOrLabel)) {
+                return instance.id();
+            }
+        }
+
+        List<String> matches = new ArrayList<>();
+        for (PlacedComponent component : schematic.components()) {
+            if (component.label().equals(idOrLabel)) {
+                matches.add(component.id());
+            }
+        }
+        for (ComponentInstance instance : schematic.componentInstances()) {
+            if (instance.label().equals(idOrLabel)) {
+                matches.add(instance.id());
+            }
+        }
+        if (matches.size() == 1) {
+            return matches.getFirst();
+        }
+        if (matches.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No schematic component has id or label: " + idOrLabel);
+        }
+        throw new IllegalArgumentException(
+                "Ambiguous schematic component label '" + idOrLabel + "': " + matches);
     }
 
     private static String resource(String name) throws IOException {
