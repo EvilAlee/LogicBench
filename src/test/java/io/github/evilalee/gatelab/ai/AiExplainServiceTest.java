@@ -79,7 +79,8 @@ class AiExplainServiceTest {
         assertTrue(prepared.requestText().contains("Gate count:"));
         assertTrue(prepared.requestText().contains("Instance count: 1"));
         assertTrue(prepared.requestText().contains("Inputs: [A, B, CIN]"));
-        assertTrue(prepared.requestText().contains("Outputs: [S, COUT]"));
+        assertEquals(java.util.Set.of("S", "COUT"),
+                java.util.Set.copyOf(prepared.facts().outputNames()));
         assertTrue(prepared.requestText().contains("Truth table: all 8 rows"));
 
         RecordingProvider provider = new RecordingProvider(explanation(

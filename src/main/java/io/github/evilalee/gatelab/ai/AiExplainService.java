@@ -273,7 +273,7 @@ public final class AiExplainService {
             return new EngineFacts(gateCount, source.componentInstances().size(),
                     inputs.stream().map(NamedSource::name).toList(),
                     outputs.stream().map(NamedSource::name).toList(),
-                    true, sequential, false, totalRows, List.of());
+                    feedback, sequential, false, totalRows, List.of());
         }
 
         boolean sampled = inputs.size() > 6;
