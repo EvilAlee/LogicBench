@@ -91,14 +91,15 @@ class VhdlExporterTest {
         Schematic root = instanceParent(middle, "NestedTop");
         String vhdl = VhdlExporter.export(root, "nested.lbc").text();
         printVhdl("NESTED", vhdl);
-        int leafAt = vhdl.indexOf("entity Leaf is");
+        int innerAt = vhdl.indexOf("entity Inner is");
         int middleAt = vhdl.indexOf("entity Middle is");
-        int rootAt = vhdl.indexOf("entity NestedTop is");
-        assertTrue(leafAt >= 0 && middleAt > leafAt && rootAt > middleAt);
-        assertEquals(1, occurrences(vhdl, "entity Leaf is"));
+        int rootAt = vhdl.indexOf("entity nested is");
+        assertTrue(innerAt >= 0 && middleAt > innerAt && rootAt > middleAt);
+        assertEquals(1, occurrences(vhdl, "entity Inner is"));
         assertEquals(1, occurrences(vhdl, "entity Middle is"));
-        assertEquals(1, occurrences(vhdl, "entity work.Leaf"));
-        assertTrue(vhdl.contains("leaf_inst : entity work.Leaf"));
+        assertEquals(1, occurrences(vhdl, "entity work.Inner"));
+        assertTrue(vhdl.contains("leaf_inst : entity work.Inner"));
+        assertTrue(vhdl.contains("NestedTop : entity work.Middle"));
     }
 
     @Test
