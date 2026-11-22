@@ -138,6 +138,9 @@ public final class CanvasPanel extends JPanel {
     private Runnable signalHistoryClearListener = () -> { };
     private Runnable signalSampleListener = () -> { };
     private SimulationResult simulationResult;
+    private PinStateHelper.Result pinStateCache;
+    private SimulationResult pinStateCacheSimulation;
+    private Schematic pinStateCacheSchematic;
     private final ClockStepper clockStepper = new ClockStepper();
     private long simulationRecomputeCount;
     private final Set<String> selectedIds = new LinkedHashSet<>();
@@ -345,10 +348,11 @@ public final class CanvasPanel extends JPanel {
         }
 
         Point2D.Double mouse = new Point2D.Double(event.getX(), event.getY());
-        double bestDistanceSquared = 64.0;
+        double hitRadius = Math.max(
+                8.0, PinDotStyle.radiusForZoom(transform.scale()) + 4.0);
+        double bestDistanceSquared = hitRadius * hitRadius;
         PinStateHelper.Pin bestPin = null;
-        for (PinStateHelper.Pin pin : PinStateHelper.analyze(schematic, simulationResult)
-                .pins().values()) {
+        for (PinStateHelper.Pin pin : pinStateDiagnostics().pins().values()) {
             Point2D.Double screen = transform.worldToScreen(
                     pin.position().x(), pin.position().y());
             double dx = screen.x - mouse.x;
@@ -2002,13 +2006,23 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
+    private PinStateHelper.Result pinStateDiagnostics() {
+        if (pinStateCache == null || pinStateCacheSimulation != simulationResult
+                || pinStateCacheSchematic != schematic) {
+            pinStateCache = PinStateHelper.analyze(schematic, simulationResult);
+            pinStateCacheSimulation = simulationResult;
+            pinStateCacheSchematic = schematic;
+        }
+        return pinStateCache;
+    }
+
     private void paintPinDots(Graphics2D graphics, int moveDeltaX, int moveDeltaY) {
         if (!showPinDots || simulationResult == null
                 || !PinDotStyle.visibleAtZoom(transform.scale())) {
             return;
         }
 
-        PinStateHelper.Result result = PinStateHelper.analyze(schematic, simulationResult);
+        PinStateHelper.Result result = pinStateDiagnostics();
         Map<String, PlacedComponent> componentsById = new HashMap<>();
         for (PlacedComponent component : schematic.components()) {
             componentsById.put(component.id(), component);
