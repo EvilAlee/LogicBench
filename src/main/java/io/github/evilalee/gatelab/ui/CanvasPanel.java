@@ -16,6 +16,7 @@ import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.ClockStepper;
+import io.github.evilalee.gatelab.sim.PinStateHelper;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
 
@@ -163,6 +164,7 @@ public final class CanvasPanel extends JPanel {
 
     private Tool activeTool = Tool.EDIT;
     private boolean showGateNames = true;
+    private boolean showPinDots = true;
     private String previewTypeId;
     private String previewComponentName;
     private Facing previewFacing = Facing.EAST;
@@ -323,6 +325,49 @@ public final class CanvasPanel extends JPanel {
     }
 
     public SimulationResult simulationResult() { return simulationResult; }
+
+    public void setShowPinDots(boolean show) {
+        if (showPinDots != show) {
+            showPinDots = show;
+            repaint();
+        }
+    }
+
+    public boolean showPinDots() {
+        return showPinDots;
+    }
+
+    @Override
+    public String getToolTipText(MouseEvent event) {
+        String fallback = super.getToolTipText(event);
+        if (galleryMode || simulationResult == null) {
+            return fallback;
+        }
+
+        Point2D.Double mouse = new Point2D.Double(event.getX(), event.getY());
+        double bestDistanceSquared = 64.0;
+        PinStateHelper.Pin bestPin = null;
+        for (PinStateHelper.Pin pin : PinStateHelper.analyze(schematic, simulationResult)
+                .pins().values()) {
+            Point2D.Double screen = transform.worldToScreen(
+                    pin.position().x(), pin.position().y());
+            double dx = screen.x - mouse.x;
+            double dy = screen.y - mouse.y;
+            double distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared <= bestDistanceSquared) {
+                bestDistanceSquared = distanceSquared;
+                bestPin = pin;
+            }
+        }
+        if (bestPin == null) {
+            return fallback;
+        }
+        return bestPin.position().pinId() + " = " + switch (bestPin.value()) {
+            case ZERO -> "0";
+            case ONE -> "1";
+            case X -> "X";
+        };
+    }
 
     /** Installs editor-owned callbacks for clearing and appending waveform history. */
     public void setSignalRecorderCallbacks(Runnable clearHistory, Runnable recordSample) {
@@ -1747,6 +1792,9 @@ public final class CanvasPanel extends JPanel {
     }
 
     private void paintSchematic(Graphics2D screenGraphics) {
+        record PendingLabel(PlacedComponent component, GateDef definition, int x, int y) {
+        }
+        List<PendingLabel> pendingLabels = new ArrayList<>();
         Graphics2D worldGraphics = (Graphics2D) screenGraphics.create();
         try {
             worldGraphics.translate(transform.translateX(), transform.translateY());
@@ -1803,8 +1851,7 @@ public final class CanvasPanel extends JPanel {
                     paintTappedOutputRing(
                             screenGraphics, definition, component.facing(), x, y);
                 }
-                paintComponentLabel(screenGraphics, component, definition, x, y);
-                paintGateName(worldGraphics, component, definition, x, y);
+                pendingLabels.add(new PendingLabel(component, definition, x, y));
 
                 if (selected) {
                     paintSelectionOutline(worldGraphics, definition,
@@ -1838,7 +1885,7 @@ public final class CanvasPanel extends JPanel {
                     } else {
                         worldGraphics.setComposite(AlphaComposite.SrcOver);
                     }
-                    paintComponentInstance(worldGraphics, rendered, definition, geometry);
+                    paintComponentInstance(worldGraphics, rendered, definition, geometry, true);
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                     if (selected) {
                         paintInstanceSelectionOutline(worldGraphics, rendered, definition);
@@ -1852,6 +1899,29 @@ public final class CanvasPanel extends JPanel {
                 if (screenClip.contains(screen.x, screen.y)) {
                     worldGraphics.fillOval(junction.x() - 3, junction.y() - 3, 6, 6);
                 }
+            }
+
+            paintPinDots(screenGraphics, moveDeltaX, moveDeltaY);
+
+            for (ComponentInstance instance : schematic.componentInstances()) {
+                ComponentDefinition definition = schematic.componentDefinitionFor(instance);
+                boolean moving = selectedIds.contains(instance.id())
+                        && gesture == Gesture.MOVE_SELECTION && gestureMoved;
+                ComponentInstance rendered = moving
+                        ? translatedInstance(instance, moveDeltaX, moveDeltaY) : instance;
+                if (screenClip.intersects(componentInstanceScreenBounds(
+                        rendered, definition, 0, 0, DIRTY_REGION_MARGIN + 12))) {
+                    componentInstanceRenderer.renderLabels(
+                            worldGraphics, rendered, definition,
+                            rendered.geometry(definition), transform.scale());
+                }
+            }
+
+            for (PendingLabel label : pendingLabels) {
+                paintComponentLabel(
+                        screenGraphics, label.component(), label.definition(), label.x(), label.y());
+                paintGateName(
+                        worldGraphics, label.component(), label.definition(), label.x(), label.y());
             }
 
             if (gesture == Gesture.DRAW_WIRE && gestureMoved) {
@@ -1892,7 +1962,7 @@ public final class CanvasPanel extends JPanel {
                 if (screenClip.intersects(componentInstanceScreenBounds(
                         preview, definition, 0, 0, labelMargin))) {
                     worldGraphics.setComposite(AlphaComposite.SrcOver.derive(0.42f));
-                    paintComponentInstance(worldGraphics, preview, definition, geometry);
+                    paintComponentInstance(worldGraphics, preview, definition, geometry, false);
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                 }
             }
@@ -1921,9 +1991,94 @@ public final class CanvasPanel extends JPanel {
             Graphics2D graphics,
             ComponentInstance instance,
             ComponentDefinition definition,
-            ComponentInstance.Geometry geometry) {
-        componentInstanceRenderer.render(
-                graphics, instance, definition, geometry, transform.scale());
+            ComponentInstance.Geometry geometry,
+            boolean deferLabels) {
+        if (deferLabels) {
+            componentInstanceRenderer.renderSymbol(
+                    graphics, instance, definition, geometry, transform.scale());
+        } else {
+            componentInstanceRenderer.render(
+                    graphics, instance, definition, geometry, transform.scale());
+        }
+    }
+
+    private void paintPinDots(Graphics2D graphics, int moveDeltaX, int moveDeltaY) {
+        if (!showPinDots || simulationResult == null
+                || !PinDotStyle.visibleAtZoom(transform.scale())) {
+            return;
+        }
+
+        PinStateHelper.Result result = PinStateHelper.analyze(schematic, simulationResult);
+        Map<String, PlacedComponent> componentsById = new HashMap<>();
+        for (PlacedComponent component : schematic.components()) {
+            componentsById.put(component.id(), component);
+        }
+        Rectangle clip = graphics.getClipBounds();
+
+        for (PinStateHelper.Pin pin : result.pins().values()) {
+            Connectivity.PinPosition position = pin.position();
+            boolean moving = gesture == Gesture.MOVE_SELECTION && gestureMoved
+                    && selectedIds.contains(position.componentId());
+            int dx = moving ? moveDeltaX : 0;
+            int dy = moving ? moveDeltaY : 0;
+            Point2D.Double screen = transform.worldToScreen(
+                    position.x() + dx, position.y() + dy);
+            PinDotStyle.Style style = PinDotStyle.forPin(
+                    pin.state(), isGateInput(componentsById.get(position.componentId()), position),
+                    transform.scale());
+            paintPinDot(graphics, screen, style, clip);
+        }
+
+        for (Connectivity.Point endpoint : result.danglingWireEnds()) {
+            boolean moving = gesture == Gesture.MOVE_SELECTION && gestureMoved
+                    && selectedWires.stream().anyMatch(wire -> isEndpoint(wire, endpoint));
+            Point2D.Double screen = transform.worldToScreen(
+                    endpoint.x() + (moving ? moveDeltaX : 0),
+                    endpoint.y() + (moving ? moveDeltaY : 0));
+            PinDotStyle.Style style = new PinDotStyle.Style(
+                    PinDotStyle.danglingEndColor(), false,
+                    PinDotStyle.radiusForZoom(transform.scale()));
+            paintPinDot(graphics, screen, style, clip);
+        }
+    }
+
+    private static boolean isGateInput(
+            PlacedComponent component, Connectivity.PinPosition position) {
+        return component != null && isGateComponent(component)
+                && position.pinId().startsWith("in");
+    }
+
+    private static boolean isEndpoint(WireSegment wire, Connectivity.Point point) {
+        return (wire.x1() == point.x() && wire.y1() == point.y())
+                || (wire.x2() == point.x() && wire.y2() == point.y());
+    }
+
+    private static void paintPinDot(
+            Graphics2D graphics,
+            Point2D.Double center,
+            PinDotStyle.Style style,
+            Rectangle clip) {
+        int x = (int) Math.round(center.x);
+        int y = (int) Math.round(center.y);
+        int radius = style.radius();
+        int diameter = radius * 2 + 1;
+        Rectangle bounds = new Rectangle(x - radius, y - radius, diameter, diameter);
+        if (clip != null && !clip.intersects(bounds)) {
+            return;
+        }
+
+        Graphics2D dot = (Graphics2D) graphics.create();
+        try {
+            dot.setColor(style.color());
+            if (style.filled()) {
+                dot.fillOval(bounds.x, bounds.y, diameter, diameter);
+            } else {
+                dot.setStroke(new BasicStroke(1.4f));
+                dot.drawOval(bounds.x, bounds.y, diameter, diameter);
+            }
+        } finally {
+            dot.dispose();
+        }
     }
 
     /** User labels remain screen-sized and sit above gates or beside I/O pins. */
