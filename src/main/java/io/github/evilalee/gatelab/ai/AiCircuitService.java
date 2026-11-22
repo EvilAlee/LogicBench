@@ -271,20 +271,32 @@ public final class AiCircuitService {
 
     /** JSON schema sent to Gemini for structured output. */
     public static JsonObject responseSchema() {
-        return responseSchema(true);
+        return responseSchema(true, true, false);
     }
 
     public static JsonObject responseSchema(boolean includeInstances) {
+        return responseSchema(includeInstances, true, false);
+    }
+
+    /**
+     * Builds a response contract for the selected answer mode. When a request
+     * explicitly requires library boxes, templates are removed and instances
+     * become a required field so the provider cannot choose a competing shape.
+     */
+    public static JsonObject responseSchema(
+            boolean includeInstances, boolean allowTemplateResponses, boolean requireInstances) {
         JsonObject root = new JsonObject();
         root.addProperty("type", "OBJECT");
         JsonObject properties = new JsonObject();
 
         JsonObject kind = new JsonObject();
         kind.addProperty("type", "STRING");
-        kind.add("enum", stringArray("expressions", "template"));
+        kind.add("enum", allowTemplateResponses
+                ? stringArray("expressions", "template") : stringArray("expressions"));
         properties.add("kind", kind);
 
-        JsonObject templateProperties = new JsonObject();
+        if (allowTemplateResponses) {
+            JsonObject templateProperties = new JsonObject();
         JsonObject generator = new JsonObject();
         generator.addProperty("type", "STRING");
         templateProperties.add("generator", generator);
@@ -299,7 +311,8 @@ public final class AiCircuitService {
         template.add("properties", templateProperties);
         template.add("required", stringArray("generator", "params"));
         template.addProperty("additionalProperties", false);
-        properties.add("template", template);
+            properties.add("template", template);
+        }
 
         JsonObject summary = new JsonObject();
         summary.addProperty("type", "STRING");
@@ -375,7 +388,12 @@ public final class AiCircuitService {
         properties.add("spec", spec);
 
         root.add("properties", properties);
-        root.add("required", stringArray("kind"));
+        JsonArray required = allowTemplateResponses
+                ? stringArray("kind")
+                : requireInstances
+                        ? stringArray("kind", "summary", "inputs", "outputs", "instances")
+                        : stringArray("kind", "summary", "inputs", "outputs");
+        root.add("required", required);
         root.addProperty("additionalProperties", false);
         return root;
     }
@@ -468,7 +486,33 @@ public final class AiCircuitService {
     public static String systemPrompt(
             Collection<ComponentDefinition> definitions, String request,
             boolean useLibraryComponents) {
-        if (!useLibraryComponents) return systemPrompt();
+        List<String> requiredComponents = useLibraryComponents
+                ? AiComponentCatalog.explicitlyRequestedComponents(definitions, request)
+                : List.of();
+        return systemPrompt(definitions, request, useLibraryComponents,
+                requiredComponents, true);
+    }
+
+    public static String systemPrompt(
+            Collection<ComponentDefinition> definitions, String request,
+            boolean useLibraryComponents, Collection<String> requiredComponents,
+            boolean allowTemplateResponses) {
+        String templateNotice = allowTemplateResponses ? "" : """
+                This request must use kind "expressions"; do not return a template answer.
+                Return a complete expressions object with summary, inputs and outputs.
+                """;
+        String componentPriority = requiredComponents.isEmpty() ? "" : """
+                HIGHEST PRIORITY — REQUIRED LIBRARY BOXES:
+                The user explicitly requested these library components: %s.
+                This is a hard implementation requirement, not a suggestion. Use these exact
+                black-box components as boxed instances. Do NOT use a template generator or
+                replace the requested boxes with a gate-only circuit, even if a template
+                implements the same Boolean function. Return kind "expressions" with summary,
+                inputs, outputs, and an instances array containing the requested component(s).
+                For four-bit addition requested with FA, instantiate four FA boxes and connect
+                each COUT to the next CIN. Do not include a "template" field.
+                """.formatted(String.join(", ", requiredComponents));
+        if (!useLibraryComponents) return templateNotice + systemPrompt();
         String instructions = """
                 
                 Library component answers may add "instances": [
@@ -499,7 +543,7 @@ public final class AiCircuitService {
                 Put U0..U3 in "instances" order and C0..C3 in "signals" order; the compiler places each
                 carry signal after its source box and before the next box that consumes it.
                 """;
-        return systemPrompt() + "\n\n" + instructions + "\n"
+        return componentPriority + templateNotice + systemPrompt() + "\n\n" + instructions + "\n"
                 + AiComponentCatalog.promptBlock(definitions, request);
     }
 
@@ -632,7 +676,13 @@ public final class AiCircuitService {
             }
         }
 
-        if (!bypassCache && useTemplates) {
+        List<String> requiredComponentNames = useLibraryComponents
+                ? AiComponentCatalog.explicitlyRequestedComponents(componentDefinitions, description)
+                : List.of();
+        boolean requireComponentInstances = !requiredComponentNames.isEmpty();
+        boolean allowTemplateResponse = useTemplates && !requireComponentInstances;
+
+        if (!bypassCache && useTemplates && !requireComponentInstances) {
             TemplateMatcher.MatchResult templateMatch = TemplateMatcher.match(description);
             if (templateMatch instanceof TemplateMatcher.Matched matched) {
                 GeneratedCircuit template = matched.circuit();
@@ -658,7 +708,7 @@ public final class AiCircuitService {
         if (!bypassCache) {
             Result cached = cachedResult(
                     safeDescription, log, "Using", 0, invertingGates, expectedRowsText,
-                    useLibraryComponents, useTemplates);
+                    useLibraryComponents, allowTemplateResponse, requiredComponentNames);
             if (cached != null) return cached;
         }
 
@@ -681,8 +731,10 @@ public final class AiCircuitService {
             try {
                 response = completeWithModelFallback(
                         conversation, log, skippedModels,
-                        systemPrompt(componentDefinitions, description, useLibraryComponents),
-                        responseSchema(useLibraryComponents));
+                        systemPrompt(componentDefinitions, description, useLibraryComponents,
+                                requiredComponentNames, allowTemplateResponse),
+                        responseSchema(useLibraryComponents, allowTemplateResponse,
+                                requireComponentInstances));
                 allModelAttempts.addAll(response.modelAttempts());
             } catch (ProviderFailure failure) {
                 allModelAttempts.addAll(failure.modelAttempts());
@@ -691,7 +743,7 @@ public final class AiCircuitService {
                 Result fallback = bypassCache ? null
                         : cachedResult(safeDescription, log, notice, attemptNumber - 1,
                                 invertingGates, expectedRowsText, useLibraryComponents,
-                                useTemplates);
+                                allowTemplateResponse, requiredComponentNames);
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
@@ -706,7 +758,7 @@ public final class AiCircuitService {
             lastRawAnswer = safeRaw;
             conversation.add(new Turn(Turn.Role.MODEL, safeRaw));
             Attempt current = validate(safeRaw, invertingGates, expectedRowsText,
-                    useLibraryComponents, useTemplates);
+                    useLibraryComponents, allowTemplateResponse, requiredComponentNames);
             if (best == null || current.score() < best.score()
                     || (current.score() == best.score()
                         && current.errors().size() < best.errors().size())) {
@@ -786,19 +838,27 @@ public final class AiCircuitService {
         return answer.toString();
     }
 
-    private static String normalizeTemplateResponse(String raw, boolean allowTemplateResponse) {
+    private static String normalizeTemplateResponse(
+            String raw, boolean allowTemplateResponse, List<String> requiredComponentNames) {
         String jsonText = stripCodeFence(Objects.requireNonNull(raw, "model response"));
         JsonElement parsed = JsonParser.parseString(jsonText);
         if (!parsed.isJsonObject()) return raw;
         JsonObject root = parsed.getAsJsonObject();
         JsonElement kindElement = root.get("kind");
         if (kindElement == null) {
+            if (!requiredComponentNames.isEmpty()) {
+                throw new IllegalArgumentException(componentRequestFormatError(requiredComponentNames));
+            }
             if (root.has("template")) {
                 throw new IllegalArgumentException(templateNotMatchedError(root.keySet()));
             }
             return raw;
         }
         String kind = requireString(kindElement, "kind");
+        if (!requiredComponentNames.isEmpty()
+                && (!"expressions".equals(kind) || root.has("template"))) {
+            throw new IllegalArgumentException(componentRequestFormatError(requiredComponentNames));
+        }
         if ("expressions".equals(kind)) {
             root.remove("kind");
             return root.toString();
@@ -1168,12 +1228,13 @@ public final class AiCircuitService {
     private Result cachedResult(
             String description, List<String> log, String prefix, int attemptCount,
             boolean invertingGates, String expectedRowsText,
-            boolean useLibraryComponents, boolean allowTemplateResponse) {
+            boolean useLibraryComponents, boolean allowTemplateResponse,
+            List<String> requiredComponentNames) {
         if (cache == null) return null;
         for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
             Attempt cachedAttempt = validate(
                     provider.redact(hit.answerJson()), invertingGates, expectedRowsText,
-                    useLibraryComponents, allowTemplateResponse);
+                    useLibraryComponents, allowTemplateResponse, requiredComponentNames);
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
             if (cachedAttempt.passed()) {
                 Status status = cachedAttempt.independentCheck() ? Status.VERIFIED : Status.BUILT;
@@ -1234,15 +1295,32 @@ public final class AiCircuitService {
 
     private Attempt validate(
             String raw, boolean invertingGates, String expectedRowsText,
-            boolean useLibraryComponents, boolean allowTemplateResponse) {
+            boolean useLibraryComponents, boolean allowTemplateResponse,
+            List<String> requiredComponentNames) {
         Answer answer;
         try {
-            answer = parseAnswer(normalizeTemplateResponse(raw, allowTemplateResponse),
-                    useLibraryComponents);
+            answer = parseAnswer(normalizeTemplateResponse(
+                    raw, allowTemplateResponse, requiredComponentNames), useLibraryComponents);
         } catch (RuntimeException exception) {
             return new Attempt(null, null, null, null, List.of(),
                     List.of("JSON/schema error: " + safeParseMessage(exception)),
                     List.of(), false);
+        }
+
+        if (!requiredComponentNames.isEmpty()) {
+            Set<String> suppliedComponents = answer.instances().stream()
+                    .map(InstanceSpec::component)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            List<String> missingComponents = requiredComponentNames.stream()
+                    .filter(name -> !suppliedComponents.contains(name)).toList();
+            if (!missingComponents.isEmpty()) {
+                return new Attempt(answer, null, null, null, List.of(),
+                        List.of("This request requires boxed library component(s) "
+                                + missingComponents + ". Return an expressions answer with one or more "
+                                + "instances of each requested component; do not substitute a gate-only "
+                                + circuit or template."), List.of(),
+                        answer.specification() != null || !expectedRowsText.isBlank());
+            }
         }
 
         if (!answer.instances().isEmpty()) {
@@ -1896,6 +1974,14 @@ public final class AiCircuitService {
                 collectComponentOutputReferences(argument, outputs);
             }
         }
+    }
+
+    private static String componentRequestFormatError(List<String> requiredComponents) {
+        return "This request explicitly requires boxed library component(s) "
+                + requiredComponents + ". A template-shaped answer cannot satisfy that requirement. "
+                + "Return kind:\"expressions\" with summary, inputs, outputs and instances; "
+                + "instantiate the requested component(s) and connect their named output pins. "
+                + "Do not include a template field or substitute a gate-only circuit.";
     }
 
     private static String templateNotMatchedError(Set<String> receivedFields) {
