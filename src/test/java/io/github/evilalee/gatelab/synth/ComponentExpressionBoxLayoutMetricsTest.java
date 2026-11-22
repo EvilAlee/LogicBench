@@ -9,6 +9,11 @@ import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.WireSegment;
+import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -50,12 +55,32 @@ class ComponentExpressionBoxLayoutMetricsTest {
 
         System.out.println("BOX_LAYOUT_BASELINE 4FA " + adderMetrics);
         System.out.println("BOX_LAYOUT_BASELINE 2DFF " + counterMetrics);
+
+        SchematicLayout gateLayout = new SchematicLayout(GATES);
+        Schematic fullAdder = gateLayout.layout(ExpressionCompiler.compile("""
+                Sum = A ^ B ^ Cin
+                Carry = (A & B) | (Cin & (A ^ B))
+                """).netlist()).schematic();
+        Schematic majority = gateLayout.layout(ExpressionCompiler.compile(
+                "F = (A & B) | (A & C) | (B & C)").netlist()).schematic();
+        System.out.println("NO_BOX_LAYOUT_HASH fullAdder=" + fingerprint(fullAdder));
+        System.out.println("NO_BOX_LAYOUT_HASH majority=" + fingerprint(majority));
         assertEquals(4, adder.schematic().componentInstances().size());
         assertEquals(2, counter.schematic().componentInstances().size());
         assertEquals(9, adder.inputComponentIds().size());
         assertEquals(5, adder.outputComponentIds().size());
         assertEquals(1, counter.inputComponentIds().size(), "RESET input");
         assertEquals(1, counter.clockComponentIds().size(), "CLK input");
+    }
+
+    private static String fingerprint(Schematic schematic) {
+        String snapshot = schematic.components() + "\n" + schematic.wires();
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(snapshot.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     private static String fourBitAdder() {
