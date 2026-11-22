@@ -4,8 +4,17 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.Gate;
 import io.github.evilalee.gatelab.model.GateDef;
+import io.github.evilalee.gatelab.model.InputPin;
+import io.github.evilalee.gatelab.model.OutputProbe;
+import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.sim.Simulator;
+import io.github.evilalee.gatelab.synth.ComponentExpressionCompiler;
+import io.github.evilalee.gatelab.synth.Expression;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.ExpressionParser;
 import io.github.evilalee.gatelab.synth.NamedExpression;
@@ -80,7 +89,10 @@ public final class AiCircuitService {
             boolean fromCache,
             String answeredBy,
             List<String> modelAttempts,
-            List<NamedExpression> signals) {
+            List<NamedExpression> signals,
+            Schematic schematic,
+            String expressionSource,
+            Map<String, Integer> componentUseCounts) {
         public Result {
             if (attemptCount < 0) throw new IllegalArgumentException("attemptCount must not be negative");
             Objects.requireNonNull(status, "status");
@@ -91,6 +103,20 @@ public final class AiCircuitService {
             answeredBy = answeredBy == null ? "" : answeredBy;
             modelAttempts = List.copyOf(modelAttempts == null ? List.of() : modelAttempts);
             signals = List.copyOf(signals == null ? List.of() : signals);
+            schematic = schematic == null && layout != null ? layout.schematic() : schematic;
+            expressionSource = expressionSource == null ? "" : expressionSource;
+            componentUseCounts = Map.copyOf(componentUseCounts == null ? Map.of() : componentUseCounts);
+        }
+
+        public Result(int attemptCount, Status status, String summary,
+                      List<NamedExpression> expressions, Netlist netlist,
+                      SchematicLayout.LayoutResult layout, TruthTable truthTable,
+                      List<String> mismatchingRows, List<String> attemptLog,
+                      boolean fromCache, String answeredBy, List<String> modelAttempts,
+                      List<NamedExpression> signals) {
+            this(attemptCount, status, summary, expressions, netlist, layout, truthTable,
+                    mismatchingRows, attemptLog, fromCache, answeredBy, modelAttempts,
+                    signals, layout == null ? null : layout.schematic(), "", Map.of());
         }
 
         public Result(int attemptCount, Status status, String summary,
@@ -99,7 +125,8 @@ public final class AiCircuitService {
                       List<String> mismatchingRows, List<String> attemptLog,
                       boolean fromCache, String answeredBy, List<String> modelAttempts) {
             this(attemptCount, status, summary, expressions, netlist, layout, truthTable,
-                    mismatchingRows, attemptLog, fromCache, answeredBy, modelAttempts, List.of());
+                    mismatchingRows, attemptLog, fromCache, answeredBy, modelAttempts,
+                    List.of(), layout == null ? null : layout.schematic(), "", Map.of());
         }
 
         public Result(int attemptCount, Status status, String summary,
@@ -125,7 +152,27 @@ public final class AiCircuitService {
             List<String> signalNames,
             List<String> signalExpressions,
             List<String> expressionTexts,
+            List<InstanceSpec> instances,
             JsonObject specification) {
+    }
+
+    private record InstanceSpec(String name, String component, List<String> args) {
+        private InstanceSpec { args = List.copyOf(args); }
+    }
+
+    private record ComponentBuild(
+            ComponentExpressionCompiler.Compilation compilation,
+            String source, Map<String, Integer> useCounts) {
+        private ComponentBuild { useCounts = Map.copyOf(useCounts); }
+    }
+
+    private record ComponentSourcePlan(
+            List<String> lines, List<String> errors, Map<String, Integer> useCounts) {
+        private ComponentSourcePlan {
+            lines = List.copyOf(lines);
+            errors = List.copyOf(errors);
+            useCounts = Map.copyOf(useCounts);
+        }
     }
 
     private record ExpectedRow(int lineNumber, Map<String, Boolean> inputs,
@@ -151,11 +198,20 @@ public final class AiCircuitService {
             List<String> mismatchRows,
             List<String> errors,
             List<String> warnings,
-            boolean independentCheck) {
+            boolean independentCheck,
+            ComponentBuild componentBuild) {
         private Attempt {
             mismatchRows = List.copyOf(mismatchRows);
             errors = List.copyOf(errors);
             warnings = List.copyOf(warnings);
+        }
+
+        private Attempt(Answer answer, ExpressionCompiler.Compilation compilation,
+                        SchematicLayout.LayoutResult layout, TruthTable truthTable,
+                        List<String> mismatchRows, List<String> errors,
+                        List<String> warnings, boolean independentCheck) {
+            this(answer, compilation, layout, truthTable, mismatchRows, errors,
+                    warnings, independentCheck, null);
         }
 
         private int score() {
@@ -174,6 +230,10 @@ public final class AiCircuitService {
     private final SchematicLayout layoutBuilder;
     private final AiCache cache;
     private final Sleeper sleeper;
+    private final List<GateDef> gateDefinitions;
+    private final List<ComponentDefinition> componentDefinitions;
+    private final AiDebugLog debugLog;
+    private volatile String lastRawAnswer = "";
 
     public AiCircuitService(AiProvider provider, Collection<GateDef> definitions) {
         this(provider, definitions, null);
@@ -185,14 +245,36 @@ public final class AiCircuitService {
 
     AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
                      AiCache cache, Sleeper sleeper) {
+        this(provider, definitions, List.of(), cache, sleeper, null);
+    }
+
+    public AiCircuitService(
+            AiProvider provider, Collection<GateDef> definitions,
+            Collection<ComponentDefinition> componentDefinitions,
+            AiCache cache, AiDebugLog debugLog) {
+        this(provider, definitions, componentDefinitions, cache, Thread::sleep, debugLog);
+    }
+
+    AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
+                     Collection<ComponentDefinition> componentDefinitions,
+                     AiCache cache, Sleeper sleeper, AiDebugLog debugLog) {
         this.provider = Objects.requireNonNull(provider, "provider");
-        this.layoutBuilder = new SchematicLayout(Objects.requireNonNull(definitions, "definitions"));
+        this.gateDefinitions = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
+        this.layoutBuilder = new SchematicLayout(this.gateDefinitions);
+        this.componentDefinitions = List.copyOf(Objects.requireNonNull(componentDefinitions, "componentDefinitions"));
         this.cache = cache;
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
+        this.debugLog = debugLog;
     }
+
+    public String lastRawAnswer() { return lastRawAnswer; }
 
     /** JSON schema sent to Gemini for structured output. */
     public static JsonObject responseSchema() {
+        return responseSchema(true);
+    }
+
+    public static JsonObject responseSchema(boolean includeInstances) {
         JsonObject root = new JsonObject();
         root.addProperty("type", "OBJECT");
         JsonObject properties = new JsonObject();
@@ -240,6 +322,21 @@ public final class AiCircuitService {
         signals.addProperty("type", "ARRAY");
         signals.add("items", namedExpressionSchema());
         properties.add("signals", signals);
+
+        if (includeInstances) {
+            JsonObject fields = new JsonObject();
+            JsonObject name = new JsonObject(); name.addProperty("type", "STRING");
+            JsonObject component = new JsonObject(); component.addProperty("type", "STRING");
+            JsonObject argItem = new JsonObject(); argItem.addProperty("type", "STRING");
+            JsonObject args = new JsonObject(); args.addProperty("type", "ARRAY"); args.add("items", argItem);
+            fields.add("name", name); fields.add("component", component); fields.add("args", args);
+            JsonObject instance = new JsonObject(); instance.addProperty("type", "OBJECT");
+            instance.add("properties", fields);
+            instance.add("required", stringArray("name", "component", "args"));
+            instance.addProperty("additionalProperties", false);
+            JsonObject instances = new JsonObject(); instances.addProperty("type", "ARRAY");
+            instances.add("items", instance); properties.add("instances", instances);
+        }
 
         JsonObject spec = new JsonObject();
         spec.addProperty("type", "OBJECT");
@@ -367,6 +464,45 @@ public final class AiCircuitService {
                 """;
     }
 
+    /** Static instructions are followed by the request-specific component catalog. */
+    public static String systemPrompt(
+            Collection<ComponentDefinition> definitions, String request,
+            boolean useLibraryComponents) {
+        if (!useLibraryComponents) return systemPrompt();
+        String instructions = """
+                
+                Library component answers may add "instances": [
+                  {"name":"U0","component":"FA","args":["A0","B0","C0"]}
+                ].
+                Signals and instances share one ordered dependency namespace. Declare signals in their dependency order.
+                A signal may use an earlier signal or an earlier instance output pin. An instance may use primary inputs,
+                earlier signals and earlier instances only. The service interleaves signal and instance declarations
+                in dependency order while preserving the order inside each list. Outputs follow all declarations and
+                select pins as U0.S or U0.COUT. Never use a multi-output instance as a scalar.
+                Calls to DLATCH, DFF, TFF and JKFF are not supported: explain that sequential components are not available yet.
+                Never use feedback. Use combinational catalog entries only.
+
+                Worked example — 4-bit ripple adder from FA boxes (CIN is a declared input):
+                C0 := CIN
+                U0 := FA(A0, B0, C0)
+                S0 = U0.S
+                C1 := U0.COUT
+                U1 := FA(A1, B1, C1)
+                S1 = U1.S
+                C2 := U1.COUT
+                U2 := FA(A2, B2, C2)
+                S2 = U2.S
+                C3 := U2.COUT
+                U3 := FA(A3, B3, C3)
+                S3 = U3.S
+                COUT = U3.COUT
+                Put U0..U3 in "instances" order and C0..C3 in "signals" order; the compiler places each
+                carry signal after its source box and before the next box that consumes it.
+                """;
+        return systemPrompt() + "\n\n" + instructions + "\n"
+                + AiComponentCatalog.promptBlock(definitions, request);
+    }
+
     /**
      * If the entire input already is valid expression text, synthesize it offline and do
      * not call the provider. Otherwise request, validate and retry up to three times.
@@ -409,7 +545,17 @@ public final class AiCircuitService {
             String description, boolean cacheOnly, boolean invertingGates,
             String expectedRowsText, boolean bypassCache, boolean useTemplates)
             throws IOException, InterruptedException {
+        return generate(description, cacheOnly, invertingGates, expectedRowsText,
+                bypassCache, useTemplates, false);
+    }
+
+    public Result generate(
+            String description, boolean cacheOnly, boolean invertingGates,
+            String expectedRowsText, boolean bypassCache, boolean useTemplates,
+            boolean useLibraryComponents)
+            throws IOException, InterruptedException {
         Objects.requireNonNull(description, "description");
+        lastRawAnswer = "";
         expectedRowsText = expectedRowsText == null ? "" : expectedRowsText;
         String safeDescription = provider.redact(description);
         List<String> log = new ArrayList<>();
@@ -427,6 +573,15 @@ public final class AiCircuitService {
             }
             // Natural-language descriptions continue to the provider.
         }
+        if (local == null && requiresSequentialBehavior(description)) {
+            String explanation = "Sequential behavior is not available yet. This request requires stored state "
+                    + "(for example a flip-flop or latch), while AI generation currently supports only "
+                    + "combinational library components such as HA and FA.";
+            log.add(explanation);
+            return new Result(0, Status.UNAVAILABLE, explanation,
+                    List.of(), null, null, null, List.of(explanation), log, false);
+        }
+
         if (local != null) {
             if (local.netlist().inputs().size() > AiCircuitLimits.MAX_INPUTS
                     || local.netlist().outputs().size() > AiCircuitLimits.MAX_OUTPUTS
@@ -483,7 +638,7 @@ public final class AiCircuitService {
                 GeneratedCircuit template = matched.circuit();
                 String label = templateLabel(template);
                 Attempt generated = validate(templateAnswerJson(template, label),
-                        invertingGates, expectedRowsText);
+                        invertingGates, expectedRowsText, useLibraryComponents, true);
                 log.add("Matched deterministic " + template.generator() + " template.");
                 if (generated.passed() && generated.independentCheck()) {
                     log.add("Verified the template against its integer specification.");
@@ -502,7 +657,8 @@ public final class AiCircuitService {
 
         if (!bypassCache) {
             Result cached = cachedResult(
-                    safeDescription, log, "Using", 0, invertingGates, expectedRowsText);
+                    safeDescription, log, "Using", 0, invertingGates, expectedRowsText,
+                    useLibraryComponents, useTemplates);
             if (cached != null) return cached;
         }
 
@@ -523,7 +679,10 @@ public final class AiCircuitService {
             log.add("Verification attempt " + attemptNumber + ": requesting a model answer.");
             ModelAnswer response;
             try {
-                response = completeWithModelFallback(conversation, log, skippedModels);
+                response = completeWithModelFallback(
+                        conversation, log, skippedModels,
+                        systemPrompt(componentDefinitions, description, useLibraryComponents),
+                        responseSchema(useLibraryComponents));
                 allModelAttempts.addAll(response.modelAttempts());
             } catch (ProviderFailure failure) {
                 allModelAttempts.addAll(failure.modelAttempts());
@@ -531,7 +690,8 @@ public final class AiCircuitService {
                 String notice = provider.redact(cachedNotice(failure));
                 Result fallback = bypassCache ? null
                         : cachedResult(safeDescription, log, notice, attemptNumber - 1,
-                                invertingGates, expectedRowsText);
+                                invertingGates, expectedRowsText, useLibraryComponents,
+                                useTemplates);
                 if (fallback != null) {
                     return withModelAttempts(fallback, allModelAttempts);
                 }
@@ -543,8 +703,10 @@ public final class AiCircuitService {
             }
 
             String safeRaw = provider.redact(response.raw());
+            lastRawAnswer = safeRaw;
             conversation.add(new Turn(Turn.Role.MODEL, safeRaw));
-            Attempt current = validate(safeRaw, invertingGates, expectedRowsText);
+            Attempt current = validate(safeRaw, invertingGates, expectedRowsText,
+                    useLibraryComponents, useTemplates);
             if (best == null || current.score() < best.score()
                     || (current.score() == best.score()
                         && current.errors().size() < best.errors().size())) {
@@ -598,6 +760,17 @@ public final class AiCircuitService {
                 bestAnsweredBy, allModelAttempts);
     }
 
+    private static boolean requiresSequentialBehavior(String description) {
+        return Pattern.compile(
+                "(?i)\\b(accumulator|accumulate|counter|register|flip[\\s-]*flop|"
+                        + "sequential|stateful|memory|dlatch|dff|tff|jkff)\\b")
+                .matcher(description).find();
+    }
+
+    private static boolean templateMatchIsSupported(String description) {
+        return TemplateMatcher.match(description) instanceof TemplateMatcher.Matched;
+    }
+
     private static String templateLabel(GeneratedCircuit template) {
         String parameters = template.params().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
@@ -613,13 +786,18 @@ public final class AiCircuitService {
         return answer.toString();
     }
 
-    private static String normalizeTemplateResponse(String raw) {
+    private static String normalizeTemplateResponse(String raw, boolean allowTemplateResponse) {
         String jsonText = stripCodeFence(Objects.requireNonNull(raw, "model response"));
         JsonElement parsed = JsonParser.parseString(jsonText);
         if (!parsed.isJsonObject()) return raw;
         JsonObject root = parsed.getAsJsonObject();
         JsonElement kindElement = root.get("kind");
-        if (kindElement == null) return raw; // legacy free-form answers and old cache entries
+        if (kindElement == null) {
+            if (root.has("template")) {
+                throw new IllegalArgumentException(templateNotMatchedError(root.keySet()));
+            }
+            return raw;
+        }
         String kind = requireString(kindElement, "kind");
         if ("expressions".equals(kind)) {
             root.remove("kind");
@@ -627,6 +805,9 @@ public final class AiCircuitService {
         }
         if (!"template".equals(kind)) {
             throw new IllegalArgumentException("kind must be 'expressions' or 'template'; got " + kind);
+        }
+        if (!allowTemplateResponse) {
+            throw new IllegalArgumentException(templateNotMatchedError(root.keySet()));
         }
 
         Set<String> allowedTemplateFields = Set.of(
@@ -804,7 +985,7 @@ public final class AiCircuitService {
             List<Turn> conversation, List<String> log, Set<String> skippedModels)
             throws ProviderFailure, InterruptedException {
         return completeWithModelFallback(
-                conversation, log, skippedModels, systemPrompt(), responseSchema());
+                conversation, log, skippedModels, systemPrompt(), responseSchema(false));
     }
 
     private ModelAnswer completeWithModelFallback(
@@ -825,10 +1006,13 @@ public final class AiCircuitService {
                     String raw = provider.complete(model, selectedSystemPrompt,
                             List.copyOf(conversation), selectedSchema);
                     String safeModel = provider.redact(model);
+                    String safeRaw = provider.redact(raw);
+                    lastRawAnswer = safeRaw;
+                    if (debugLog != null) debugLog.append(safeModel, safeRaw);
                     String outcome = safeModel + ": 200 OK";
                     modelAttempts.add(outcome);
                     log.add(outcome);
-                    return new ModelAnswer(provider.redact(raw), safeModel, modelAttempts);
+                    return new ModelAnswer(safeRaw, safeModel, modelAttempts);
                 } catch (IOException exception) {
                     ProviderFailure failure = classifyFailure(exception, model);
                     lastFailure = failure;
@@ -931,7 +1115,9 @@ public final class AiCircuitService {
         return new Result(result.attemptCount(), result.status(), result.summary(),
                 result.expressions(), result.netlist(), result.layout(), result.truthTable(),
                 result.mismatchingRows(), result.attemptLog(), result.fromCache(),
-                result.answeredBy(), modelAttempts.stream().map(provider::redact).toList());
+                result.answeredBy(), modelAttempts.stream().map(provider::redact).toList(),
+                result.signals(), result.schematic(), result.expressionSource(),
+                result.componentUseCounts());
     }
 
     private static boolean isExpressionSource(String source) {
@@ -981,11 +1167,13 @@ public final class AiCircuitService {
 
     private Result cachedResult(
             String description, List<String> log, String prefix, int attemptCount,
-            boolean invertingGates, String expectedRowsText) {
+            boolean invertingGates, String expectedRowsText,
+            boolean useLibraryComponents, boolean allowTemplateResponse) {
         if (cache == null) return null;
         for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
             Attempt cachedAttempt = validate(
-                    provider.redact(hit.answerJson()), invertingGates, expectedRowsText);
+                    provider.redact(hit.answerJson()), invertingGates, expectedRowsText,
+                    useLibraryComponents, allowTemplateResponse);
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
             if (cachedAttempt.passed()) {
                 Status status = cachedAttempt.independentCheck() ? Status.VERIFIED : Status.BUILT;
@@ -1020,28 +1208,51 @@ public final class AiCircuitService {
         List<String> failures = new ArrayList<>(attempt.errors());
         failures.addAll(attempt.mismatchRows());
         List<NamedExpression> signals = new ArrayList<>();
-        if (attempt.answer() != null && attempt.compilation() != null) {
+        List<NamedExpression> outputs = new ArrayList<>();
+        if (attempt.answer() != null) {
             for (int index = 0; index < attempt.answer().signalNames().size(); index++) {
                 signals.add(new NamedExpression(attempt.answer().signalNames().get(index),
                         ExpressionParser.parse(attempt.answer().signalExpressions().get(index))));
             }
+            for (int index = 0; index < attempt.answer().outputNames().size(); index++) {
+                outputs.add(new NamedExpression(attempt.answer().outputNames().get(index),
+                        ExpressionParser.parse(attempt.answer().expressionTexts().get(index))));
+            }
         }
+        ComponentBuild built = attempt.componentBuild();
+        Schematic schematic = built != null ? built.compilation().schematic()
+                : attempt.layout() == null ? null : attempt.layout().schematic();
         return new Result(attempts, status,
                 attempt.answer() == null ? "" : provider.redact(attempt.answer().summary()),
-                attempt.compilation() == null ? List.of() : attempt.compilation().expressions(),
+                attempt.compilation() == null ? outputs : attempt.compilation().expressions(),
                 attempt.compilation() == null ? null : attempt.compilation().netlist(),
                 attempt.layout(), attempt.truthTable(), failures, log, fromCache,
-                answeredBy, modelAttempts, signals);
+                answeredBy, modelAttempts, signals, schematic,
+                built == null ? "" : built.source(),
+                built == null ? Map.of() : built.useCounts());
     }
 
-    private Attempt validate(String raw, boolean invertingGates, String expectedRowsText) {
+    private Attempt validate(
+            String raw, boolean invertingGates, String expectedRowsText,
+            boolean useLibraryComponents, boolean allowTemplateResponse) {
         Answer answer;
         try {
-            answer = parseAnswer(normalizeTemplateResponse(raw));
+            answer = parseAnswer(normalizeTemplateResponse(raw, allowTemplateResponse),
+                    useLibraryComponents);
         } catch (RuntimeException exception) {
             return new Attempt(null, null, null, null, List.of(),
                     List.of("JSON/schema error: " + safeParseMessage(exception)),
                     List.of(), false);
+        }
+
+        if (!answer.instances().isEmpty()) {
+            if (!useLibraryComponents) {
+                return new Attempt(answer, null, null, null, List.of(),
+                        List.of("Library component instances are disabled. Turn on 'Use library components' "
+                                + "or return a gate-only expressions answer."), List.of(),
+                        answer.specification() != null || !expectedRowsText.isBlank());
+            }
+            return validateComponentAnswer(answer, invertingGates, expectedRowsText);
         }
 
         StringBuilder source = new StringBuilder();
@@ -1194,6 +1405,507 @@ public final class AiCircuitService {
                 failures, warnings, independent);
     }
 
+    private Attempt validateComponentAnswer(
+            Answer answer, boolean invertingGates, String expectedRowsText) {
+        ComponentSourcePlan plan = buildComponentSourcePlan(answer);
+        if (!plan.errors().isEmpty()) {
+            return new Attempt(answer, null, null, null, List.of(), plan.errors(), List.of(),
+                    answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        String source = String.join("\n", plan.lines());
+        Map<String, Integer> uses = plan.useCounts();
+
+        ComponentExpressionCompiler.Compilation compilation;
+        try {
+            compilation = ComponentExpressionCompiler.compile(source,
+                    gateDefinitions, componentDefinitions,
+                    ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES,
+                    false, invertingGates);
+        } catch (RuntimeException exception) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Component compilation failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        if (compilation.hasSequentialInstances() || compilation.hasFeedback()
+                || !compilation.clockComponentIds().isEmpty()) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Sequential components and feedback are not available in AI generation yet. "
+                            + "Use combinational components only; DLATCH, DFF, TFF and JKFF are not supported."),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+
+        Set<String> declaredInputs = new LinkedHashSet<>(answer.inputs());
+        Set<String> actualInputs = new LinkedHashSet<>(compilation.inputComponentIds().keySet());
+        if (!declaredInputs.equals(actualInputs)) {
+            Set<String> missing = new LinkedHashSet<>(actualInputs);
+            missing.removeAll(declaredInputs);
+            Set<String> unused = new LinkedHashSet<>(declaredInputs);
+            unused.removeAll(actualInputs);
+            List<String> inputErrors = new ArrayList<>();
+            missing.forEach(name -> inputErrors.add("Component expression input '" + name
+                    + "' is not declared in inputs."));
+            unused.forEach(name -> inputErrors.add("Declared input '" + name
+                    + "' is not used by the component expressions."));
+            return new Attempt(answer, null, null, null, List.of(), inputErrors, List.of(),
+                    answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        if (answer.inputs().size() > AiCircuitLimits.MAX_INPUTS) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Circuit has " + answer.inputs().size()
+                            + " inputs; maximum is " + AiCircuitLimits.MAX_INPUTS),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        if (answer.outputNames().size() > AiCircuitLimits.MAX_OUTPUTS) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Circuit has " + answer.outputNames().size()
+                            + " outputs; maximum is " + AiCircuitLimits.MAX_OUTPUTS),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+
+        SchematicCompiler.CompiledCircuit flattened;
+        try {
+            flattened = SchematicCompiler.compileCircuit(compilation.schematic());
+        } catch (RuntimeException exception) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Component flattening failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        long gates = flattened.circuit().components().stream().filter(Gate.class::isInstance).count();
+        if (gates > AiCircuitLimits.MAX_GATES) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Flattened component circuit has " + gates
+                            + " gates; maximum is " + AiCircuitLimits.MAX_GATES),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+
+        TruthTable table;
+        try {
+            table = componentTruthTable(answer, compilation, flattened);
+        } catch (RuntimeException exception) {
+            return new Attempt(answer, null, null, null, List.of(),
+                    List.of("Component engine verification failed: " + safeParseMessage(exception)),
+                    List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+        ComponentBuild built = new ComponentBuild(compilation, source.toString(), uses);
+        List<String> warnings = unusedSignalWarnings(answer);
+        List<String> structural = structuralErrors(table);
+        if (!structural.isEmpty()) {
+            return new Attempt(answer, null, null, table, List.of(), structural, warnings,
+                    answer.specification() != null || !expectedRowsText.isBlank(), built);
+        }
+
+        List<String> failures = new ArrayList<>();
+        ExpectedParse expected = parseExpectedRows(
+                expectedRowsText, table.inputNames(), table.outputNames());
+        failures.addAll(expected.errors());
+        List<String> rowMismatches = compareExpectedRows(expected.rows(), table);
+        if (answer.specification() != null) {
+            try {
+                SpecEvaluator evaluator = SpecEvaluator.parse(
+                        answer.specification(), table.inputNames(), table.outputNames());
+                failures.addAll(compareSpecification(evaluator, table));
+            } catch (SpecEvaluator.SpecException exception) {
+                String position = exception.position() >= 0
+                        ? " at position " + exception.position() : "";
+                failures.add("Spec error" + position + ": " + safeParseMessage(exception));
+            } catch (RuntimeException exception) {
+                failures.add("Spec error: " + safeParseMessage(exception));
+            }
+        }
+        boolean independent = answer.specification() != null || !expectedRowsText.isBlank();
+        return new Attempt(answer, null, null, table, rowMismatches, failures, warnings,
+                independent, built);
+    }
+
+    private static TruthTable componentTruthTable(
+            Answer answer, ComponentExpressionCompiler.Compilation compilation,
+            SchematicCompiler.CompiledCircuit flattened) {
+        Simulator simulator = new Simulator(flattened.circuit());
+        List<TruthTable.Row> rows = new ArrayList<>(1 << answer.inputs().size());
+        for (int row = 0; row < (1 << answer.inputs().size()); row++) {
+            StringBuilder bits = new StringBuilder(answer.inputs().size());
+            for (int index = 0; index < answer.inputs().size(); index++) {
+                String name = answer.inputs().get(index);
+                boolean high = ((row >>> (answer.inputs().size() - index - 1)) & 1) != 0;
+                bits.append(high ? '1' : '0');
+                String id = compilation.inputComponentIds().get(name);
+                InputPin input = flattened.inputs().get(id);
+                if (input == null) throw new IllegalStateException("missing flattened input " + name);
+                simulator.setInputValue(input, high ? Value.ONE : Value.ZERO);
+            }
+            simulator.settle();
+            List<Value> outputs = new ArrayList<>(answer.outputNames().size());
+            for (String name : answer.outputNames()) {
+                String id = compilation.outputComponentIds().get(name);
+                OutputProbe probe = flattened.outputs().get(id);
+                if (probe == null) throw new IllegalStateException("missing flattened output " + name);
+                outputs.add(simulator.getProbeValue(probe));
+            }
+            rows.add(new TruthTable.Row(row, bits.toString(), outputs, simulator.isOscillating()));
+        }
+        return new TruthTable(answer.inputs(), answer.outputNames(), rows);
+    }
+
+    private ComponentSourcePlan buildComponentSourcePlan(Answer answer) {
+        List<String> errors = new ArrayList<>();
+        Set<String> inputs = new LinkedHashSet<>(answer.inputs());
+        Map<String, Integer> signalIndexes = new LinkedHashMap<>();
+        for (int index = 0; index < answer.signalNames().size(); index++) {
+            String name = answer.signalNames().get(index);
+            if (inputs.contains(name)) {
+                errors.add("Signal name '" + name + "' conflicts with a declared input.");
+            }
+            signalIndexes.put(name, index);
+        }
+
+        Map<String, Integer> instanceIndexes = new LinkedHashMap<>();
+        for (int index = 0; index < answer.instances().size(); index++) {
+            InstanceSpec instance = answer.instances().get(index);
+            if (inputs.contains(instance.name()) || signalIndexes.containsKey(instance.name())
+                    || instanceIndexes.putIfAbsent(instance.name(), index) != null) {
+                errors.add("Instance name '" + instance.name()
+                        + "' conflicts with an input, signal or earlier instance.");
+            }
+        }
+        if (answer.instances().size() > AiCircuitLimits.MAX_INSTANCES) {
+            errors.add("Circuit has " + answer.instances().size()
+                    + " instances; maximum is " + AiCircuitLimits.MAX_INSTANCES);
+        }
+
+        Map<String, ComponentDefinition> definitionsByInstance = new LinkedHashMap<>();
+        Map<String, Integer> useCounts = new LinkedHashMap<>();
+        for (InstanceSpec instance : answer.instances()) {
+            ComponentDefinition definition = componentDefinitions.stream()
+                    .filter(candidate -> candidate.name().equals(instance.component()))
+                    .findFirst().orElse(null);
+            if (definition == null) {
+                List<String> valid = componentDefinitions.stream()
+                        .filter(candidate -> !AiComponentCatalog.isSequential(candidate)
+                                && AiComponentCatalog.isCombinational(candidate))
+                        .map(ComponentDefinition::name).sorted().toList();
+                errors.add("Unknown component '" + instance.component() + "' for "
+                        + instance.name() + "; valid combinational components: " + valid);
+                continue;
+            }
+            definitionsByInstance.put(instance.name(), definition);
+            if (AiComponentCatalog.isSequential(definition)) {
+                errors.add("Component " + definition.name()
+                        + " is sequential: not available yet. Use a combinational component instead.");
+                continue;
+            }
+            if (!AiComponentCatalog.isCombinational(definition)) {
+                errors.add("Component " + definition.name()
+                        + " is not available for AI because its definition contains feedback.");
+                continue;
+            }
+            if (instance.args().size() != definition.inputPorts().size()) {
+                errors.add("Instance " + instance.name() + " calls " + definition.name()
+                        + " with " + instance.args().size() + " arguments; expected "
+                        + definition.inputPorts().size() + " ordered input pins "
+                        + definition.inputPorts().stream().map(ComponentDefinition.Port::name).toList());
+                continue;
+            }
+            useCounts.merge(instance.component(), 1, Integer::sum);
+        }
+
+        Map<String, Expression> signalExpressions = new LinkedHashMap<>();
+        for (int index = 0; index < answer.signalNames().size(); index++) {
+            String name = answer.signalNames().get(index);
+            try {
+                signalExpressions.put(name,
+                        ExpressionParser.parse(answer.signalExpressions().get(index)));
+            } catch (RuntimeException exception) {
+                errors.add("Signal '" + name + "' parse error: " + safeParseMessage(exception));
+            }
+        }
+
+        List<List<Expression>> instanceArguments = new ArrayList<>();
+        for (InstanceSpec instance : answer.instances()) {
+            List<Expression> parsed = new ArrayList<>();
+            for (int index = 0; index < instance.args().size(); index++) {
+                try {
+                    parsed.add(ExpressionParser.parse(instance.args().get(index)));
+                } catch (RuntimeException exception) {
+                    parsed.add(null);
+                    String pin = definitionsByInstance.containsKey(instance.name())
+                            && index < definitionsByInstance.get(instance.name()).inputPorts().size()
+                            ? definitionsByInstance.get(instance.name()).inputPorts().get(index).name()
+                            : "argument " + (index + 1);
+                    errors.add("Instance " + instance.name() + " argument " + pin
+                            + " parse error: " + safeParseMessage(exception));
+                }
+            }
+            instanceArguments.add(parsed);
+        }
+
+        for (int index = 0; index < answer.signalNames().size(); index++) {
+            String signalName = answer.signalNames().get(index);
+            Expression expression = signalExpressions.get(signalName);
+            if (expression == null) continue;
+            for (String variable : expression.variables()) {
+                if (inputs.contains(variable)) continue;
+                Integer signalIndex = signalIndexes.get(variable);
+                if (signalIndex != null) {
+                    if (signalIndex >= index) {
+                        errors.add("Signal '" + signalName + "' references signal '" + variable
+                                + "' before it is defined; signals may use earlier signals only.");
+                    }
+                    continue;
+                }
+                if (instanceIndexes.containsKey(variable)) {
+                    ComponentDefinition definition = definitionsByInstance.get(variable);
+                    if (definition != null && definition.outputPorts().size() > 1) {
+                        errors.add("Instance " + variable + " has multiple outputs "
+                                + definition.outputPorts().stream()
+                                        .map(ComponentDefinition.Port::name).toList()
+                                + "; select " + variable + ".PIN in signal " + signalName + ".");
+                    }
+                    continue;
+                }
+                errors.add("Signal '" + signalName + "' references undeclared name '"
+                        + variable + "'; use inputs, earlier signals or earlier component instances only.");
+            }
+            validateComponentOutputReferences(expression, signalName,
+                    instanceIndexes, definitionsByInstance, errors);
+        }
+
+        List<String> lines = new ArrayList<>();
+        Set<String> emittedSignals = new LinkedHashSet<>();
+        Set<String> emittedInstances = new LinkedHashSet<>();
+        int nextSignal = 0;
+        for (int instanceIndex = 0; instanceIndex <= answer.instances().size(); instanceIndex++) {
+            while (nextSignal < answer.signalNames().size()) {
+                String signalName = answer.signalNames().get(nextSignal);
+                Expression expression = signalExpressions.get(signalName);
+                if (expression == null) {
+                    nextSignal++;
+                    continue;
+                }
+                if (!signalDependenciesAvailable(expression, nextSignal, inputs,
+                        signalIndexes, instanceIndexes, emittedSignals, emittedInstances)) {
+                    break;
+                }
+                lines.add(signalName + " := " + answer.signalExpressions().get(nextSignal));
+                emittedSignals.add(signalName);
+                nextSignal++;
+            }
+
+            if (instanceIndex == answer.instances().size()) break;
+            InstanceSpec instance = answer.instances().get(instanceIndex);
+            List<Expression> args = instanceArguments.get(instanceIndex);
+            for (int argumentIndex = 0; argumentIndex < args.size(); argumentIndex++) {
+                Expression expression = args.get(argumentIndex);
+                if (expression == null) continue;
+                String inputPin = definitionsByInstance.containsKey(instance.name())
+                        && argumentIndex < definitionsByInstance.get(instance.name()).inputPorts().size()
+                        ? definitionsByInstance.get(instance.name()).inputPorts().get(argumentIndex).name()
+                        : "argument " + (argumentIndex + 1);
+                validateInstanceArgumentReferences(expression, instance, inputPin,
+                        instanceIndex, inputs, signalIndexes, instanceIndexes,
+                        definitionsByInstance, emittedSignals, emittedInstances, errors);
+            }
+            if (args.stream().noneMatch(Objects::isNull)
+                    && definitionsByInstance.containsKey(instance.name())
+                    && instance.args().size() == definitionsByInstance.get(instance.name()).inputPorts().size()) {
+                lines.add(instance.name() + " := " + instance.component()
+                        + "(" + String.join(", ", instance.args()) + ")");
+            }
+            emittedInstances.add(instance.name());
+        }
+
+        while (nextSignal < answer.signalNames().size()) {
+            String signalName = answer.signalNames().get(nextSignal);
+            Expression expression = signalExpressions.get(signalName);
+            if (expression != null) {
+                errors.add("Signal '" + signalName
+                        + "' cannot be ordered before the outputs; it references an unknown or later declaration.");
+            }
+            nextSignal++;
+        }
+
+        for (int index = 0; index < answer.outputNames().size(); index++) {
+            String outputName = answer.outputNames().get(index);
+            Expression expression;
+            try {
+                expression = ExpressionParser.parse(answer.expressionTexts().get(index));
+            } catch (RuntimeException exception) {
+                continue; // The component compiler supplies syntax diagnostics.
+            }
+            for (String variable : expression.variables()) {
+                if (inputs.contains(variable) || signalIndexes.containsKey(variable)) continue;
+                if (instanceIndexes.containsKey(variable)) {
+                    ComponentDefinition definition = definitionsByInstance.get(variable);
+                    if (definition != null && definition.outputPorts().size() > 1) {
+                        errors.add("Instance " + variable + " has multiple outputs "
+                                + definition.outputPorts().stream()
+                                        .map(ComponentDefinition.Port::name).toList()
+                                + "; select " + variable + ".PIN in output " + outputName + ".");
+                    }
+                    continue;
+                }
+                errors.add("Output '" + outputName + "' references undeclared name '"
+                        + variable + "'; valid names are inputs, signals and component instances.");
+            }
+            validateComponentOutputReferences(expression, outputName,
+                    instanceIndexes, definitionsByInstance, errors);
+            lines.add(outputName + " = " + answer.expressionTexts().get(index));
+        }
+        return new ComponentSourcePlan(lines, errors, useCounts);
+    }
+
+    private static boolean signalDependenciesAvailable(
+            Expression expression, int signalIndex, Set<String> inputs,
+            Map<String, Integer> signalIndexes, Map<String, Integer> instanceIndexes,
+            Set<String> emittedSignals, Set<String> emittedInstances) {
+        for (String variable : expression.variables()) {
+            if (inputs.contains(variable)) continue;
+            Integer dependencySignal = signalIndexes.get(variable);
+            if (dependencySignal != null) {
+                if (dependencySignal >= signalIndex || !emittedSignals.contains(variable)) return false;
+                continue;
+            }
+            if (instanceIndexes.containsKey(variable)) {
+                if (!emittedInstances.contains(variable)) return false;
+                continue;
+            }
+            return false;
+        }
+        List<Expression.ComponentOutput> outputs = new ArrayList<>();
+        collectComponentOutputReferences(expression, outputs);
+        for (Expression.ComponentOutput output : outputs) {
+            if (!emittedInstances.contains(output.instanceName())) return false;
+        }
+        return true;
+    }
+
+    private static void validateInstanceArgumentReferences(
+            Expression expression, InstanceSpec instance, String inputPin, int instanceIndex,
+            Set<String> inputs, Map<String, Integer> signalIndexes,
+            Map<String, Integer> instanceIndexes,
+            Map<String, ComponentDefinition> definitionsByInstance,
+            Set<String> emittedSignals, Set<String> emittedInstances,
+            List<String> errors) {
+        for (String variable : expression.variables()) {
+            if (inputs.contains(variable)) continue;
+            if (signalIndexes.containsKey(variable)) {
+                if (!emittedSignals.contains(variable)) {
+                    errors.add("Instance " + instance.name() + " argument " + inputPin
+                            + " references signal '" + variable
+                            + "' before it is available; instances may use earlier signals only.");
+                }
+                continue;
+            }
+            Integer referencedInstance = instanceIndexes.get(variable);
+            if (referencedInstance != null) {
+                ComponentDefinition definition = definitionsByInstance.get(variable);
+                if (definition != null && definition.outputPorts().size() > 1) {
+                    errors.add("Instance " + variable + " has multiple outputs "
+                            + definition.outputPorts().stream()
+                                    .map(ComponentDefinition.Port::name).toList()
+                            + "; select " + variable + ".PIN in " + instance.name() + "'s arguments.");
+                }
+                if (referencedInstance >= instanceIndex) {
+                    errors.add("Instance " + instance.name() + " argument " + inputPin
+                            + " references later instance '" + variable
+                            + "'; instances may use earlier instances only.");
+                } else if (!emittedInstances.contains(variable)) {
+                    errors.add("Instance " + instance.name() + " argument " + inputPin
+                            + " references instance '" + variable + "' before it is available.");
+                }
+                continue;
+            }
+            errors.add("Instance " + instance.name() + " argument " + inputPin
+                    + " references undeclared name '" + variable
+                    + "'; valid names are inputs, earlier signals and earlier instances.");
+        }
+        validateComponentOutputArgumentReferences(expression, instance, inputPin,
+                instanceIndex, instanceIndexes, definitionsByInstance, emittedInstances, errors);
+    }
+
+    private static void validateComponentOutputArgumentReferences(
+            Expression expression, InstanceSpec usingInstance, String inputPin,
+            int instanceIndex, Map<String, Integer> instanceIndexes,
+            Map<String, ComponentDefinition> definitionsByInstance,
+            Set<String> emittedInstances, List<String> errors) {
+        List<Expression.ComponentOutput> outputs = new ArrayList<>();
+        collectComponentOutputReferences(expression, outputs);
+        for (Expression.ComponentOutput output : outputs) {
+            Integer referencedIndex = instanceIndexes.get(output.instanceName());
+            if (referencedIndex == null) {
+                errors.add("Instance " + usingInstance.name() + " argument " + inputPin
+                        + " references unknown instance '" + output.instanceName() + "'.");
+                continue;
+            }
+            ComponentDefinition definition = definitionsByInstance.get(output.instanceName());
+            if (definition != null && definition.outputPorts().stream()
+                    .noneMatch(port -> port.name().equals(output.outputName()))) {
+                errors.add("Unknown output pin '" + output.outputName() + "' on "
+                        + output.instanceName() + "; valid pins: "
+                        + definition.outputPorts().stream()
+                                .map(ComponentDefinition.Port::name).toList());
+            }
+            if (referencedIndex >= instanceIndex) {
+                errors.add("Instance " + usingInstance.name() + " argument " + inputPin
+                        + " references later instance '" + output.instanceName()
+                        + "'; instances may use earlier instances only.");
+            } else if (!emittedInstances.contains(output.instanceName())) {
+                errors.add("Instance " + usingInstance.name() + " argument " + inputPin
+                        + " references instance '" + output.instanceName() + "' before it is available.");
+            }
+        }
+    }
+
+    private static void validateComponentOutputReferences(
+            Expression expression, String owner,
+            Map<String, Integer> instanceIndexes,
+            Map<String, ComponentDefinition> definitionsByInstance,
+            List<String> errors) {
+        List<Expression.ComponentOutput> outputs = new ArrayList<>();
+        collectComponentOutputReferences(expression, outputs);
+        for (Expression.ComponentOutput output : outputs) {
+            if (!instanceIndexes.containsKey(output.instanceName())) {
+                errors.add(owner + " references unknown instance '" + output.instanceName() + "'.");
+                continue;
+            }
+            ComponentDefinition definition = definitionsByInstance.get(output.instanceName());
+            if (definition != null && definition.outputPorts().stream()
+                    .noneMatch(port -> port.name().equals(output.outputName()))) {
+                errors.add("Unknown output pin '" + output.outputName() + "' on "
+                        + output.instanceName() + "; valid pins: "
+                        + definition.outputPorts().stream()
+                                .map(ComponentDefinition.Port::name).toList());
+            }
+        }
+    }
+
+    private static void collectComponentOutputReferences(
+            Expression expression, List<Expression.ComponentOutput> outputs) {
+        if (expression instanceof Expression.ComponentOutput output) {
+            outputs.add(output);
+        } else if (expression instanceof Expression.Unary unary) {
+            collectComponentOutputReferences(unary.operand(), outputs);
+        } else if (expression instanceof Expression.Binary binary) {
+            collectComponentOutputReferences(binary.left(), outputs);
+            collectComponentOutputReferences(binary.right(), outputs);
+        } else if (expression instanceof Expression.ComponentCall call) {
+            for (Expression argument : call.arguments()) {
+                collectComponentOutputReferences(argument, outputs);
+            }
+        } else if (expression instanceof Expression.PartCall call) {
+            for (Expression argument : call.arguments()) {
+                collectComponentOutputReferences(argument, outputs);
+            }
+        }
+    }
+
+    private static String templateNotMatchedError(Set<String> receivedFields) {
+        return "A template response was received, but no supported template matched this request. "
+                + "Allowed fields for an expressions answer: [summary, inputs, outputs, signals, instances, spec]. "
+                + "Fields sent: " + new java.util.TreeSet<>(receivedFields)
+                + ". Return a complete expressions object with summary, inputs, outputs and optional signals, "
+                + "instances and spec; do not return a template field.";
+    }
+
     private static String parseError(String kind, String name, RuntimeException exception) {
         String position = exception instanceof io.github.evilalee.gatelab.synth.ParseException parse
                 ? " at position " + parse.position() : "";
@@ -1233,6 +1945,11 @@ public final class AiCircuitService {
         List<String> pending = new ArrayList<>();
         for (String expression : answer.expressionTexts()) {
             pending.addAll(ExpressionParser.parse(expression).variables());
+        }
+        for (InstanceSpec instance : answer.instances()) {
+            for (String argument : instance.args()) {
+                pending.addAll(ExpressionParser.parse(argument).variables());
+            }
         }
         for (int index = 0; index < pending.size(); index++) {
             String dependency = pending.get(index);
@@ -1442,23 +2159,46 @@ public final class AiCircuitService {
             outputs.add(output);
         }
         root.add("outputs", outputs);
+        if (!answer.instances().isEmpty()) {
+            JsonArray instances = new JsonArray();
+            for (InstanceSpec instance : answer.instances()) {
+                JsonObject item = new JsonObject();
+                item.addProperty("name", instance.name());
+                item.addProperty("component", instance.component());
+                JsonArray args = new JsonArray();
+                instance.args().forEach(args::add);
+                item.add("args", args);
+                instances.add(item);
+            }
+            root.add("instances", instances);
+        }
         if (answer.specification() != null) root.add("spec", answer.specification().deepCopy());
         return root.toString();
     }
 
-    private static Answer parseAnswer(String raw) {
+    private static Answer parseAnswer(String raw, boolean allowInstances) {
         String jsonText = stripCodeFence(Objects.requireNonNull(raw, "model response"));
         JsonObject root = JsonParser.parseString(jsonText).getAsJsonObject();
         Set<String> required = Set.of("summary", "inputs", "outputs");
-        Set<String> allowed = Set.of("summary", "inputs", "outputs", "signals", "spec", "truthTable");
+        Set<String> allowed = new LinkedHashSet<>(
+                Set.of("summary", "inputs", "outputs", "signals", "spec", "truthTable"));
+        if (allowInstances) allowed.add("instances");
         Set<String> actual = new LinkedHashSet<>(root.keySet());
         Set<String> missing = new LinkedHashSet<>(required);
         missing.removeAll(actual);
         Set<String> unexpected = new LinkedHashSet<>(actual);
         unexpected.removeAll(allowed);
         if (!missing.isEmpty() || !unexpected.isEmpty()) {
-            throw new IllegalArgumentException("response fields invalid; missing="
-                    + missing + ", unexpected=" + unexpected);
+            throw new IllegalArgumentException("response fields invalid for an expressions answer; "
+                    + "allowed fields: " + new java.util.TreeSet<>(allowed)
+                    + "; fields sent: " + new java.util.TreeSet<>(actual)
+                    + "; missing=" + new java.util.TreeSet<>(missing)
+                    + ", unexpected=" + new java.util.TreeSet<>(unexpected)
+                    + ". Expected shape: {\"summary\":\"...\",\"inputs\":[\"A\"],"
+                    + "\"outputs\":[{\"name\":\"Y\",\"expression\":\"A & B\"}],"
+                    + "\"signals\":[{\"name\":\"C1\",\"expression\":\"A & B\"}]?,"
+                    + "\"instances\":[{\"name\":\"U0\",\"component\":\"FA\",\"args\":[\"A\",\"B\",\"CIN\"]}]?,"
+                    + "\"spec\":{...}?}. Include required fields and no unrelated fields.");
         }
         JsonElement summaryElement = root.get("summary");
         String summary = requireString(summaryElement, "summary");
@@ -1566,6 +2306,59 @@ public final class AiCircuitService {
                     + AiCircuitLimits.MAX_EXPRESSION_TEXT + " characters");
         }
 
+        List<InstanceSpec> instances = new ArrayList<>();
+        JsonElement instancesElement = root.get("instances");
+        if (instancesElement != null) {
+            if (!instancesElement.isJsonArray()) {
+                throw new IllegalArgumentException("instances must be an array");
+            }
+            if (instancesElement.getAsJsonArray().size() > AiCircuitLimits.MAX_INSTANCES) {
+                throw new IllegalArgumentException("instances has "
+                        + instancesElement.getAsJsonArray().size() + " entries; maximum is "
+                        + AiCircuitLimits.MAX_INSTANCES);
+            }
+            Set<String> namespace = new LinkedHashSet<>(seenInputs);
+            namespace.addAll(signalNames);
+            for (JsonElement item : instancesElement.getAsJsonArray()) {
+                if (!item.isJsonObject()) throw new IllegalArgumentException("each instance must be an object");
+                JsonObject instance = item.getAsJsonObject();
+                requireExactKeys(instance, Set.of("name", "component", "args"), "instance");
+                String name = requireString(instance.get("name"), "instance name");
+                String component = requireString(instance.get("component"), "instance component");
+                requireName(name, "instance name");
+                requireName(component, "instance component");
+                if (!namespace.add(name)) {
+                    throw new IllegalArgumentException("duplicate input/signal/instance name: " + name);
+                }
+                JsonElement argsElement = instance.get("args");
+                if (argsElement == null || !argsElement.isJsonArray()) {
+                    throw new IllegalArgumentException("args for instance " + name + " must be an array");
+                }
+                List<String> args = new ArrayList<>();
+                for (JsonElement arg : argsElement.getAsJsonArray()) {
+                    String expression = requireString(arg, "argument for instance " + name);
+                    if (expression.isBlank()) {
+                        throw new IllegalArgumentException("argument for instance " + name + " is empty");
+                    }
+                    requireExpressionLength(expression, "argument for instance '" + name + "'");
+                    totalExpressionLength += expression.length();
+                    args.add(expression);
+                }
+                instances.add(new InstanceSpec(name, component, args));
+            }
+        }
+        if (totalExpressionLength > AiCircuitLimits.MAX_EXPRESSION_TEXT) {
+            throw new IllegalArgumentException("total expression text exceeds "
+                    + AiCircuitLimits.MAX_EXPRESSION_TEXT + " characters");
+        }
+        for (String outputName : outputNames) {
+            if (seenInputs.contains(outputName) || seenSignals.contains(outputName)
+                    || instances.stream().anyMatch(instance -> instance.name().equals(outputName))) {
+                throw new IllegalArgumentException("output name conflicts with another namespace name: "
+                        + outputName);
+            }
+        }
+
         JsonObject specification = null;
         JsonElement specElement = root.get("spec");
         if (specElement != null) {
@@ -1613,7 +2406,7 @@ public final class AiCircuitService {
         // truthTable is a legacy cache field. It is deliberately never parsed or used as evidence.
         return new Answer(summary, List.copyOf(inputs), List.copyOf(outputNames),
                 List.copyOf(signalNames), List.copyOf(signalExpressions),
-                List.copyOf(outputExpressions), specification);
+                List.copyOf(outputExpressions), List.copyOf(instances), specification);
     }
 
     private static void requireExpressionLength(String expression, String label) {

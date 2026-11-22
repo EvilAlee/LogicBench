@@ -11,6 +11,8 @@ A new model answer has these required fields:
 Optional fields:
 
 - \`signals\`: internal named expressions, each \`{"name":"C1","expression":"A & B"}\`. These compile as \`C1 := A & B\`, create no output pin, and must reference declared inputs or earlier signals only; forward references are rejected.
+- instances: ordered boxed library calls, each {name: U0, component: FA, args: [A, B, CIN]}. Argument order is the definition's ordered IN-pin order. An instance may use declared inputs, earlier signals and earlier instances only. Multi-output instances require an explicit selector such as U0.S or U0.COUT; they must not be used as scalars.
+  Signals and instances share one dependency-ordered namespace. The service preserves order within both arrays and interleaves their declarations by dependency. A signal may select an output pin from an earlier instance, for example `C1 := U0.COUT`; a subsequent instance may use that signal as an argument. An instance may use only inputs, already-declared signals and earlier instances. Outputs are declared after all signals and instances.
 - \`spec\`: an executable integer specification of the expected behavior:
 
   \`\`\`json
@@ -26,6 +28,10 @@ Optional fields:
 Bus pins are MSB first. A pin not listed in a bus is implicitly its own one-bit bus. Each rule assigns one output bus, and every output pin must be covered exactly once. Rule expressions may refer to input bus names and individual input pin names.
 
 The model must not return a truth table. The new response schema does not contain a \`truthTable\` field. For compatibility, the parser tolerates that field in old answers/cache entries, ignores its contents completely, and never treats it as verification evidence.
+
+Library instances are available only when the dialog's **Use library components** checkbox is enabled (default on). The prompt catalog is generated from ComponentLibrary and lists combinational components with ordered input/output pins, primary output and a one-line description. DLATCH, DFF, TFF and JKFF are labelled sequential: not available yet. When the catalog exceeds 12 entries, combinational entries are filtered by component-name/description overlap; the four built-in sequential-unavailable notices remain visible. The prompt includes a worked four-FA ripple-adder example with C0..C3 signal aliases (C1 := U0.COUT, then U1 := FA(A1, B1, C1)). Turning the checkbox off omits the catalog and rejects instances.
+
+Sequential components and definitions containing feedback are not supported by AI generation yet. Calls to DLATCH/DFF/TFF/JKFF receive a named sequential-availability validation failure. Natural-language requests that explicitly require state (for example accumulator, counter, register, latch or flip-flop) return a direct sequential-unavailable explanation before provider validation, so a stateful request does not degrade into a JSON-schema error. User components without feedback are eligible.
 
 ## AI Explain mode
 
@@ -67,7 +73,8 @@ All limits live in \`AiCircuitLimits\`:
 | Outputs | 16 |
 | Intermediate signals | 160 |
 | Individual expression length (outputs, signals and spec rules) | 300 characters |
-| Gates | 400 |
+| Boxed component instances | 32 |
+| Gates after flattening | 400 |
 | Total expression text (signals, outputs and spec rules) | 3,000 characters |
 | Spec rules | 16 |
 | User-supplied expected rows | 64 |
@@ -94,19 +101,13 @@ Every row must assign every declared input and output exactly once. Values are \
 
 For each model answer, in order:
 
-1. Validate JSON shape and all size limits. The legacy \`truthTable\` property, when present, is ignored.
-2. Enforce the 300-character expression limit and 160-signal limit. Parse each output and internal signal expression with parser positions; signals may reference declared inputs and earlier signals only.
-3. Confirm the declared input list is a permutation of the actual expression variables. A misspelled identifier that becomes an undeclared input is named in the error.
-4. Compile with raw feedback disabled and lay out the circuit.
-5. Run the existing placed-geometry verifier, then enumerate every engine input combination. An \`X\` output or oscillation fails the attempt. Disconnected declared inputs, constant outputs, and internal signals not transitively used by an output are warnings.
+1. Validate JSON shape and all size limits. When component use is enabled, instances is optional and limited to 32. The legacy truthTable property is ignored. Invalid-field feedback names allowed fields, fields sent, missing/unexpected fields and the expected expressions-answer shape.
+2. Enforce the 300-character expression/argument limit, 160-signal limit and 3,000-character total expression text. Signals and instances share one ordered namespace. Instance arguments may use declared inputs, earlier signals and earlier instances only. Unknown components, sequential calls, wrong argument counts, scalar use of multi-output components and unknown output pins receive named feedback.
+3. Confirm that the declared primary inputs match the variables used by the answer. A misspelled identifier that becomes an undeclared input is named in the error.
+4. For boxed answers, compile through ComponentExpressionCompiler with BOXED_INSTANCES and raw feedback disabled. Flatten the generated schematic through SchematicCompiler, then enforce the 400-gate limit on the flattened engine circuit. Gate-only answers retain the existing expression compiler and DAG layout path.
+5. Enumerate every input combination using the executable engine. An X output or oscillation fails the attempt. Boxed-instance geometry/connectivity comes from the component-aware compiler. Disconnected declared inputs, constant outputs and unused internal signals are warnings.
 6. Check the user's expected rows, when present.
 7. Parse and execute the spec, when present, across every input combination.
-
-A spec parse error, division-by-zero error, or mismatch is a failed attempt. Retry feedback is named and capped at eight lines. Bus mismatches use decimal values, for example:
-
-\`A=3 B=1 CIN=0: S spec 4, circuit 5. Either side may be wrong.\`
-
-There are at most three model-validation attempts. After three failing attempts, the result is UNVERIFIED and retains the best attempt (fewest failing checks/rows), which remains placeable only after the existing confirmation. Provider transport failures are handled separately by the existing retry/model-fallback path.
 
 ## Status meanings
 
@@ -119,6 +120,12 @@ There are at most three model-validation attempts. After three failing attempts,
 Normal generation checks the normalized user cache first and then the bundled cache, after the direct-expression shortcut and before making a provider request. Every hit is revalidated through the current validation pipeline; an invalid hit is ignored and live generation continues. The dialog's Regenerate action bypasses cache lookup and cache fallback. Only a live answer that passes an independent check replaces the user cache, and its model name is stored alongside the answer.
 
 Newly stored answers use the new schema and do not include `truthTable`. Versioned user-cache entries store the validated answer and producing model. Earlier unwrapped user-cache entries remain readable and are revalidated under the same rules; their original model is unknown. The six bundled demonstration prompts remain old-format fixtures and are also revalidated, so they show FROM CACHE and BUILT unless independent rows/spec are later added.
+
+## Raw provider-answer diagnostics
+
+The dialog's **Copy last raw answer** action copies the most recent provider answer after configured API-key redaction. Provider-answer text is also appended to ai_debug.log in the AI config directory. The log stores no prompt or API key, caps each UTF-8 entry at 20 KB, and rotates ai_debug.log to ai_debug.log.1 when appending would exceed 1 MB. File-write errors do not fail generation.
+
+Gemini structured output sends the response schema using responseFormat.text.mimeType/schema first. If Gemini rejects responseFormat, the provider retries using responseMimeType plus responseJsonSchema; if that is rejected too, it retries with JSON MIME type and no schema. The top-level template field is part of the AI service response schema and prompt contract; it does not come from the user's circuit description. An exact TemplateMatcher hit may be built locally without a model call, but the model may also return kind:"template" and name any supported TemplateGenerator for broader descriptions. A bare template field without kind, or a template response when template answers are disabled, is reported as a normal retryable validation failure with allowed fields, received fields and the expected expressions-answer shape.
 
 ## Inverting-gate mapping
 
@@ -146,7 +153,7 @@ The Test connection action runs off the Swing EDT. It tries the primary model an
 
 ## Runtime system prompt
 
-The following is the complete system instruction sent by `AiCircuitService.systemPrompt()`:
+The following is the static base instruction sent by `AiCircuitService.systemPrompt()`:
 
 ```text
 You design digital logic circuits. Reply with JSON only, shaped as {summary, inputs, outputs, signals, spec}.
