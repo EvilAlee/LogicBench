@@ -27,7 +27,80 @@ public final class AiComponentCatalog {
             Set.of("DLATCH", "DFF", "TFF", "JKFF");
     private static final int FILTER_THRESHOLD = 12;
 
+    private static final Set<String> DESCRIPTION_NOISE = Set.of(
+            "a", "an", "and", "basic", "built", "circuit", "combinational",
+            "component", "from", "in", "library", "logic", "the", "user", "with");
+
     private AiComponentCatalog() {
+    }
+
+    /**
+     * Finds library blocks explicitly named by the request. Exact component
+     * identifiers take priority; otherwise meaningful description phrases such
+     * as "full adder" resolve to their most specific matching library entry.
+     */
+    public static List<String> explicitlyRequestedComponents(
+            Collection<ComponentDefinition> definitions, String request) {
+        Objects.requireNonNull(definitions, "definitions");
+        String normalizedRequest = normalizeWords(Objects.requireNonNull(request, "request"));
+        if (normalizedRequest.isBlank()) return List.of();
+
+        List<ComponentDefinition> ordered = definitions.stream()
+                .filter(AiComponentCatalog::isCombinational)
+                .sorted(java.util.Comparator.comparing(ComponentDefinition::name))
+                .toList();
+        List<String> exactNames = ordered.stream()
+                .filter(definition -> containsPhrase(normalizedRequest,
+                        normalizeWords(definition.name().replace('_', ' '))))
+                .map(ComponentDefinition::name).toList();
+        if (!exactNames.isEmpty()) return exactNames;
+
+        Map<String, Integer> matchScores = new HashMap<>();
+        int bestScore = 0;
+        for (ComponentDefinition definition : ordered) {
+            int score = descriptionMatchScore(definition.description(), normalizedRequest);
+            if (score > 0) {
+                matchScores.put(definition.name(), score);
+                bestScore = Math.max(bestScore, score);
+            }
+        }
+        if (bestScore == 0) return List.of();
+
+        List<ComponentDefinition> bestMatches = ordered.stream()
+                .filter(definition -> matchScores.getOrDefault(definition.name(), 0) == bestScore)
+                .toList();
+        boolean hasBuiltInMatch = bestMatches.stream()
+                .anyMatch(definition -> !definition.category().equalsIgnoreCase("User"));
+        if (hasBuiltInMatch) {
+            bestMatches = bestMatches.stream()
+                    .filter(definition -> !definition.category().equalsIgnoreCase("User"))
+                    .toList();
+        }
+        return bestMatches.stream().map(ComponentDefinition::name).toList();
+    }
+
+    private static int descriptionMatchScore(String description, String normalizedRequest) {
+        List<String> words = java.util.Arrays.stream(normalizeWords(description).split(" "))
+                .filter(word -> !word.isBlank() && !DESCRIPTION_NOISE.contains(word))
+                .toList();
+        int best = 0;
+        for (int length = Math.min(5, words.size()); length >= 2; length--) {
+            for (int start = 0; start + length <= words.size(); start++) {
+                String phrase = String.join(" ", words.subList(start, start + length));
+                if (containsPhrase(normalizedRequest, phrase)) best = Math.max(best, length);
+            }
+        }
+        return best;
+    }
+
+    private static String normalizeWords(String text) {
+        return text.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim().replaceAll("\\s+", " ");
+    }
+
+    private static boolean containsPhrase(String text, String phrase) {
+        return !phrase.isBlank() && (" " + text + " ").contains(" " + phrase + " ");
     }
 
     public static String promptBlock(
