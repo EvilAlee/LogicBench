@@ -66,8 +66,9 @@ public final class AiComponentCatalog {
         }
         if (bestScore == 0) return List.of();
 
+        int selectedScore = bestScore;
         List<ComponentDefinition> bestMatches = ordered.stream()
-                .filter(definition -> matchScores.getOrDefault(definition.name(), 0) == bestScore)
+                .filter(definition -> matchScores.getOrDefault(definition.name(), 0) == selectedScore)
                 .toList();
         boolean hasBuiltInMatch = bestMatches.stream()
                 .anyMatch(definition -> !definition.category().equalsIgnoreCase("User"));
