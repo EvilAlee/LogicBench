@@ -83,6 +83,14 @@ public final class CircuitDescriber {
             Map<String, String> sinkIdsByName) {
     }
 
+    private record InstanceExportProjection(
+            Schematic schematic, List<BoxExport> boxes) {
+        private InstanceExportProjection {
+            Objects.requireNonNull(schematic, "schematic");
+            boxes = List.copyOf(Objects.requireNonNull(boxes, "boxes"));
+        }
+    }
+
     private record StrongComponent(List<String> gateIds) {
         private StrongComponent {
             gateIds = List.copyOf(gateIds);
@@ -144,7 +152,7 @@ public final class CircuitDescriber {
      * the surrounding gate graph with the existing exporter, then reconstructs
      * reusable calls around those boundary expressions.
      */
-    private static Description describeWithInstances(Schematic source) {
+    private static InstanceExportProjection createInstanceExportProjection(Schematic source) {
         List<ComponentInstance> instances = source.componentInstances().stream()
                 .sorted(Comparator.comparing(ComponentInstance::id)).toList();
         long gateCount = source.components().stream()
@@ -159,7 +167,6 @@ public final class CircuitDescriber {
 
         PortNames ordinaryPorts = assignPortNames(source);
         Set<String> usedNames = new LinkedHashSet<>(ordinaryPorts.byComponentId().values());
-        Map<String, String> usedInstanceNames = new LinkedHashMap<>();
         List<BoxExport> boxExports = new ArrayList<>();
         Set<String> usedComponentIds = source.components().stream()
                 .map(PlacedComponent::id)
@@ -171,7 +178,6 @@ public final class CircuitDescriber {
             String rawName = instance.label().isBlank()
                     ? instance.id() : instance.label();
             String expressionName = uniqueName(sanitizeIdentifier(rawName), usedNames);
-            usedInstanceNames.put(instance.id(), expressionName);
 
             Map<String, String> sourceNames = new LinkedHashMap<>();
             Map<String, String> sinkNames = new LinkedHashMap<>();
@@ -236,6 +242,19 @@ public final class CircuitDescriber {
         for (WireSegment wire : source.wires()) {
             temporary.addWire(wire);
         }
+
+        return new InstanceExportProjection(temporary, List.copyOf(boxExports));
+    }
+
+    /** Exact temporary gate schematic used to test instance-boundary export connectivity. */
+    static Schematic temporarySchematicForInstanceExport(Schematic source) {
+        return createInstanceExportProjection(Objects.requireNonNull(source, "source")).schematic();
+    }
+
+    private static Description describeWithInstances(Schematic source) {
+        InstanceExportProjection projection = createInstanceExportProjection(source);
+        Schematic temporary = projection.schematic();
+        List<BoxExport> boxExports = projection.boxes();
 
         Description boundaryDescription = describe(temporary);
         Map<String, String> replacements = new LinkedHashMap<>();
