@@ -129,8 +129,8 @@ public final class AiSequentialCircuitService {
                 only from signals, gates, or combinational boxes is invalid.
                 DFF and DLATCH are the only permitted sequential components. Do not use TFF
                 or JKFF: their state cannot be forced to a known value from the simulator's
-                all-X startup. Implement a toggle with a DFF whose D input is Q XOR T,
-                gated by the reset path, for example D = RESET_N & (Q ^ T).
+                all-X startup. Implement a toggle with a DFF using D = Q XOR T, gated by
+                reset, for example D = RESET_N & (Q ^ T).
                 Every DFF/DLATCH D input must have a path from a declared reset input so
                 the first reset step can force a known state. Prefer active-low RESET_N and
                 D = RESET_N & NEXT_VALUE. A reset input with no path to D is not a reset.
