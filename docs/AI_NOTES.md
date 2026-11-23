@@ -33,7 +33,55 @@ Library instances are available only when the dialog's **Use library components*
 
 When the user's request explicitly names a catalogued component (for example "full adder" resolves to `FA`, "half adder" to `HA`, or a user component's exact name/description), component use is a hard requirement. The service skips gate-level template shortcuts and cached answers that do not contain the requested box, sends an expressions-only structured schema with `summary`, `inputs`, `outputs`, and `instances` required, and omits the competing top-level `template` field entirely. A template-shaped or gate-only answer gets a targeted retry asking for the named boxed component. Ordinary requests retain the combined expressions/template response mode and deterministic template matching.
 
-Sequential components and definitions containing feedback are not supported by AI generation yet. Calls to DLATCH/DFF/TFF/JKFF receive a named sequential-availability validation failure. Natural-language requests that explicitly require state (for example accumulator, counter, register, latch or flip-flop) return a direct sequential-unavailable explanation before provider validation, so a stateful request does not degrade into a JSON-schema error. User components without feedback are eligible.
+## Sequential response schema and verification
+
+The generation service selects the `sequential` answer kind before the provider call when the
+request mentions memory, counter, register, accumulator, shift register, state machine,
+flip-flop, or latch. It uses a separate strict provider schema. Every sequential answer
+must contain `kind`, `summary`, `clock`, `inputs`, `outputs`, `signals`,
+`instances`, and `sequence`; additional fields are rejected. This schema is not a hybrid
+with the expressions/template schema. All non-sequential requests retain the existing
+schema and generation pipeline.
+
+`clock` names one Clock source. It is not a primary input, cannot be assigned by an
+expression, and every DFF `CLK` argument must use that exact identifier. Sequence steps
+have the exact shape `{set, cycles, expect}`: `set` assigns non-clock inputs,
+`cycles` is 0..8, and `expect` assigns at least one output. Values are numeric 0 or 1;
+X is never a valid expectation. The sequence has 1..40 steps.
+
+Only DFF and DLATCH are accepted as sequential boxes. TFF and JKFF are rejected because
+their state cannot be forced to a known value from the simulator's all-X start. A toggle
+is expressed with a DFF, using `D = Q XOR T` and reset gating, for example
+`D = RESET_N & (Q ^ T)`. Each DFF/DLATCH D path must depend on a declared reset input.
+The first step must assign every non-clock input, hold reset at its active level (low for
+RESET_N/RST_N/CLEAR_N/CLR_N, high for RESET/RST/CLEAR/CLR), and run at least one full
+cycle. The first reset observation is checked for unknown outputs as well as for the
+answer's expected values.
+
+Signals and component instances share an unrestricted dependency namespace, so feedback
+may refer to an instance's own output or to later signals/instances. A dependency-graph
+check rejects any combinational cycle that does not pass through a DFF or DLATCH. The
+component-aware compiler builds the boxed schematic, SchematicCompiler flattens it, and
+SequenceRunner starts every non-clock input/state at X with the named clock low. It applies
+each step, executes complete high/low clock cycles, and compares expected with observed
+values by output name. X never matches 0 or 1. Retry feedback is named and capped at eight
+lines; a verified answer is labelled `VERIFIED: matches the sequence in the answer`.
+
+Sequential limits are 8 non-clock inputs, 8 outputs, 16 instances, 400 flattened gates,
+40 sequence steps and 8 cycles per step. Verified sequential answers use the normal
+AiCache description normalisation and are revalidated through the same sequential schema,
+component checks, reset checks and simulator on replay. A cache entry that refers to a
+component no longer present in the library is ignored with a notice.
+
+The dialog displays a sequence table with Step, Inputs, Cycles, Expected and Observed
+columns. Expected/observed cells for mismatching rows are highlighted. Placing a verified
+result uses the existing generated-schematic replacement action as one undoable change;
+the Clock source is included in the schematic.
+
+The sequential prompt is appended after the existing combinational system prompt. It
+contains worked JSON examples for a 2-bit DFF counter (reset plus four count cycles) and
+a 4-bit accumulator built from four FA boxes and four DFF boxes (reset, add 0011, then
+add 0101).
 
 ## AI Explain mode
 
