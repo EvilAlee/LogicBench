@@ -156,13 +156,10 @@ public final class AiSequentialCircuitService {
                   "summary":"2-bit modulo-four counter",
                   "clock":"CLK",
                   "inputs":["RESET_N"],
-                  "signals":[
-                    {"name":"FB0","expression":"U0.Q"},
-                    {"name":"FB1","expression":"U1.Q"}
-                  ],
+                  "signals":[],
                   "instances":[
-                    {"name":"U0","component":"DFF","args":["RESET_N & NOT(FB0)","CLK"]},
-                    {"name":"U1","component":"DFF","args":["RESET_N & (FB1 ^ FB0)","CLK"]}
+                    {"name":"U0","component":"DFF","args":["RESET_N & NOT(U0.Q)","CLK"]},
+                    {"name":"U1","component":"DFF","args":["RESET_N & (U1.Q ^ U0.Q)","CLK"]}
                   ],
                   "outputs":[
                     {"name":"Q0","expression":"U0.Q"},
@@ -232,6 +229,7 @@ public final class AiSequentialCircuitService {
             for (AiCache.CacheHit hit : cache.lookupCandidates(description)) {
                 Attempt cached = validate(provider.redact(hit.answerJson()), invertingGates);
                 if (cached.passed()) {
+                    lastRawAnswer = provider.redact(hit.answerJson());
                     log.add("FROM CACHE: Revalidated the complete sequential sequence.");
                     log.add("VERIFIED: matches the sequence in the answer");
                     return toOutcome(0, AiCircuitService.Status.VERIFIED, cached,
