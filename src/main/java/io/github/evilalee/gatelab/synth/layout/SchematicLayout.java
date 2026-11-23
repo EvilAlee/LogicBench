@@ -875,25 +875,16 @@ public final class SchematicLayout {
             if (sourceTrackIndex < 0 || targetTrackIndex < 0) {
                 throw new IllegalStateException("feedback lane reservation is missing");
             }
-            Integer normalGap = normalGapByChannel.get(source.column);
-            if (normalGap == null && source.column == columnLeft.length - 1) {
-                // A feedback source may occupy the final component column when
-                // it has no later consumer/output. Reserve a return corridor to
-                // the right instead of assuming that every source has a next column.
-                normalGap = trackPitch * (sourceEdges.size() + 2);
-            }
-            if (normalGap == null) {
-                throw new IllegalStateException("missing feedback source channel after column "
-                        + source.column + " for " + source.componentId);
-            }
-            int sourceX = columnLeft[source.column] + columnWidths[source.column]
-                    + normalGap + (sourceTrackIndex + 1) * trackPitch;
+            int sourcePinX = sourcePinX(source, edge.signal());
+            // Leave the source pin through a short, local escape track. Starting
+            // the vertical return outside the ordinary lane bundle avoids
+            // crossing a neighbouring box input route at the source pin's row.
+            int sourceX = sourcePinX + (sourceTrackIndex + 1) * trackPitch;
             RouteStep step = edge.routeStep();
             GateGeometry.Offset targetOffset = targetPinOffset(step);
             int targetPinX = target.x + targetOffset.x();
             int targetTrackX = targetPinX
                     - (targetEdges.size() + 1 - targetTrackIndex) * trackPitch;
-            int sourcePinX = sourcePinX(source, edge.signal());
             int sourceY = sourcePinY(source, edge.signal());
             int targetY = targetPinY(step);
             int laneY = componentFeedbackLaneY(
