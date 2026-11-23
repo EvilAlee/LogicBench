@@ -313,7 +313,7 @@ public final class AiSequentialCircuitService {
         }
 
         if (best == null) {
-            return unavailable("No model answer was received.", log, modelAttempts);
+            return unavailable("No model answer was received.", log, modelAttempts, 0);
         }
         return toOutcome(AiCircuitLimits.MAX_ATTEMPTS, AiCircuitService.Status.UNVERIFIED,
                 best, log, false, bestModel, modelAttempts);
@@ -1386,7 +1386,7 @@ public final class AiSequentialCircuitService {
         return value;
     }
 
-    private static JsonArray arraySchema(JsonObject item) {
+    private static JsonObject arraySchema(JsonObject item) {
         JsonObject value = new JsonObject();
         value.addProperty("type", "ARRAY");
         value.add("items", item);
