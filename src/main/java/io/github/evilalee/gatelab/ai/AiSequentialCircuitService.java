@@ -939,9 +939,9 @@ public final class AiSequentialCircuitService {
         requireName(clock, "clock");
 
         JsonArray inputArray = requireArray(root, "inputs");
-        if (inputArray.isEmpty() || inputArray.size() > MAX_INPUTS) {
+        if (inputArray.size() > MAX_INPUTS) {
             throw new IllegalArgumentException(
-                    "inputs must contain 1.." + MAX_INPUTS + " non-clock input names.");
+                    "inputs may contain at most " + MAX_INPUTS + " non-clock input names.");
         }
         List<String> inputs = new ArrayList<>();
         Set<String> namespace = new LinkedHashSet<>();
