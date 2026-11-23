@@ -6,6 +6,7 @@ import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
+import io.github.evilalee.gatelab.model.GateType;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
@@ -286,6 +287,637 @@ public final class SchematicLayout {
                                 + ". First failure: " + firstFailure.getMessage()
                                 + "; retry failure: " + retryFailure.getMessage(),
                         retryFailure);
+            }
+        }
+    }
+
+
+    /** Kinds accepted by the shared layered layout for component-call graphs. */
+    public enum ComponentNodeType {
+        INPUT, CLOCK, CONSTANT, GATE, BOX
+    }
+
+    /**
+     * A source, gate or reusable component node. Non-box nodes have one
+     * output named "out"; boxes retain their declared named output pins.
+     */
+    public record ComponentNodeSpec(
+            String id,
+            ComponentNodeType type,
+            List<String> inputSignals,
+            Map<String, String> outputSignals,
+            GateType gateType,
+            ComponentDefinition boxDefinition,
+            String label) {
+        public ComponentNodeSpec {
+            id = Objects.requireNonNull(id, "id");
+            type = Objects.requireNonNull(type, "type");
+            inputSignals = List.copyOf(Objects.requireNonNull(inputSignals, "inputSignals"));
+            outputSignals = java.util.Collections.unmodifiableMap(
+                    new LinkedHashMap<>(Objects.requireNonNull(outputSignals, "outputSignals")));
+            label = Objects.requireNonNullElse(label, "");
+            if (id.isBlank() || outputSignals.isEmpty()) {
+                throw new IllegalArgumentException("component layout nodes need an id and output pin");
+            }
+            if (type == ComponentNodeType.BOX) {
+                Objects.requireNonNull(boxDefinition, "boxDefinition");
+                if (gateType != null || !outputSignals.keySet().equals(
+                        boxDefinition.outputPorts().stream()
+                                .map(ComponentDefinition.Port::name)
+                                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)))) {
+                    throw new IllegalArgumentException("box output pins do not match its definition");
+                }
+                if (inputSignals.size() != boxDefinition.inputPorts().size()) {
+                    throw new IllegalArgumentException("box input signals do not match its definition");
+                }
+            } else {
+                if (boxDefinition != null || outputSignals.size() != 1
+                        || !outputSignals.containsKey("out")) {
+                    throw new IllegalArgumentException(
+                            "non-box layout nodes require one 'out' pin and no box definition");
+                }
+                if ((type == ComponentNodeType.GATE) != (gateType != null)) {
+                    throw new IllegalArgumentException("only gate nodes have a gate type");
+                }
+            }
+        }
+    }
+
+    /** A visible output probe attached immediately after its producing node. */
+    public record ComponentOutputSpec(String id, String name, String signal) {
+        public ComponentOutputSpec {
+            id = Objects.requireNonNull(id, "id");
+            name = Objects.requireNonNull(name, "name");
+            signal = Objects.requireNonNull(signal, "signal");
+            if (id.isBlank() || name.isBlank() || signal.isBlank()) {
+                throw new IllegalArgumentException("output layout specs cannot be blank");
+            }
+        }
+    }
+
+    private record ComponentEdgeKey(String targetId, int inputIndex) {
+    }
+
+    private record ComponentFeedbackEdge(
+            String signal, Node source, Node target, int targetInputIndex, String targetPinName) {
+        private RouteStep routeStep() {
+            return new RouteStep(signal, target.column - 1, source, target,
+                    targetInputIndex, targetPinName);
+        }
+    }
+
+    /**
+     * Places an expression graph containing boxes through the same layered
+     * ordering, pin-row compaction and per-gap channel router used by the
+     * ordinary gate layout. The legacy Netlist path remains separate so its
+     * instance-free output is byte-for-byte unchanged.
+     */
+    public LayoutResult layoutComponents(
+            Collection<ComponentNodeSpec> componentNodeSpecs,
+            Collection<ComponentOutputSpec> componentOutputSpecs) {
+        List<ComponentNodeSpec> specs = Objects.requireNonNull(componentNodeSpecs, "componentNodeSpecs")
+                .stream().sorted(Comparator.comparing(ComponentNodeSpec::id)).toList();
+        List<ComponentOutputSpec> outputSpecs = List.copyOf(
+                Objects.requireNonNull(componentOutputSpecs, "componentOutputSpecs"));
+        if (specs.stream().noneMatch(spec -> spec.type() == ComponentNodeType.BOX)) {
+            throw new IllegalArgumentException("layoutComponents requires at least one box node");
+        }
+
+        Map<String, ComponentNodeSpec> specsById = new LinkedHashMap<>();
+        Map<String, Node> nodesById = new LinkedHashMap<>();
+        Map<String, Node> producerBySignal = new LinkedHashMap<>();
+        Map<String, List<String>> inputSignalsById = new LinkedHashMap<>();
+        Map<String, List<String>> inputPinNamesById = new LinkedHashMap<>();
+        Map<String, String> labelsById = new LinkedHashMap<>();
+        Map<String, String> inputIds = new LinkedHashMap<>();
+        Map<String, String> clockIds = new LinkedHashMap<>();
+        Map<String, String> outputIds = new LinkedHashMap<>();
+        Map<String, String> constantIds = new LinkedHashMap<>();
+        Map<String, String> gateIds = new LinkedHashMap<>();
+
+        for (ComponentNodeSpec spec : specs) {
+            if (specsById.putIfAbsent(spec.id(), spec) != null) {
+                throw new IllegalArgumentException("duplicate component layout id: " + spec.id());
+            }
+            Node node;
+            if (spec.type() == ComponentNodeType.BOX) {
+                ComponentDefinition definition = spec.boxDefinition();
+                List<String> inputNames = definition.inputPorts().stream()
+                        .map(ComponentDefinition.Port::name).toList();
+                node = new Node("box:" + spec.id(), NodeKind.BOX, 0,
+                        boxHeight(definition), spec.id(), null, definition,
+                        inputNames, spec.outputSignals());
+                inputPinNamesById.put(spec.id(), inputNames);
+                labelsById.put(spec.id(), spec.label());
+            } else {
+                String family = switch (spec.type()) {
+                    case INPUT -> "input";
+                    case CLOCK -> "clock";
+                    case CONSTANT -> "constant";
+                    case GATE -> spec.gateType().name().toLowerCase(Locale.ROOT);
+                    case BOX -> throw new IllegalStateException("box node handled above");
+                };
+                GateDef definition = definitionFor(family);
+                String signal = spec.outputSignals().get("out");
+                NodeKind kind = switch (spec.type()) {
+                    case INPUT -> NodeKind.INPUT;
+                    case CLOCK -> NodeKind.CLOCK;
+                    case CONSTANT -> NodeKind.CONSTANT;
+                    case GATE -> NodeKind.GATE;
+                    case BOX -> throw new IllegalStateException("box node handled above");
+                };
+                node = new Node("component:" + spec.id(), kind, 0,
+                        GateGeometry.bounds(definition, Facing.EAST).height(),
+                        signal, spec.id(), definition);
+                List<String> pinNames = new ArrayList<>();
+                for (int index = 0; index < spec.inputSignals().size(); index++) {
+                    pinNames.add("in" + index);
+                }
+                inputPinNamesById.put(spec.id(), List.copyOf(pinNames));
+                labelsById.put(spec.id(), spec.label());
+                switch (spec.type()) {
+                    case INPUT -> inputIds.put(spec.label(), spec.id());
+                    case CLOCK -> clockIds.put(spec.label(), spec.id());
+                    case CONSTANT -> constantIds.put(spec.label(), spec.id());
+                    case GATE -> gateIds.put(signal, spec.id());
+                    case BOX -> throw new IllegalStateException("box node handled above");
+                }
+            }
+            inputSignalsById.put(spec.id(), spec.inputSignals());
+            nodesById.put(spec.id(), node);
+            for (String signal : spec.outputSignals().values()) {
+                Node previous = producerBySignal.putIfAbsent(signal, node);
+                if (previous != null) {
+                    throw new IllegalArgumentException(
+                            "signal " + signal + " has multiple component drivers: "
+                                    + previous.componentId + " and " + spec.id());
+                }
+                if (spec.type() == ComponentNodeType.BOX) {
+                    gateIds.put(signal, spec.id());
+                }
+            }
+        }
+
+        Map<String, Integer> depthState = new HashMap<>();
+        Set<ComponentEdgeKey> feedbackKeys = new LinkedHashSet<>();
+        for (Node node : nodesById.values()) {
+            componentNodeDepth(node, producerBySignal, inputSignalsById,
+                    depthState, feedbackKeys);
+        }
+
+        // Keep input sources beside their earliest consumer, not at the
+        // absolute left edge. A fan-out source remains a single node.
+        for (ComponentNodeSpec spec : specs) {
+            if (spec.type() != ComponentNodeType.INPUT
+                    && spec.type() != ComponentNodeType.CLOCK
+                    && spec.type() != ComponentNodeType.CONSTANT) {
+                continue;
+            }
+            Node source = nodesById.get(spec.id());
+            int firstConsumer = Integer.MAX_VALUE;
+            for (ComponentNodeSpec targetSpec : specs) {
+                List<String> targetInputs = targetSpec.inputSignals();
+                for (String signal : targetInputs) {
+                    if (signal.equals(spec.outputSignals().get("out"))) {
+                        firstConsumer = Math.min(
+                                firstConsumer, nodesById.get(targetSpec.id()).column);
+                    }
+                }
+            }
+            if (firstConsumer != Integer.MAX_VALUE) {
+                source.column = Math.max(0, firstConsumer - 1);
+            }
+        }
+
+        Map<String, Node> outputNodes = new LinkedHashMap<>();
+        GateDef outputDefinition = definitionFor("output");
+        for (ComponentOutputSpec output : outputSpecs) {
+            if (outputIds.putIfAbsent(output.name(), output.id()) != null) {
+                throw new IllegalArgumentException("duplicate component output name: " + output.name());
+            }
+            Node producer = producerBySignal.get(output.signal());
+            if (producer == null) {
+                throw new IllegalArgumentException(
+                        "output " + output.name() + " has no producer for " + output.signal());
+            }
+            if (nodesById.containsKey(output.id())) {
+                throw new IllegalArgumentException("output id collides with component: " + output.id());
+            }
+            Node target = new Node("output:" + output.id(), NodeKind.OUTPUT,
+                    producer.column + 1, GateGeometry.bounds(outputDefinition, Facing.EAST).height(),
+                    output.signal(), output.id(), outputDefinition);
+            outputNodes.put(output.id(), target);
+            inputSignalsById.put(output.id(), List.of(output.signal()));
+            inputPinNamesById.put(output.id(), List.of("in0"));
+            labelsById.put(output.id(), output.name());
+        }
+
+        List<Node> allComponentNodes = new ArrayList<>(nodesById.values());
+        allComponentNodes.addAll(outputNodes.values());
+        int maxColumn = allComponentNodes.stream().mapToInt(node -> node.column).max().orElse(0);
+        List<List<Node>> columns = new ArrayList<>(maxColumn + 1);
+        for (int column = 0; column <= maxColumn; column++) {
+            columns.add(new ArrayList<>());
+        }
+        for (Node node : allComponentNodes) {
+            columns.get(node.column).add(node);
+        }
+
+        List<RouteStep> routeSteps = new ArrayList<>();
+        List<ComponentFeedbackEdge> feedbackEdges = new ArrayList<>();
+        for (ComponentNodeSpec targetSpec : specs) {
+            Node target = nodesById.get(targetSpec.id());
+            List<String> targetInputs = targetSpec.inputSignals();
+            List<String> targetPinNames = inputPinNamesById.get(targetSpec.id());
+            for (int index = 0; index < targetInputs.size(); index++) {
+                String signal = targetInputs.get(index);
+                Node source = producerBySignal.get(signal);
+                if (source == null) {
+                    throw new IllegalArgumentException(
+                            "signal " + signal + " has no producer for " + target.componentId);
+                }
+                String pinName = targetPinNames.get(index);
+                if (feedbackKeys.contains(new ComponentEdgeKey(targetSpec.id(), index))
+                        || source.column >= target.column) {
+                    feedbackEdges.add(new ComponentFeedbackEdge(
+                            signal, source, target, index, pinName));
+                } else {
+                    expandConnection(signal, source, target, index, columns, routeSteps);
+                }
+            }
+        }
+        for (ComponentOutputSpec output : outputSpecs) {
+            Node source = producerBySignal.get(output.signal());
+            Node target = outputNodes.get(output.id());
+            expandConnection(output.signal(), source, target, 0, columns, routeSteps);
+        }
+
+        for (List<Node> column : columns) {
+            column.sort(Comparator.comparing(SchematicLayout::nodeTieBreakId));
+            int nextTop = 0;
+            for (Node node : column) {
+                node.y = roundToGrid(nextTop - nodeTopOffset(node));
+                nextTop = node.y + nodeBottomOffset(node) + ROW_GAP;
+            }
+        }
+        orderColumnsByPinRows(columns, routeSteps);
+        optimizeComponentVerticalPositions(
+                columns, routeSteps, ROW_GAP, feedbackEdges, TRUNK_PITCH);
+
+        int laneStart = TRUNK_START_MARGIN;
+        int lanePitch = TRUNK_PITCH;
+        int laneEnd = TRUNK_END_MARGIN;
+        int[] columnLeft = new int[columns.size()];
+        int[] columnWidths = new int[columns.size()];
+        for (int column = 0; column < columns.size(); column++) {
+            for (Node node : columns.get(column)) {
+                if (!node.isDummy()) {
+                    columnWidths[column] = Math.max(columnWidths[column], nodeWidth(node));
+                }
+            }
+        }
+
+        Map<Integer, Set<String>> signalsByChannel = new LinkedHashMap<>();
+        for (RouteStep step : routeSteps) {
+            signalsByChannel.computeIfAbsent(step.channel(), ignored -> new TreeSet<>())
+                    .add(step.signal());
+        }
+        Map<Integer, List<ComponentFeedbackEdge>> feedbackSourcesByChannel = new LinkedHashMap<>();
+        Map<Integer, List<ComponentFeedbackEdge>> feedbackTargetsByChannel = new LinkedHashMap<>();
+        for (ComponentFeedbackEdge edge : feedbackEdges) {
+            feedbackSourcesByChannel.computeIfAbsent(edge.source().column, ignored -> new ArrayList<>())
+                    .add(edge);
+            feedbackTargetsByChannel.computeIfAbsent(edge.target().column - 1, ignored -> new ArrayList<>())
+                    .add(edge);
+        }
+
+        Map<Integer, Integer> normalGapByChannel = new LinkedHashMap<>();
+        Map<Integer, Integer> feedbackGapByChannel = new LinkedHashMap<>();
+        for (int channel = 0; channel < columns.size() - 1; channel++) {
+            int count = signalsByChannel.getOrDefault(channel, Set.of()).size();
+            int sourceTracks = feedbackSourcesByChannel.getOrDefault(channel, List.of()).size();
+            int targetTracks = feedbackTargetsByChannel.getOrDefault(channel, List.of()).size();
+            int normalGap = laneStart + laneEnd + (count > 0 ? (count - 1) * lanePitch : 0);
+            int feedbackGap = lanePitch * (sourceTracks + targetTracks + 2);
+            normalGapByChannel.put(channel, normalGap);
+            feedbackGapByChannel.put(channel, feedbackGap);
+            columnLeft[channel + 1] = columnLeft[channel]
+                    + columnWidths[channel] + normalGap + feedbackGap;
+        }
+
+        for (Node node : allNodes(columns)) {
+            if (node.isDummy() || node.isBox()) {
+                node.x = columnLeft[node.column];
+            } else {
+                node.x = columnLeft[node.column] + node.definition.origin().x();
+            }
+        }
+
+        LinkedHashSet<WireSegment> wires = route(
+                routeSteps, columnLeft, columnWidths, signalsByChannel, laneStart, lanePitch);
+        LinkedHashSet<WireSegment> feedbackWires = routeComponentFeedbackEdges(
+                feedbackEdges, feedbackSourcesByChannel, feedbackTargetsByChannel,
+                normalGapByChannel, lanePitch, columnLeft, columnWidths, allNodes(columns));
+        wires.addAll(feedbackWires);
+        wires = normalizeDrawing(allNodes(columns), wires);
+
+        Schematic schematic = new Schematic(definitions);
+        for (Node node : allNodes(columns)) {
+            if (node.isDummy()) {
+                continue;
+            }
+            if (node.isBox()) {
+                schematic.addInstance(new ComponentInstance(
+                        node.boxDefinition.name(), node.boxDefinition.hash(),
+                        node.componentId, labelsById.getOrDefault(node.componentId, ""),
+                        node.x, node.y, Facing.EAST), node.boxDefinition);
+            } else {
+                schematic.add(new PlacedComponent(
+                        node.componentId, node.definition.family(), node.x, node.y,
+                        Facing.EAST, Map.of(), labelsById.getOrDefault(node.componentId, "")));
+            }
+        }
+        for (WireSegment wire : wires) {
+            schematic.addWire(wire);
+        }
+        checkComponentNodeOverlaps(allNodes(columns));
+
+        int dummyCount = (int) allNodes(columns).stream().filter(Node::isDummy).count();
+        return new LayoutResult(
+                schematic, inputIds, outputIds, constantIds, dummyCount, clockIds, gateIds);
+    }
+
+    private static int componentNodeDepth(
+            Node node,
+            Map<String, Node> producerBySignal,
+            Map<String, List<String>> inputSignalsById,
+            Map<String, Integer> state,
+            Set<ComponentEdgeKey> feedbackKeys) {
+        int current = state.getOrDefault(node.componentId, 0);
+        if (current == 2) {
+            return node.column;
+        }
+        if (current == 1) {
+            return 0;
+        }
+        if (node.kind == NodeKind.INPUT || node.kind == NodeKind.CLOCK
+                || node.kind == NodeKind.CONSTANT) {
+            node.column = 0;
+            state.put(node.componentId, 2);
+            return 0;
+        }
+
+        state.put(node.componentId, 1);
+        int depth = 1;
+        List<String> inputs = inputSignalsById.getOrDefault(node.componentId, List.of());
+        for (int index = 0; index < inputs.size(); index++) {
+            Node source = producerBySignal.get(inputs.get(index));
+            if (source == null) {
+                throw new IllegalArgumentException(
+                        "unresolved signal " + inputs.get(index) + " at " + node.componentId);
+            }
+            if (state.getOrDefault(source.componentId, 0) == 1) {
+                feedbackKeys.add(new ComponentEdgeKey(node.componentId, index));
+                continue;
+            }
+            depth = Math.max(depth, componentNodeDepth(
+                    source, producerBySignal, inputSignalsById, state, feedbackKeys) + 1);
+        }
+        node.column = depth;
+        state.put(node.componentId, 2);
+        return depth;
+    }
+
+    private static void orderColumnsByPinRows(
+            List<List<Node>> columns, List<RouteStep> routeSteps) {
+        for (int pass = 0; pass < 4; pass++) {
+            for (int column = 1; column < columns.size(); column++) {
+                columns.get(column).sort(Comparator
+                        .comparingDouble((Node node) -> componentDriverBarycenter(node, routeSteps))
+                        .thenComparing(SchematicLayout::nodeTieBreakId));
+            }
+            for (int column = columns.size() - 2; column >= 0; column--) {
+                columns.get(column).sort(Comparator
+                        .comparingDouble((Node node) -> componentConsumerBarycenter(node, routeSteps))
+                        .thenComparing(SchematicLayout::nodeTieBreakId));
+            }
+        }
+    }
+
+    private static double componentDriverBarycenter(Node node, List<RouteStep> routeSteps) {
+        long total = 0L;
+        int count = 0;
+        for (RouteStep step : routeSteps) {
+            if (step.target() == node) {
+                total += sourcePinY(step.source(), step.signal());
+                count++;
+            }
+        }
+        return count == 0 ? node.y : total / (double) count;
+    }
+
+    private static double componentConsumerBarycenter(Node node, List<RouteStep> routeSteps) {
+        long total = 0L;
+        int count = 0;
+        for (RouteStep step : routeSteps) {
+            if (step.source() == node) {
+                total += targetPinY(step);
+                count++;
+            }
+        }
+        return count == 0 ? node.y : total / (double) count;
+    }
+
+    private static void optimizeComponentVerticalPositions(
+            List<List<Node>> columns,
+            List<RouteStep> routeSteps,
+            int rowGap,
+            List<ComponentFeedbackEdge> feedbackEdges,
+            int feedbackTrackPitch) {
+        int lastColumn = columns.size() - 1;
+        int[] bestPositions = null;
+        long bestLength = Long.MAX_VALUE;
+        for (int sweep = 0; sweep < 3; sweep++) {
+            if (sweep == 1) {
+                for (int column = lastColumn - 1; column >= 1; column--) {
+                    assignColumn(columns.get(column), routeSteps, rowGap,
+                            false, column, true, true);
+                }
+            } else {
+                for (int column = 1; column <= lastColumn; column++) {
+                    assignColumn(columns.get(column), routeSteps, rowGap,
+                            true, column - 1, false, true);
+                }
+            }
+            if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+                continue;
+            }
+            long length = totalVerticalWireLength(routeSteps)
+                    + totalComponentFeedbackVerticalLength(
+                            feedbackEdges, feedbackTrackPitch, allNodes(columns));
+            if (length < bestLength) {
+                bestLength = length;
+                bestPositions = captureVerticalPositions(columns);
+            }
+        }
+        if (bestPositions == null) {
+            throw new IllegalStateException("no conflict-free box layout candidate was produced");
+        }
+        restoreVerticalPositions(columns, bestPositions);
+
+        int[] before = captureVerticalPositions(columns);
+        for (List<Node> column : columns) {
+            for (int index = 1; index < column.size(); index++) {
+                Node previous = column.get(index - 1);
+                Node current = column.get(index);
+                int packedY = previous.y + minimumVerticalSeparation(
+                        previous, current, rowGap, true);
+                if (current.y > packedY) {
+                    current.y = packedY;
+                }
+            }
+        }
+        if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
+            restoreVerticalPositions(columns, before);
+        }
+    }
+
+    private static long totalComponentFeedbackVerticalLength(
+            List<ComponentFeedbackEdge> edges, int trackPitch, List<Node> allNodes) {
+        if (edges.isEmpty()) {
+            return 0L;
+        }
+        Map<ComponentFeedbackEdge, Integer> lanes = assignComponentFeedbackLanes(edges);
+        long total = 0L;
+        for (ComponentFeedbackEdge edge : edges) {
+            RouteStep step = edge.routeStep();
+            int sourceY = sourcePinY(edge.source(), edge.signal());
+            int targetY = targetPinY(step);
+            int laneY = componentFeedbackLaneY(edge, lanes.get(edge), trackPitch, allNodes);
+            total += Math.abs(sourceY - laneY) + Math.abs(targetY - laneY);
+        }
+        return total;
+    }
+
+    private static int componentFeedbackLaneY(
+            ComponentFeedbackEdge edge, int lane, int trackPitch, List<Node> allNodes) {
+        int minTop = Integer.MAX_VALUE;
+        int maxBottom = Integer.MIN_VALUE;
+        for (Node node : allNodes) {
+            if (!node.isDummy()
+                    && node.column >= edge.target().column
+                    && node.column <= edge.source().column) {
+                minTop = Math.min(minTop, node.y + nodeTopOffset(node));
+                maxBottom = Math.max(maxBottom, node.y + nodeBottomOffset(node));
+            }
+        }
+        if (minTop == Integer.MAX_VALUE) {
+            throw new IllegalStateException("feedback interval contains no component rows");
+        }
+        int sourceY = sourcePinY(edge.source(), edge.signal());
+        int targetY = targetPinY(edge.routeStep());
+        int aboveY = minTop - (lane + 1) * trackPitch;
+        int belowY = maxBottom + (lane + 1) * trackPitch;
+        int aboveLength = Math.abs(sourceY - aboveY) + Math.abs(targetY - aboveY);
+        int belowLength = Math.abs(sourceY - belowY) + Math.abs(targetY - belowY);
+        return aboveLength <= belowLength ? aboveY : belowY;
+    }
+
+    private static Map<ComponentFeedbackEdge, Integer> assignComponentFeedbackLanes(
+            List<ComponentFeedbackEdge> edges) {
+        List<ComponentFeedbackEdge> ordered = edges.stream().sorted(Comparator
+                .comparingInt((ComponentFeedbackEdge edge) -> edge.target().column)
+                .thenComparingInt(edge -> edge.source().column)
+                .thenComparing(edge -> edge.source().componentId)
+                .thenComparing(edge -> edge.target().componentId)
+                .thenComparingInt(ComponentFeedbackEdge::targetInputIndex)).toList();
+        List<Integer> lastEndByLane = new ArrayList<>();
+        Map<ComponentFeedbackEdge, Integer> result = new LinkedHashMap<>();
+        for (ComponentFeedbackEdge edge : ordered) {
+            int start = edge.target().column;
+            int end = edge.source().column;
+            int lane = 0;
+            while (lane < lastEndByLane.size() && lastEndByLane.get(lane) >= start) {
+                lane++;
+            }
+            if (lane == lastEndByLane.size()) {
+                lastEndByLane.add(end);
+            } else {
+                lastEndByLane.set(lane, end);
+            }
+            result.put(edge, lane);
+        }
+        return java.util.Collections.unmodifiableMap(result);
+    }
+
+    private static LinkedHashSet<WireSegment> routeComponentFeedbackEdges(
+            List<ComponentFeedbackEdge> edges,
+            Map<Integer, List<ComponentFeedbackEdge>> sourcesByChannel,
+            Map<Integer, List<ComponentFeedbackEdge>> targetsByChannel,
+            Map<Integer, Integer> normalGapByChannel,
+            int trackPitch,
+            int[] columnLeft,
+            int[] columnWidths,
+            List<Node> allNodes) {
+        LinkedHashSet<WireSegment> wires = new LinkedHashSet<>();
+        Map<ComponentFeedbackEdge, Integer> lanes = assignComponentFeedbackLanes(edges);
+        for (ComponentFeedbackEdge edge : edges) {
+            Node source = edge.source();
+            Node target = edge.target();
+            List<ComponentFeedbackEdge> sourceEdges =
+                    sourcesByChannel.getOrDefault(source.column, List.of());
+            List<ComponentFeedbackEdge> targetEdges =
+                    targetsByChannel.getOrDefault(target.column - 1, List.of());
+            int sourceTrackIndex = sourceEdges.indexOf(edge);
+            int targetTrackIndex = targetEdges.indexOf(edge);
+            if (sourceTrackIndex < 0 || targetTrackIndex < 0) {
+                throw new IllegalStateException("feedback lane reservation is missing");
+            }
+            int sourceX = columnLeft[source.column] + columnWidths[source.column]
+                    + normalGapByChannel.get(source.column)
+                    + (sourceTrackIndex + 1) * trackPitch;
+            RouteStep step = edge.routeStep();
+            GateGeometry.Offset targetOffset = targetPinOffset(step);
+            int targetPinX = target.x + targetOffset.x();
+            int targetTrackX = targetPinX
+                    - (targetEdges.size() + 1 - targetTrackIndex) * trackPitch;
+            int sourcePinX = sourcePinX(source, edge.signal());
+            int sourceY = sourcePinY(source, edge.signal());
+            int targetY = targetPinY(step);
+            int laneY = componentFeedbackLaneY(
+                    edge, lanes.get(edge), trackPitch, allNodes);
+            if (sourceX <= sourcePinX || sourceX <= targetTrackX) {
+                throw new IllegalStateException(
+                        "feedback source channel is too narrow for " + source.componentId
+                                + " -> " + target.componentId);
+            }
+            addWire(wires, sourcePinX, sourceY, sourceX, sourceY);
+            addWire(wires, sourceX, sourceY, sourceX, laneY);
+            addWire(wires, targetTrackX, laneY, sourceX, laneY);
+            addWire(wires, targetTrackX, laneY, targetTrackX, targetY);
+            addWire(wires, targetTrackX, targetY, targetPinX, targetY);
+        }
+        return wires;
+    }
+
+    private static void checkComponentNodeOverlaps(List<Node> nodes) {
+        List<Node> components = nodes.stream().filter(node -> !node.isDummy()).toList();
+        for (int first = 0; first < components.size(); first++) {
+            Node a = components.get(first);
+            int ax = a.isBox() ? a.x : a.x + GateGeometry.bounds(a.definition, Facing.EAST).x();
+            int ay = a.isBox() ? a.y : a.y + GateGeometry.bounds(a.definition, Facing.EAST).y();
+            int aw = nodeWidth(a);
+            int ah = nodeBottomOffset(a) - nodeTopOffset(a);
+            for (int second = first + 1; second < components.size(); second++) {
+                Node b = components.get(second);
+                int bx = b.isBox() ? b.x : b.x + GateGeometry.bounds(b.definition, Facing.EAST).x();
+                int by = b.isBox() ? b.y : b.y + GateGeometry.bounds(b.definition, Facing.EAST).y();
+                int bw = nodeWidth(b);
+                int bh = nodeBottomOffset(b) - nodeTopOffset(b);
+                if (ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah) {
+                    throw new IllegalStateException(
+                            "box-aware layout overlaps " + a.componentId + " and " + b.componentId);
+                }
             }
         }
     }
@@ -1274,6 +1906,7 @@ public final class SchematicLayout {
             } else {
                 for (int column = 1; column <= outputColumn; column++) {
                     List<Node> ordered = column == outputColumn && !feedbackPacking
+                            && !outputNodes.isEmpty()
                             ? new ArrayList<>(outputNodes.values())
                             : columns.get(column);
                     assignColumn(
@@ -1354,7 +1987,7 @@ public final class SchematicLayout {
             int pinCount = 0;
             for (RouteStep step : routeSteps) {
                 if (fromPredecessors && step.target() == node) {
-                    pinTotal += sourcePinY(step.source());
+                    pinTotal += sourcePinY(step.source(), step.signal());
                     pinCount++;
                 } else if (!fromPredecessors && step.source() == node) {
                     pinTotal += targetPinY(step);
@@ -1414,7 +2047,7 @@ public final class SchematicLayout {
             for (RouteStep step : routeSteps) {
                 if (step.channel() == channel) {
                     sourceRows.add(new PinRow(
-                            step.signal(), sourcePinY(step.source())));
+                            step.signal(), sourcePinY(step.source(), step.signal())));
                     targetRows.add(new PinRow(
                             step.signal(), targetPinY(step)));
                 }
@@ -1439,9 +2072,9 @@ public final class SchematicLayout {
             }
             if (movingSources) {
                 fixedRows.add(new PinRow(step.signal(), targetPinY(step)));
-                movingRows.add(new PinRow(step.signal(), sourcePinY(step.source())));
+                movingRows.add(new PinRow(step.signal(), sourcePinY(step.source(), step.signal())));
             } else {
-                fixedRows.add(new PinRow(step.signal(), sourcePinY(step.source())));
+                fixedRows.add(new PinRow(step.signal(), sourcePinY(step.source(), step.signal())));
                 movingRows.add(new PinRow(step.signal(), targetPinY(step)));
             }
         }
@@ -1619,7 +2252,7 @@ public final class SchematicLayout {
     private static long totalVerticalWireLength(List<RouteStep> routeSteps) {
         Map<ChannelSignal, int[]> ranges = new LinkedHashMap<>();
         for (RouteStep step : routeSteps) {
-            int sourceY = sourcePinY(step.source());
+            int sourceY = sourcePinY(step.source(), step.signal());
             int targetY = targetPinY(step);
             int[] range = ranges.computeIfAbsent(
                     new ChannelSignal(step.channel(), step.signal()),
