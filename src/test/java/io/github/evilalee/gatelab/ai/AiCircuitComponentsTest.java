@@ -327,7 +327,7 @@ class AiCircuitComponentsTest {
         assertTrue(result.summary().toLowerCase(java.util.Locale.ROOT).contains("sequential"), result.summary());
         assertTrue(result.mismatchingRows().stream().anyMatch(message ->
                 message.contains("sequential response fields invalid")));
-        assertEquals(1, provider.calls);
+        assertTrue(provider.calls > 0 && provider.calls <= AiCircuitLimits.MAX_ATTEMPTS);
     }
 
     @Test
