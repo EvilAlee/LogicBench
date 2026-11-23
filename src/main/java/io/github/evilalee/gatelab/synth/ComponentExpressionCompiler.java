@@ -658,6 +658,58 @@ public final class ComponentExpressionCompiler {
         }
 
         private Schematic layoutAndRoute() {
+            if (nodes.stream().noneMatch(node -> node.kind == NodeKind.INSTANCE)) {
+                return layoutAndRouteLegacy();
+            }
+
+            // Retain the compiler's established cycle classification for the public
+            // Compilation.hasFeedback flag; placement itself is delegated to SchematicLayout.
+            Map<String, Node> producerBySignal = new LinkedHashMap<>();
+            for (Node node : nodes) {
+                for (String signal : node.outputs.values()) {
+                    Node previous = producerBySignal.putIfAbsent(signal, node);
+                    if (previous != null) {
+                        throw new IllegalStateException(
+                                "signal " + signal + " has multiple drivers: "
+                                        + previous.id + " and " + node.id);
+                    }
+                }
+            }
+            Map<String, Integer> depthState = new HashMap<>();
+            for (Node node : nodes) {
+                depth(node, producerBySignal, depthState, new ArrayList<>());
+            }
+
+            List<SchematicLayout.ComponentNodeSpec> graphNodes = new ArrayList<>();
+            for (Node node : nodes) {
+                SchematicLayout.ComponentNodeType type = switch (node.kind) {
+                    case INPUT -> node.clock
+                            ? SchematicLayout.ComponentNodeType.CLOCK
+                            : SchematicLayout.ComponentNodeType.INPUT;
+                    case CONSTANT -> SchematicLayout.ComponentNodeType.CONSTANT;
+                    case GATE -> SchematicLayout.ComponentNodeType.GATE;
+                    case INSTANCE -> SchematicLayout.ComponentNodeType.BOX;
+                };
+                String label = switch (node.kind) {
+                    case INPUT -> node.sourceName;
+                    case CONSTANT -> node.constantValue ? "1" : "0";
+                    case GATE, INSTANCE -> "";
+                };
+                graphNodes.add(new SchematicLayout.ComponentNodeSpec(
+                        node.id, type, node.inputs, node.outputs,
+                        node.gateType, node.componentDefinition, label));
+            }
+            List<SchematicLayout.ComponentOutputSpec> graphOutputs = outputs.stream()
+                    .map(output -> new SchematicLayout.ComponentOutputSpec(
+                            output.id(), output.name(), output.signal()))
+                    .toList();
+            SchematicLayout.LayoutResult layout = new SchematicLayout(gateDefinitions)
+                    .layoutComponents(graphNodes, graphOutputs);
+            outputComponentIds.putAll(layout.outputComponentIds());
+            return layout.schematic();
+        }
+
+        private Schematic layoutAndRouteLegacy() {
             Map<String, Node> producerBySignal = new LinkedHashMap<>();
             for (Node node : nodes) {
                 for (String signal : node.outputs.values()) {
