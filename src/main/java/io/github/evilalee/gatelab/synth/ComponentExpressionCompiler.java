@@ -255,12 +255,7 @@ public final class ComponentExpressionCompiler {
             }
 
             Schematic schematic = layoutAndRoute();
-            try {
-                verifyConnectivity(schematic);
-            } catch (LayoutFailure failure) {
-                System.err.println("BOX_LAYOUT_CONNECTIVITY_FAILURE " + failure.getMessage());
-                throw failure;
-            }
+            verifyConnectivity(schematic);
             Map<String, String> inputs = new LinkedHashMap<>();
             Map<String, String> clocks = new LinkedHashMap<>();
             inputNodes.values().stream()
