@@ -803,13 +803,12 @@ public final class SchematicLayout {
             ComponentFeedbackEdge edge, int lane, int trackPitch, List<Node> allNodes) {
         int minTop = Integer.MAX_VALUE;
         int maxBottom = Integer.MIN_VALUE;
+        // Reserve the return row beyond every ordinary pin/dummy row, not
+        // only the feedback interval's boxes. A different column's channel
+        // route can span this interval and would otherwise share the same Y.
         for (Node node : allNodes) {
-            if (!node.isDummy()
-                    && node.column >= edge.target().column
-                    && node.column <= edge.source().column) {
-                minTop = Math.min(minTop, node.y + nodeTopOffset(node));
-                maxBottom = Math.max(maxBottom, node.y + nodeBottomOffset(node));
-            }
+            minTop = Math.min(minTop, node.y + nodeTopOffset(node));
+            maxBottom = Math.max(maxBottom, node.y + nodeBottomOffset(node));
         }
         if (minTop == Integer.MAX_VALUE) {
             throw new IllegalStateException("feedback interval contains no component rows");
