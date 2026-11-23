@@ -323,10 +323,11 @@ class AiCircuitComponentsTest {
                 "Create a 4 bit accumulator, D-flipflop is available and full adder is available use those.",
                 false, false, "", true, false, true);
 
-        assertEquals(AiCircuitService.Status.UNAVAILABLE, result.status());
-        assertTrue(result.summary().contains("Sequential behavior is not available yet"));
-        assertFalse(result.summary().contains("response fields invalid"));
-        assertEquals(0, provider.calls);
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(result.summary().contains("sequential"), result.summary());
+        assertTrue(result.mismatchingRows().stream().anyMatch(message ->
+                message.contains("sequential response fields invalid")));
+        assertEquals(1, provider.calls);
     }
 
     @Test
