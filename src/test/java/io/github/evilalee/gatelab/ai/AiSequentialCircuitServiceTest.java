@@ -186,6 +186,28 @@ class AiSequentialCircuitServiceTest {
     }
 
     @Test
+    void noResettableInputIsRejectedWithResetToDPathGuidance() throws Exception {
+        String answer = answer("register without reset", "CLK", List.of(),
+                linked("FB", "U0.Q"),
+                List.of(new Instance("U0", "DFF", List.of("NOT(FB)", "CLK"))),
+                linked("Q", "U0.Q"),
+                List.of(step(Map.of(), 1, linked("Q", 0))));
+        ScriptedProvider provider = new ScriptedProvider(answer);
+        AiCircuitService service = service(provider, null);
+
+        AiCircuitService.Result result = service.generate(
+                "Create a one-bit state register without an external reset input.",
+                false, true, "", false, false, true);
+
+        String feedback = String.join("\n", result.mismatchingRows());
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(feedback.contains("No reset input can force a known state"), feedback);
+        assertTrue(feedback.contains("RESET_N"), feedback);
+        assertTrue(feedback.contains("must reach every D path"), feedback);
+        assertTrue(feedback.contains("circuit gives X"), feedback);
+    }
+
+    @Test
     void missingResetAssignmentInFirstStepLeavesStateXAndReturnsResetFeedback() throws Exception {
         JsonObject answer = JsonParser.parseString(counterAnswer(false)).getAsJsonObject();
         answer.getAsJsonArray("sequence").get(0).getAsJsonObject()
