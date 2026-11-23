@@ -258,9 +258,9 @@ class ComponentExpressionBoxLayoutMetricsTest {
             assertTrue(carryNet.segments().size() <= 3,
                     () -> "carry " + sourceId + " -> " + targetId + " used "
                             + carryNet.segments().size() + " segments");
-            assertTrue(length <= 200,
+            assertTrue(length <= 3L * ComponentInstance.BOX_WIDTH,
                     () -> "carry " + sourceId + " -> " + targetId
-                            + " route length " + length + " is not short");
+                            + " route length " + length + " exceeds three box widths");
         }
     }
 
