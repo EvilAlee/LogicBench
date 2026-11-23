@@ -364,6 +364,7 @@ public final class AiSequentialCircuitService {
                             + String.join(" -> ", cycle) + ". Break the cycle with a DFF or DLATCH."));
         }
 
+        List<String> resetValidationErrors = resetErrors(answer);
         String source = expressionSource(answer);
         ComponentExpressionCompiler.Compilation compilation;
         try {
@@ -388,7 +389,9 @@ public final class AiSequentialCircuitService {
                     "Compiler-created input '" + name + "' is not declared in inputs."));
             unused.forEach(name -> inputErrors.add(
                     "Declared input '" + name + "' is not used by the circuit."));
-            return Attempt.failed(answer, inputErrors, source);
+            List<String> combined = new ArrayList<>(resetValidationErrors);
+            combined.addAll(inputErrors);
+            return Attempt.failed(answer, combined, source);
         }
         if (compilation.clockComponentIds().size() > 1
                 || (!compilation.clockComponentIds().isEmpty()
@@ -463,7 +466,7 @@ public final class AiSequentialCircuitService {
             namedOutputs.put(output.name(), probe);
         }
 
-        List<String> resetErrors = resetErrors(answer);
+        List<String> resetErrors = new ArrayList<>(resetValidationErrors);
         List<SequenceRunner.Step> runnerSteps = new ArrayList<>();
         for (int index = 0; index < answer.sequence().size(); index++) {
             SequenceStep step = answer.sequence().get(index);
@@ -482,6 +485,18 @@ public final class AiSequentialCircuitService {
 
         List<StepView> views = new ArrayList<>();
         List<String> mismatches = new ArrayList<>();
+        if (!observed.steps().isEmpty()) {
+            SequenceRunner.StepObservation resetObservation = observed.steps().getFirst();
+            List<String> unknownAfterReset = resetObservation.observedOutputs().entrySet().stream()
+                    .filter(entry -> entry.getValue() == Value.X)
+                    .map(Map.Entry::getKey).toList();
+            if (!unknownAfterReset.isEmpty()
+                    && resetErrors.stream().noneMatch(line -> line.contains("did not establish"))) {
+                resetErrors.add("The first reset step did not establish a known state: "
+                        + unknownAfterReset + " remain X. Ensure reset reaches every D path "
+                        + "(for example D = RESET_N & ...).");
+            }
+        }
         for (int index = 0; index < observed.steps().size(); index++) {
             SequenceRunner.StepObservation row = observed.steps().get(index);
             SequenceStep step = answer.sequence().get(index);
