@@ -528,6 +528,19 @@ public final class AiSequentialCircuitService {
         Map<String, InstanceSpec> instances = new LinkedHashMap<>();
         answer.instances().forEach(instance -> instances.put(instance.name(), instance));
 
+        for (OutputSpec output : answer.outputs()) {
+            try {
+                Expression expression = ExpressionParser.parse(output.expression());
+                if (expression.variables().contains(answer.clock())
+                        || containsComponentOutput(expression, answer.clock())) {
+                    errors.add("Clock '" + answer.clock()
+                            + "' may appear only as the CLK argument of a DFF.");
+                }
+            } catch (RuntimeException ignored) {
+                // The component compiler reports the parser's detailed position.
+            }
+        }
+
         for (InstanceSpec instance : answer.instances()) {
             ComponentDefinition definition = byName.get(instance.component());
             if (definition == null) {
@@ -1111,7 +1124,7 @@ public final class AiSequentialCircuitService {
                 + bit(mismatch.expected()) + ", circuit gives " + bit(mismatch.observed());
     }
 
-    static String formatInputs(List<String> order, Map<String, Value> assignments) {
+    public static String formatInputs(List<String> order, Map<String, Value> assignments) {
         Map<String, List<Map.Entry<Integer, String>>> groups = new LinkedHashMap<>();
         for (String name : order) {
             if (!assignments.containsKey(name)) continue;
@@ -1218,7 +1231,7 @@ public final class AiSequentialCircuitService {
                         ? "VERIFIED: matches the sequence in the answer."
                         : attempt.answer() == null ? "Sequential answer could not be built."
                                 : attempt.answer().summary(),
-                attempt.schematic(), attempt.data(), attempt.mismatches(),
+                attempt.schematic(), attempt.data(), attempt.feedback(),
                 log, fromCache, provider.redact(model),
                 models.stream().map(provider::redact).toList(),
                 attempt.source(), attempt.componentUseCounts());
