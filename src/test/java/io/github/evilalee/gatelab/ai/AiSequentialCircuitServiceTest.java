@@ -113,6 +113,10 @@ class AiSequentialCircuitServiceTest {
 
         AiCircuitService.Result result = service.generate(
                 ACCUMULATOR_REQUEST, false, true, "", false, false, true);
+        System.out.println("ACCUMULATOR_DEBUG status=" + result.status()
+                + " summary=" + result.summary()
+                + " logs=" + result.attemptLog()
+                + " errors=" + result.mismatchingRows());
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status(),
                 "status=" + result.status() + " summary=" + result.summary()
