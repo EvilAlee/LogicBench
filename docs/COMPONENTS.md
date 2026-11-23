@@ -155,9 +155,14 @@ can also use combinational library boxes when **Use library components** is
 enabled. Its request-scoped catalog exposes ordered ports and component
 descriptions. When a request explicitly names a library component, AI generation
 requires boxed instances and does not substitute a gate-level template.
-Components containing feedback or sequential behavior remain outside this
-AI-generation path; ordinary typed-expression calls retain their separate
-instance-aware compiler behavior described above.
+Stateful natural-language requests use a separate sequential response schema and
+verification service. It permits DFF and DLATCH boxes (and combinational boxes such
+as FA), requires a single named Clock and a reset-to-known-state sequence, rejects
+raw combinational feedback as well as TFF/JKFF, and verifies the returned steps
+through SequenceRunner after SchematicCompiler flattening. The combinational
+expressions/template schema and validation path remain separate and unchanged.
+Ordinary typed-expression calls retain their separate instance-aware compiler
+behavior described above.
 
 ## Desktop GUI workflow
 
