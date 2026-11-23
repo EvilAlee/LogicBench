@@ -233,7 +233,7 @@ public final class AiSequentialCircuitService {
                 Attempt cached = validate(provider.redact(hit.answerJson()), invertingGates);
                 if (cached.passed()) {
                     log.add("FROM CACHE: Revalidated the complete sequential sequence.");
-                    log.add("VERIFIED: matches the sequence in the answer.");
+                    log.add("VERIFIED: matches the sequence in the answer");
                     return toOutcome(0, AiCircuitService.Status.VERIFIED, cached,
                             log, true, provider.redact(hit.model()), List.of());
                 }
@@ -283,7 +283,7 @@ public final class AiSequentialCircuitService {
                 bestModel = reply.model();
             }
             if (current.passed()) {
-                log.add("VERIFIED: matches the sequence in the answer.");
+                log.add("VERIFIED: matches the sequence in the answer");
                 log.add("Verified " + current.data().steps().size()
                         + " sequence steps through the LogicBench engine.");
                 if (cache != null) {
@@ -1243,7 +1243,7 @@ public final class AiSequentialCircuitService {
             List<String> log, boolean fromCache, String model, List<String> models) {
         return new Outcome(attempts, status,
                 status == AiCircuitService.Status.VERIFIED
-                        ? "VERIFIED: matches the sequence in the answer."
+                        ? "VERIFIED: matches the sequence in the answer"
                         : attempt.answer() == null ? "Sequential answer could not be built."
                                 : attempt.answer().summary(),
                 attempt.schematic(), attempt.data(), attempt.feedback(),
