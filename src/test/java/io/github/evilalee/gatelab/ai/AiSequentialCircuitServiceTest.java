@@ -65,13 +65,15 @@ class AiSequentialCircuitServiceTest {
         AiCircuitService.Result result = service.generate(
                 COUNTER_REQUEST, false, true, "", false, false, true);
 
-        assertEquals(AiCircuitService.Status.VERIFIED, result.status(), result.mismatchingRows().toString());
+        assertEquals(AiCircuitService.Status.VERIFIED, result.status(),
+                "status=" + result.status() + " summary=" + result.summary()
+                        + " logs=" + result.attemptLog() + " errors=" + result.mismatchingRows());
         assertEquals("VERIFIED: matches the sequence in the answer", result.summary());
         assertNotNull(result.sequenceData());
         assertEquals("CLK", result.sequenceData().clockName());
         assertEquals(5, result.sequenceData().steps().size());
-        assertEquals(Value.ONE, result.sequenceData().steps().get(2).observed().get("Q0"));
-        assertEquals(Value.ONE, result.sequenceData().steps().get(2).observed().get("Q1"));
+        assertEquals(Value.ONE, result.sequenceData().steps().get(3).observed().get("Q0"));
+        assertEquals(Value.ONE, result.sequenceData().steps().get(3).observed().get("Q1"));
         List<PlacedComponent> clocks = result.schematic().components().stream()
                 .filter(component -> component.typeId().equals("clock")).toList();
         assertEquals(1, clocks.size());
@@ -113,7 +115,8 @@ class AiSequentialCircuitServiceTest {
                 ACCUMULATOR_REQUEST, false, true, "", false, false, true);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status(),
-                result.mismatchingRows().toString());
+                "status=" + result.status() + " summary=" + result.summary()
+                        + " logs=" + result.attemptLog() + " errors=" + result.mismatchingRows());
         assertEquals(Map.of("FA", 4, "DFF", 4), result.componentUseCounts());
         assertEquals(8, result.schematic().componentInstances().size());
         assertEquals(3, result.sequenceData().steps().size());
