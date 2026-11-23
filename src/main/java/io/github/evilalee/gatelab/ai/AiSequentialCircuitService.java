@@ -371,9 +371,6 @@ public final class AiSequentialCircuitService {
                     ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES,
                     true, invertingGates);
         } catch (RuntimeException exception) {
-            if (Boolean.getBoolean("logicbench.debugSequential")) {
-                exception.printStackTrace(System.out);
-            }
             return Attempt.failed(answer, List.of("Sequential component compilation failed: "
                     + provider.redact(oneLine(exception.getMessage()))), source);
         }
