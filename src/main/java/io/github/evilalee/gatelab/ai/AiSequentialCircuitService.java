@@ -478,7 +478,7 @@ public final class AiSequentialCircuitService {
         SequenceRunner.SequenceResult observed;
         try {
             observed = new SequenceRunner(flattened.circuit(), namedInputs,
-                    answer.clock(), namedOutputs).run(runnerSteps);
+                    answer.clock(), namedOutputs, flattened.fixedInputs()).run(runnerSteps);
         } catch (RuntimeException exception) {
             return Attempt.failed(answer, List.of("Sequence execution failed: "
                     + provider.redact(oneLine(exception.getMessage()))), source);
