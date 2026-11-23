@@ -64,11 +64,14 @@ check rejects any combinational cycle that does not pass through a DFF or DLATCH
 component-aware compiler builds the boxed schematic, SchematicCompiler flattens it, and
 SequenceRunner starts every non-clock input/state at X with the named clock low. It applies
 each step, executes complete high/low clock cycles, and compares expected with observed
-values by output name. X never matches 0 or 1. Retry feedback is named and capped at eight
+values by output name. Flattened literal 0/1 sources, including constants nested inside
+component definitions, are passed to SequenceRunner as fixed inputs and are not reset to X.
+X never matches 0 or 1. Retry feedback is named and capped at eight
 lines; a verified answer is labelled `VERIFIED: matches the sequence in the answer`.
 
-Sequential limits are 8 non-clock inputs, 8 outputs, 16 instances, 400 flattened gates,
-40 sequence steps and 8 cycles per step. Verified sequential answers use the normal
+Sequential limits are 0..8 non-clock inputs, 1..8 outputs, 16 instances, 400 flattened
+gates, 40 sequence steps and 8 cycles per step. An empty input list is allowed through
+schema validation so the service can return the specific missing-reset/D-path explanation. Verified sequential answers use the normal
 AiCache description normalisation and are revalidated through the same sequential schema,
 component checks, reset checks and simulator on replay. A cache entry that refers to a
 component no longer present in the library is ignored with a notice.
