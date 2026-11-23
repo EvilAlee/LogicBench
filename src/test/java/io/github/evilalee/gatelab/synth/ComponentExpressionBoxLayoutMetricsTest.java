@@ -292,7 +292,7 @@ class ComponentExpressionBoxLayoutMetricsTest {
                     boolean sharedNet = topology.nets().stream().anyMatch(net ->
                             net.segments().contains(a) && net.segments().contains(b));
                     assertTrue(sharedNet,
-                            () -> "distinct electrical lanes overlap " + direction
+                            "distinct electrical lanes overlap " + direction
                                     + ": " + a + " and " + b);
                 }
             }
