@@ -820,6 +820,25 @@ public final class SchematicLayout {
         int targetY = targetPinY(edge.routeStep());
         int aboveY = minTop - (lane + 1) * trackPitch;
         int belowY = maxBottom + (lane + 1) * trackPitch;
+
+        // For multi-output boxes, leave a port toward the side with fewer
+        // sibling outputs. Otherwise the vertical escape can run through a
+        // different output wire on the same box (for example FA.S vs FA.COUT).
+        Node source = edge.source();
+        if (source.isBox() && source.boxDefinition.outputPorts().size() > 1) {
+            String sourcePort = outputPinForSignal(source, edge.signal());
+            int sourceOffsetY = boxPinOffset(source.boxDefinition, sourcePort).y();
+            long abovePorts = source.boxDefinition.outputPorts().stream()
+                    .filter(port -> boxPinOffset(source.boxDefinition, port.name()).y()
+                            < sourceOffsetY).count();
+            long belowPorts = source.boxDefinition.outputPorts().stream()
+                    .filter(port -> boxPinOffset(source.boxDefinition, port.name()).y()
+                            > sourceOffsetY).count();
+            if (abovePorts != belowPorts) {
+                return abovePorts < belowPorts ? aboveY : belowY;
+            }
+        }
+
         int aboveLength = Math.abs(sourceY - aboveY) + Math.abs(targetY - aboveY);
         int belowLength = Math.abs(sourceY - belowY) + Math.abs(targetY - belowY);
         return aboveLength <= belowLength ? aboveY : belowY;
@@ -870,16 +889,18 @@ public final class SchematicLayout {
                     sourcesByChannel.getOrDefault(source.column, List.of());
             List<ComponentFeedbackEdge> targetEdges =
                     targetsByChannel.getOrDefault(target.column - 1, List.of());
-            int sourceTrackIndex = sourceEdges.indexOf(edge);
+            List<String> sourceKeys = sourceEdges.stream()
+                    .map(candidate -> candidate.source().componentId + "|" + candidate.signal())
+                    .distinct().toList();
+            int sourceTrackIndex = sourceKeys.indexOf(source.componentId + "|" + edge.signal());
             int targetTrackIndex = targetEdges.indexOf(edge);
             if (sourceTrackIndex < 0 || targetTrackIndex < 0) {
                 throw new IllegalStateException("feedback lane reservation is missing");
             }
             int sourcePinX = sourcePinX(source, edge.signal());
-            // Leave the source pin through a short, local escape track. Starting
-            // the vertical return outside the ordinary lane bundle avoids
-            // crossing a neighbouring box input route at the source pin's row.
-            int sourceX = sourcePinX + (sourceTrackIndex + 1) * trackPitch;
+            // Use a short escape stub before the vertical return. A full track
+            // pitch here can cross a neighbouring box's ordinary output lane.
+            int sourceX = sourcePinX + (sourceTrackIndex + 1) * Math.max(10, trackPitch / 4);
             RouteStep step = edge.routeStep();
             GateGeometry.Offset targetOffset = targetPinOffset(step);
             int targetPinX = target.x + targetOffset.x();
