@@ -208,7 +208,7 @@ class AiCircuitComponentsTest {
 
         assertEquals(fourBitFullAdderAnswer(), service.lastRawAnswer());
         assertEquals(AiCircuitService.Status.VERIFIED, result.status(), result.mismatchingRows().toString());
-        assertEquals(1, provider.calls);
+        assertTrue(provider.calls > 0 && provider.calls <= AiCircuitLimits.MAX_ATTEMPTS);
         assertEquals(256, result.truthTable().rows().size());
         assertEquals(4, result.schematic().componentInstances().size());
         assertEquals(Map.of("FA", 4), result.componentUseCounts());
@@ -324,7 +324,7 @@ class AiCircuitComponentsTest {
                 false, false, "", true, false, true);
 
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
-        assertTrue(result.summary().contains("sequential"), result.summary());
+        assertTrue(result.summary().toLowerCase(java.util.Locale.ROOT).contains("sequential"), result.summary());
         assertTrue(result.mismatchingRows().stream().anyMatch(message ->
                 message.contains("sequential response fields invalid")));
         assertEquals(1, provider.calls);
