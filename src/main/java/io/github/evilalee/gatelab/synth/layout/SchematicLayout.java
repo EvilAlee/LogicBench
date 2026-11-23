@@ -739,14 +739,17 @@ public final class SchematicLayout {
         long bestLength = Long.MAX_VALUE;
         for (int sweep = 0; sweep < 3; sweep++) {
             if (sweep == 1) {
-                for (int column = lastColumn - 1; column >= 1; column--) {
-                    assignColumn(columns.get(column), routeSteps, rowGap,
-                            false, column, true, true);
+                for (int column = lastColumn - 1; column >= 0; column--) {
+                    // The first input column has no preceding node column, so
+                    // it can align directly to its consumer pin rows.
+                    assignColumn(columns.get(column), routeSteps,
+                            column == 0 ? 0 : rowGap,
+                            false, column, true, true, true);
                 }
             } else {
                 for (int column = 1; column <= lastColumn; column++) {
                     assignColumn(columns.get(column), routeSteps, rowGap,
-                            true, column - 1, false, true);
+                            true, column - 1, false, true, true);
                 }
             }
             if (!allChannelsHaveConflictFreePinRows(routeSteps, columns.size())) {
@@ -1974,6 +1977,19 @@ public final class SchematicLayout {
             int conflictChannel,
             boolean movingSources,
             boolean feedbackPacking) {
+        assignColumn(ordered, routeSteps, rowGap, fromPredecessors,
+                conflictChannel, movingSources, feedbackPacking, false);
+    }
+
+    private static void assignColumn(
+            List<Node> ordered,
+            List<RouteStep> routeSteps,
+            int rowGap,
+            boolean fromPredecessors,
+            int conflictChannel,
+            boolean movingSources,
+            boolean feedbackPacking,
+            boolean alignPins) {
         if (ordered.isEmpty()) {
             return;
         }
@@ -1986,10 +2002,13 @@ public final class SchematicLayout {
             int pinCount = 0;
             for (RouteStep step : routeSteps) {
                 if (fromPredecessors && step.target() == node) {
-                    pinTotal += sourcePinY(step.source(), step.signal());
+                    int targetOffset = alignPins && !step.target().isDummy()
+                            ? targetPinOffset(step).y() : 0;
+                    pinTotal += sourcePinY(step.source(), step.signal()) - targetOffset;
                     pinCount++;
                 } else if (!fromPredecessors && step.source() == node) {
-                    pinTotal += targetPinY(step);
+                    pinTotal += targetPinY(step)
+                            - (alignPins ? sourcePinOffsetY(node, step.signal()) : 0);
                     pinCount++;
                 }
             }
@@ -2156,6 +2175,18 @@ public final class SchematicLayout {
         }
         GateGeometry.Offset offset = GateGeometry.outputOffset(source.definition, Facing.EAST);
         return source.y + (offset == null ? 0 : offset.y());
+    }
+
+    private static int sourcePinOffsetY(Node source, String signal) {
+        if (source.isDummy()) {
+            return 0;
+        }
+        if (source.isBox()) {
+            return boxPinOffset(source.boxDefinition,
+                    outputPinForSignal(source, signal)).y();
+        }
+        GateGeometry.Offset offset = GateGeometry.outputOffset(source.definition, Facing.EAST);
+        return offset == null ? 0 : offset.y();
     }
 
     private static int sourcePinX(Node source, String signal) {
