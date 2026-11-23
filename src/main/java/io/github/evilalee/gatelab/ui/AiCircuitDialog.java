@@ -3,6 +3,7 @@ package io.github.evilalee.gatelab.ui;
 import io.github.evilalee.gatelab.ai.AiCache;
 import io.github.evilalee.gatelab.ai.AiDebugLog;
 import io.github.evilalee.gatelab.ai.AiCircuitService;
+import io.github.evilalee.gatelab.ai.AiSequentialCircuitService;
 import io.github.evilalee.gatelab.ai.AiExplainService;
 import io.github.evilalee.gatelab.ai.AiConfig;
 import io.github.evilalee.gatelab.ai.AiConnectionTester;
@@ -32,8 +33,10 @@ import javax.swing.SwingWorker;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Component;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -45,6 +48,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
@@ -71,7 +75,9 @@ public final class AiCircuitDialog extends JDialog {
     private final JComboBox<String> modeSelector =
             new JComboBox<>(new String[]{"Generate", "Explain"});
     private final TruthTableModel tableModel;
+    private final SequenceTableModel sequenceTableModel;
     private final JTable truthTable;
+    private final JScrollPane tableScroll;
     private final JButton generateButton = new JButton("Generate");
     private final JButton cancelButton = new JButton("Cancel");
     private final JButton placeButton = new JButton("Place circuit");
@@ -112,6 +118,7 @@ public final class AiCircuitDialog extends JDialog {
         this.cacheOnly = cacheOnly;
         this.config = AiConfig.load();
         this.tableModel = new TruthTableModel(config);
+        this.sequenceTableModel = new SequenceTableModel(config);
         this.truthTable = new JTable(tableModel);
         this.cache = new AiCache(config.configDirectory());
         ComponentLibrary componentLibrary = ComponentLibrary.load();
@@ -186,8 +193,24 @@ public final class AiCircuitDialog extends JDialog {
         truthTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         truthTable.setRowHeight(21);
         truthTable.getTableHeader().setReorderingAllowed(false);
-        JScrollPane tableScroll = new JScrollPane(truthTable);
+        tableScroll = new JScrollPane(truthTable);
         tableScroll.setBorder(BorderFactory.createTitledBorder("Engine truth table"));
+        truthTable.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean selected, boolean focused,
+                    int row, int column) {
+                Component cell = super.getTableCellRendererComponent(
+                        table, value, selected, focused, row, column);
+                if (!selected && table.getModel() instanceof SequenceTableModel model
+                        && column >= 3 && model.isMismatch(row)) {
+                    cell.setBackground(new Color(255, 220, 220));
+                } else if (!selected) {
+                    cell.setBackground(table.getBackground());
+                }
+                return cell;
+            }
+        });
 
         JPanel resultPanel = new JPanel(new BorderLayout(4, 4));
         JPanel resultHeader = new JPanel(new BorderLayout(8, 0));
@@ -616,7 +639,10 @@ public final class AiCircuitDialog extends JDialog {
         placeButton.setEnabled(false);
         expressionsArea.setText("");
         copyExpressionsButton.setEnabled(false);
+        truthTable.setModel(tableModel);
         tableModel.setTable(null);
+        sequenceTableModel.setSequence(null);
+        tableScroll.setBorder(BorderFactory.createTitledBorder("Engine truth table"));
         summary.setText(" ");
         statusBadge.setText("READY");
         statusBadge.setBackground(new Color(235, 235, 235));
@@ -648,12 +674,22 @@ public final class AiCircuitDialog extends JDialog {
                 ? formatExpressions(result.signals(), result.expressions())
                 : config.redact(result.expressionSource()));
         copyExpressionsButton.setEnabled(!expressionsArea.getText().isBlank());
-        tableModel.setTable(result.truthTable());
+        if (result.sequenceData() != null) {
+            truthTable.setModel(sequenceTableModel);
+            sequenceTableModel.setSequence(result.sequenceData());
+            tableScroll.setBorder(BorderFactory.createTitledBorder("Sequence verification"));
+        } else {
+            truthTable.setModel(tableModel);
+            tableModel.setTable(result.truthTable());
+            sequenceTableModel.setSequence(null);
+            tableScroll.setBorder(BorderFactory.createTitledBorder("Engine truth table"));
+        }
         if (result.fromCache()) {
             statusBadge.setText("FROM CACHE");
             statusBadge.setBackground(new Color(220, 235, 250));
         } else if (result.status() == AiCircuitService.Status.VERIFIED) {
-            statusBadge.setText("VERIFIED");
+            statusBadge.setText(result.sequenceData() == null
+                    ? "VERIFIED" : "VERIFIED: matches the sequence in the answer");
             statusBadge.setBackground(new Color(215, 240, 220));
         } else if (result.status() == AiCircuitService.Status.BUILT) {
             statusBadge.setText("BUILT: no independent check, read the truth table");
@@ -904,6 +940,71 @@ public final class AiCircuitDialog extends JDialog {
         String message = throwable.getMessage();
         return config.redact(message == null || message.isBlank()
                 ? throwable.getClass().getSimpleName() : message);
+    }
+
+    private static final class SequenceTableModel extends AbstractTableModel {
+        private final AiConfig config;
+        private AiSequentialCircuitService.SequenceData sequence;
+
+        private SequenceTableModel(AiConfig config) {
+            this.config = config;
+        }
+
+        private void setSequence(AiSequentialCircuitService.SequenceData next) {
+            sequence = next;
+            fireTableStructureChanged();
+        }
+
+        private boolean isMismatch(int row) {
+            return sequence != null && !sequence.steps().get(row).mismatchedOutputs().isEmpty();
+        }
+
+        @Override public int getRowCount() {
+            return sequence == null ? 0 : sequence.steps().size();
+        }
+
+        @Override public int getColumnCount() { return 5; }
+
+        @Override public String getColumnName(int column) {
+            return switch (column) {
+                case 0 -> "Step";
+                case 1 -> "Inputs";
+                case 2 -> "Cycles";
+                case 3 -> "Expected";
+                case 4 -> "Observed";
+                default -> "";
+            };
+        }
+
+        @Override public Object getValueAt(int rowIndex, int columnIndex) {
+            if (sequence == null) return "";
+            AiSequentialCircuitService.StepView step = sequence.steps().get(rowIndex);
+            return switch (columnIndex) {
+                case 0 -> step.step();
+                case 1 -> config.redact(AiSequentialCircuitService.formatInputs(
+                        sequence.inputNames(), step.set()));
+                case 2 -> step.cycles();
+                case 3 -> config.redact(formatValues(sequence.outputNames(), step.expected()));
+                case 4 -> config.redact(formatValues(sequence.outputNames(), step.observed()));
+                default -> "";
+            };
+        }
+
+        private static String formatValues(List<String> order, Map<String, Value> values) {
+            List<String> entries = new ArrayList<>();
+            for (String name : order) {
+                Value value = values.get(name);
+                if (value == null) continue;
+                entries.add(name + "=" + switch (value) {
+                    case ZERO -> "0";
+                    case ONE -> "1";
+                    case X -> "X";
+                });
+            }
+            return String.join(", ", entries);
+        }
+
+        @Override public boolean isCellEditable(int row, int column) { return false; }
     }
 
     private static final class TruthTableModel extends AbstractTableModel {
