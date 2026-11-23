@@ -72,15 +72,16 @@ public final class AiSequentialCircuitService {
 
     public static JsonObject responseSchema() {
         JsonObject root = objectSchema();
+        JsonObject properties = root.getAsJsonObject("properties");
         JsonObject kind = stringSchema();
         kind.add("enum", strings("sequential"));
-        root.add("kind", kind);
-        root.add("summary", stringSchema());
-        root.add("clock", stringSchema());
-        root.add("inputs", arraySchema(stringSchema()));
-        root.add("outputs", arraySchema(namedExpressionSchema()));
-        root.add("signals", arraySchema(namedExpressionSchema()));
-        root.add("instances", arraySchema(instanceSchema()));
+        properties.add("kind", kind);
+        properties.add("summary", stringSchema());
+        properties.add("clock", stringSchema());
+        properties.add("inputs", arraySchema(stringSchema()));
+        properties.add("outputs", arraySchema(namedExpressionSchema()));
+        properties.add("signals", arraySchema(namedExpressionSchema()));
+        properties.add("instances", arraySchema(instanceSchema()));
 
         JsonObject binaryValue = numberSchema();
         binaryValue.add("enum", numbers(0, 1));
@@ -88,11 +89,14 @@ public final class AiSequentialCircuitService {
         assignments.add("additionalProperties", binaryValue);
 
         JsonObject step = objectSchema();
-        step.add("set", assignments);
-        step.add("cycles", integerSchema(0, MAX_CYCLES));
-        step.add("expect", assignments);
+        step.getAsJsonObject("properties").add("set", assignments);
+        step.getAsJsonObject("properties").add("cycles", integerSchema(0, MAX_CYCLES));
+        step.getAsJsonObject("properties").add("expect", assignments.deepCopy());
+        step.add("required", strings("set", "cycles", "expect"));
         JsonObject sequence = arraySchema(step);
-        root.add("sequence", sequence);
+        sequence.addProperty("minItems", 1);
+        sequence.addProperty("maxItems", MAX_STEPS);
+        properties.add("sequence", sequence);
         root.add("required", strings(
                 "kind", "summary", "clock", "inputs", "outputs",
                 "signals", "instances", "sequence"));
@@ -1251,7 +1255,9 @@ public final class AiSequentialCircuitService {
                         + " | rejected: cannot reset its state from all-X startup; use a DFF");
             }
         }
-        rows.add(AiComponentCatalog.promptBlock(definitions, request));
+        List<ComponentDefinition> combinational = definitions.stream()
+                .filter(AiComponentCatalog::isCombinational).toList();
+        rows.add(AiComponentCatalog.promptBlock(combinational, request));
         return "Sequential component catalog:\n" + String.join("\n", rows);
     }
 
