@@ -111,18 +111,8 @@ class AiSequentialCircuitServiceTest {
         ScriptedProvider provider = new ScriptedProvider(accumulatorAnswer());
         AiCircuitService service = service(provider, null);
 
-        System.setProperty("logicbench.debugSequential", "true");
-        AiCircuitService.Result result;
-        try {
-            result = service.generate(
-                    ACCUMULATOR_REQUEST, false, true, "", false, false, true);
-        } finally {
-            System.clearProperty("logicbench.debugSequential");
-        }
-        System.out.println("ACCUMULATOR_DEBUG status=" + result.status()
-                + " summary=" + result.summary()
-                + " logs=" + result.attemptLog()
-                + " errors=" + result.mismatchingRows());
+        AiCircuitService.Result result = service.generate(
+                ACCUMULATOR_REQUEST, false, true, "", false, false, true);
 
         assertEquals(AiCircuitService.Status.VERIFIED, result.status(),
                 "status=" + result.status() + " summary=" + result.summary()
@@ -130,9 +120,6 @@ class AiSequentialCircuitServiceTest {
         assertEquals(Map.of("FA", 4, "DFF", 4), result.componentUseCounts());
         assertEquals(8, result.schematic().componentInstances().size());
         assertEquals(3, result.sequenceData().steps().size());
-        System.out.println("ACCUMULATOR_OBSERVED "
-                + result.sequenceData().steps().stream()
-                        .map(step -> step.observed().toString()).toList());
         assertEquals(Value.ONE, result.sequenceData().steps().get(1).observed().get("Q0"));
         assertEquals(Value.ONE, result.sequenceData().steps().get(1).observed().get("Q1"));
         assertEquals(Value.ONE, result.sequenceData().steps().get(2).observed().get("Q3"));
@@ -332,8 +319,7 @@ class AiSequentialCircuitServiceTest {
                 new Instance("U6", "DFF", List.of("RESET_N & U2.S", "CLK")),
                 new Instance("U7", "DFF", List.of("RESET_N & U3.S", "CLK")));
         Map<String, String> outputs = linked(
-                "Q0", "U4.Q", "Q1", "U5.Q", "Q2", "U6.Q", "Q3", "U7.Q",
-                "SUM0", "U0.S", "SUM1", "U1.S", "SUM2", "U2.S", "SUM3", "U3.S");
+                "Q0", "U4.Q", "Q1", "U5.Q", "Q2", "U6.Q", "Q3", "U7.Q");
         List<Step> steps = List.of(
                 step(linked("RESET_N", 0, "IN3", 0, "IN2", 0, "IN1", 0, "IN0", 0),
                         1, linked("Q3", 0, "Q2", 0, "Q1", 0, "Q0", 0)),
