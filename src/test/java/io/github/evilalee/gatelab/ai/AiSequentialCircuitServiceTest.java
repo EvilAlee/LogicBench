@@ -285,12 +285,10 @@ class AiSequentialCircuitServiceTest {
     }
 
     private static String counterAnswer(boolean wrongExpectation) {
-        Map<String, String> signals = linked(
-                "FB0", "U0.Q",
-                "FB1", "U1.Q");
+        Map<String, String> signals = Map.of();
         List<Instance> instances = List.of(
-                new Instance("U0", "DFF", List.of("RESET_N & NOT(FB0)", "CLK")),
-                new Instance("U1", "DFF", List.of("RESET_N & (FB1 ^ FB0)", "CLK")));
+                new Instance("U0", "DFF", List.of("RESET_N & NOT(U0.Q)", "CLK")),
+                new Instance("U1", "DFF", List.of("RESET_N & (U1.Q ^ U0.Q)", "CLK")));
         Map<String, String> outputs = linked("Q0", "U0.Q", "Q1", "U1.Q");
         List<Step> steps = new ArrayList<>();
         steps.add(step(linked("RESET_N", 0), 1, linked("Q0", 0, "Q1", 0)));
