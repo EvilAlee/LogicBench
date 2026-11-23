@@ -183,6 +183,25 @@ class AiSequentialCircuitServiceTest {
     }
 
     @Test
+    void missingResetAssignmentInFirstStepLeavesStateXAndReturnsResetFeedback() throws Exception {
+        JsonObject answer = JsonParser.parseString(counterAnswer(false)).getAsJsonObject();
+        answer.getAsJsonArray("sequence").get(0).getAsJsonObject()
+                .getAsJsonObject("set").remove("RESET_N");
+        ScriptedProvider provider = new ScriptedProvider(answer.toString());
+        AiCircuitService service = service(provider, null);
+
+        AiCircuitService.Result result = service.generate(
+                COUNTER_REQUEST, false, true, "", false, false, true);
+
+        String feedback = String.join("\n", result.mismatchingRows());
+        assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
+        assertTrue(feedback.contains("first sequence step must set every non-clock input"), feedback);
+        assertTrue(feedback.contains("hold reset 'RESET_N'"), feedback);
+        assertTrue(feedback.contains("circuit gives X"), feedback);
+        assertEquals(Value.X, result.sequenceData().steps().getFirst().observed().get("Q0"));
+    }
+
+    @Test
     void twoDifferentClockNamesAreRejected() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(twoClockAnswer());
         AiCircuitService service = service(provider, null);
