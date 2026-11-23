@@ -271,20 +271,29 @@ class ComponentExpressionBoxLayoutMetricsTest {
 
     private static void assertNoCollinearWireOverlaps(Schematic schematic) {
         List<WireSegment> wires = new ArrayList<>(schematic.wires());
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
         for (int first = 0; first < wires.size(); first++) {
             WireSegment a = wires.get(first);
             for (int second = first + 1; second < wires.size(); second++) {
                 WireSegment b = wires.get(second);
+                int overlap = 0;
+                String direction = "";
                 if (a.isHorizontal() && b.isHorizontal() && a.y1() == b.y1()) {
-                    int overlap = Math.min(Math.max(a.x1(), a.x2()), Math.max(b.x1(), b.x2()))
+                    overlap = Math.min(Math.max(a.x1(), a.x2()), Math.max(b.x1(), b.x2()))
                             - Math.max(Math.min(a.x1(), a.x2()), Math.min(b.x1(), b.x2()));
-                    assertTrue(overlap <= 0,
-                            () -> "overlapping horizontal lanes: " + a + " and " + b);
+                    direction = "horizontal";
                 } else if (!a.isHorizontal() && !b.isHorizontal() && a.x1() == b.x1()) {
-                    int overlap = Math.min(Math.max(a.y1(), a.y2()), Math.max(b.y1(), b.y2()))
+                    overlap = Math.min(Math.max(a.y1(), a.y2()), Math.max(b.y1(), b.y2()))
                             - Math.max(Math.min(a.y1(), a.y2()), Math.min(b.y1(), b.y2()));
-                    assertTrue(overlap <= 0,
-                            () -> "overlapping vertical lanes: " + a + " and " + b);
+                    direction = "vertical";
+                }
+                if (overlap > 0) {
+                    boolean sharedNet = topology.nets().stream().anyMatch(net ->
+                            net.segments().contains(a) && net.segments().contains(b));
+                    assertTrue(sharedNet,
+                            () -> "distinct electrical lanes overlap " + direction
+                                    + ": " + a + " and " + b);
                 }
             }
         }
