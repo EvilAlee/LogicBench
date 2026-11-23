@@ -667,7 +667,7 @@ public final class AiSequentialCircuitService {
                 .filter(name -> RESET_NAME.matcher(name).matches()).toList();
         if (resetInputs.isEmpty()) {
             errors.add("No reset input can force a known state from the all-X start. "
-                    + "Add RESET_N and make it reach every D path (for example D = RESET_N & ...).");
+                    + "Add RESET_N; it must reach every D path (for example D = RESET_N & ...).");
             return List.copyOf(errors);
         }
         if (resetInputs.size() > 1) {
