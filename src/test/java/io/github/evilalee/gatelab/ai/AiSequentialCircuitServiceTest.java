@@ -195,7 +195,7 @@ class AiSequentialCircuitServiceTest {
 
         String feedback = String.join("\n", result.mismatchingRows());
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
-        assertTrue(feedback.contains("first sequence step must set every non-clock input"), feedback);
+        assertTrue(feedback.contains("first reset step must set every non-clock input"), feedback);
         assertTrue(feedback.contains("hold reset 'RESET_N'"), feedback);
         assertTrue(feedback.contains("circuit gives X"), feedback);
         assertEquals(Value.X, result.sequenceData().steps().getFirst().observed().get("Q0"));
