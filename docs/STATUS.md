@@ -22,7 +22,8 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 
 ## In progress
-- feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification; sequential components remain unsupported.
+- feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification.
+- feature-ai-sequential: strict sequential response schema, DFF/DLATCH feedback compilation, reset-from-X checks, SequenceRunner verification, sequential cache replay and a sequence table; does not change the combinational AI path.
 - feature-ai-explain: read-only AI explanations of the open schematic, with deterministic engine facts, pre-send request preview, and no placement or cache interaction.
 - fix-instance-selection: component box instances participate in mixed click/marquee selection, drag, rotate, delete and undo/redo; instance pins use validated wire-follow routing.
 - feature-expression-feedback: resolve all named expression definitions independent of line order, and build feedback schematics through the existing feedback-lane layout path with connectivity verification.
@@ -74,4 +75,5 @@
 - User reviews and merges each milestone PR.
 
 - AI circuit generation uses `AiConfig` in `$XDG_CONFIG_HOME/logicbench/ai.json` or `~/.config/logicbench/ai.json` on Linux and `%APPDATA%\\LogicBench\\ai.json` on Windows. Verified live answers are cached in `ai_cache.json`; six bundled examples are in `demo_prompts.json`.
-- AI generation can request boxed instances from ComponentLibrary when "Use library components" is enabled. HA, FA and user definitions without feedback are catalogued; DLATCH, DFF, TFF and JKFF are explicitly marked sequential and unavailable. Instance calls compile through ComponentExpressionCompiler into boxed schematics, then SchematicCompiler flattens them for exhaustive engine/spec/expected-row verification. Gate-only answers retain the existing DAG path, and raw feedback remains disabled. The old PR #25 output-reference-as-input limitation is fixed for the expression dialog; it is not a description of the AI response path.
+- AI generation's combinational path can request boxed instances from ComponentLibrary when "Use library components" is enabled. HA, FA and user definitions without feedback are catalogued; its schema, prompt, templates, cache and gate-only validation remain unchanged.
+- Stateful requests use a separate strict sequential schema and request path. DFF/DLATCH are the only sequential boxes; the path requires one named Clock, reset to known state from all-X, no raw combinational feedback, and a bounded input/cycle/output sequence. ComponentExpressionCompiler builds feedback through the boxes, SchematicCompiler flattens the schematic and SequenceRunner verifies each answer step. TFF/JKFF are rejected with DFF replacement guidance. The sequence table is shown in place of the truth table.
