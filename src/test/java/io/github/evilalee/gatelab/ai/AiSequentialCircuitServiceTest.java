@@ -111,8 +111,14 @@ class AiSequentialCircuitServiceTest {
         ScriptedProvider provider = new ScriptedProvider(accumulatorAnswer());
         AiCircuitService service = service(provider, null);
 
-        AiCircuitService.Result result = service.generate(
-                ACCUMULATOR_REQUEST, false, true, "", false, false, true);
+        System.setProperty("logicbench.debugSequential", "true");
+        AiCircuitService.Result result;
+        try {
+            result = service.generate(
+                    ACCUMULATOR_REQUEST, false, true, "", false, false, true);
+        } finally {
+            System.clearProperty("logicbench.debugSequential");
+        }
         System.out.println("ACCUMULATOR_DEBUG status=" + result.status()
                 + " summary=" + result.summary()
                 + " logs=" + result.attemptLog()
