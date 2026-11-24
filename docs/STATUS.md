@@ -31,6 +31,7 @@
 - feature-sequential-examples: add labeled version-1 .lbc fixtures for a D latch, D flip-flop, divide-by-2 circuit, and 2-bit ripple counter.
 - feature-constant-folding: extend constant simplification to sequential expressions and replace generated literal inputs with fixed, non-pokeable constant sources.
 - feature-circuit-exporter: add deterministic, Swing-free schematic/netlist expression export; headless tests first, Circuit menu action last.
+- feature-copy-paste: mixed-selection clipboard codec, transactional collision-safe paste, Cut/Copy/Paste/Duplicate actions and headless regression coverage.
 
 ## Next
 1. M9a attribute table with editable labels
