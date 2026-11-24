@@ -1358,6 +1358,7 @@ public final class CanvasPanel extends JPanel {
                     return;
                 }
                 if (panning) {
+                    pointerFromScreen(event.getPoint());
                     panning = false;
                     lastPanPoint = null;
                     setCursor(Cursor.getDefaultCursor());
@@ -1429,6 +1430,7 @@ public final class CanvasPanel extends JPanel {
         gestureStartWorldY = world.y;
         pointerWorldX = world.x;
         pointerWorldY = world.y;
+        pointerKnown = true;
         gestureStartScreen = event.getPoint();
         gestureMoved = false;
 
