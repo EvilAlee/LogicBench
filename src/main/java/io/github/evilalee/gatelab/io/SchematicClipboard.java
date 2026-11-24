@@ -37,6 +37,8 @@ public final class SchematicClipboard {
     public record Payload(Schematic schematic, List<String> notices) {
         public Payload {
             schematic = Objects.requireNonNull(schematic, "schematic").copy();
+            // Clipboard data never restores momentary Input or Clock source levels.
+            schematic.resetSimulationSources();
             notices = List.copyOf(Objects.requireNonNull(notices, "notices"));
         }
 

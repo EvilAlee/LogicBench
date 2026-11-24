@@ -36,28 +36,40 @@ class SchematicClipboardTest {
         PlacedComponent input = source.add("input", 0, 0, Facing.EAST);
         source.setLabel(input.id(), "DATA");
         source.setInputValue(input.id(), true);
+        PlacedComponent clock = source.add("clock", 100, 100, Facing.EAST);
+        source.setLabel(clock.id(), "CLK");
+        source.setClockValue(clock.id(), true);
         WireSegment selectedWire = new WireSegment(0, 0, 40, 0);
         WireSegment unselectedWire = new WireSegment(0, 20, 40, 20);
         source.addWire(selectedWire);
         source.addWire(unselectedWire);
 
         String text = SchematicClipboard.encode(
-                source, List.of(input.id()), List.of(selectedWire)).orElseThrow();
+                source, List.of(input.id(), clock.id()), List.of(selectedWire)).orElseThrow();
         SchematicClipboard.Payload payload = SchematicClipboard.decode(
                 text, DEFINITIONS, null).orElseThrow();
         Schematic copied = payload.schematic();
 
         assertEquals(SchematicClipboard.MARKER, text.substring(0, text.indexOf('\n')));
-        assertEquals(List.of("DATA"), copied.components().stream()
+        assertEquals(List.of("DATA", "CLK"), copied.components().stream()
                 .map(PlacedComponent::label).toList());
-        assertFalse(copied.inputValue(copied.components().getFirst().id()),
-                "copied live source values must reset to LOW");
+        PlacedComponent copiedInput = copied.components().getFirst();
+        PlacedComponent copiedClock = copied.components().getLast();
+        assertFalse(copied.inputValue(copiedInput.id()),
+                "copied live Input values must reset to LOW");
+        assertFalse(copied.clockValue(copiedClock.id()),
+                "copied Clock levels must reset to LOW");
         assertEquals(List.of(selectedWire), copied.wires());
         String roundTrip = SchematicClipboard.encode(
                 copied,
                 copied.components().stream().map(PlacedComponent::id).toList(),
                 copied.wires()).orElseThrow();
         assertEquals(text, roundTrip, "clipboard JSON must remain stable after a round trip");
+        String forcedHigh = text.replace("\"high\": false", "\"high\": true");
+        Schematic decodedHigh = SchematicClipboard.decode(
+                forcedHigh, DEFINITIONS, null).orElseThrow().schematic();
+        assertFalse(decodedHigh.inputValue(decodedHigh.components().getFirst().id()));
+        assertFalse(decodedHigh.clockValue(decodedHigh.components().getLast().id()));
     }
 
     @Test
