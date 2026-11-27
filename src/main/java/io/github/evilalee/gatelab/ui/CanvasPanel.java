@@ -39,7 +39,6 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.HeadlessException;
 import java.awt.Toolkit;
-import java.awt.TexturePaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -1892,15 +1891,12 @@ public final class CanvasPanel extends JPanel {
     /** Paints a reusable screen-space grid texture anchored to the world lattice. */
     private void paintGrid(Graphics graphics) {
         long started = PerfLog.start();
-        TexturePaint pattern = gridPatternCache.paintFor(
+        BufferedImage grid = gridPatternCache.imageFor(
                 getWidth(), getHeight(), transform.scale(),
                 transform.translateX(), transform.translateY(),
                 WORLD_GRID_SPACING, MIN_SCREEN_GRID_SPACING);
-        if (pattern != null && graphics instanceof Graphics2D graphics2D) {
-            java.awt.Paint previous = graphics2D.getPaint();
-            graphics2D.setPaint(pattern);
-            graphics2D.fillRect(0, 0, getWidth(), getHeight());
-            graphics2D.setPaint(previous);
+        if (grid != null) {
+            graphics.drawImage(grid, 0, 0, null);
         }
         PerfLog.record("canvas.grid", started);
     }
@@ -1909,8 +1905,12 @@ public final class CanvasPanel extends JPanel {
         return gridPatternCache.keyChangeCount();
     }
 
-    long gridTileBuildCount() {
-        return gridPatternCache.tileBuildCount();
+    long gridFullRebuildCount() {
+        return gridPatternCache.fullRebuildCount();
+    }
+
+    long gridIncrementalUpdateCount() {
+        return gridPatternCache.incrementalUpdateCount();
     }
 
     private void recordPaintDuration(long durationNanos) {
