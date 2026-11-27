@@ -172,10 +172,8 @@ public final class ComponentExpressionCompiler {
         Objects.requireNonNull(option, "option");
 
         if (option == CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION) {
-            long compileStarted = PerfLog.start();
             ExpressionCompiler.Compilation legacy =
                     ExpressionCompiler.compile(source, allowRawFeedback, invertingGates);
-            PerfLog.record("expression.compile", compileStarted);
             SchematicLayout layoutEngine = new SchematicLayout(gates);
             long layoutStarted = PerfLog.start();
             SchematicLayout.LayoutResult layout = legacy.hasFeedback()
