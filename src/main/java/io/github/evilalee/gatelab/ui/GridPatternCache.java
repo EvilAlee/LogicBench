@@ -1,8 +1,6 @@
 package io.github.evilalee.gatelab.ui;
 
-import java.awt.AlphaComposite;
 import java.awt.Color;
-import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
@@ -95,31 +93,52 @@ final class GridPatternCache {
     private static void shiftAndPaintExposed(
             BufferedImage target, int width, int height, int dx, int dy,
             double scale, double translateX, double translateY, int worldSpacing) {
-        Graphics2D graphics = target.createGraphics();
+        int[] pixels = ((DataBufferInt) target.getRaster().getDataBuffer()).getData();
         Rectangle vertical = null;
         Rectangle horizontal = null;
-        try {
-            graphics.copyArea(0, 0, width, height, dx, dy);
-            if (dx > 0) {
-                vertical = new Rectangle(0, 0, dx, height);
-            } else if (dx < 0) {
-                vertical = new Rectangle(width + dx, 0, -dx, height);
+
+        // Shift rows first, in overlap-safe order, then shift each row's pixels.
+        // System.arraycopy uses the JVM's optimized primitive-array copy path.
+        if (dy > 0) {
+            for (int row = height - 1; row >= dy; row--) {
+                System.arraycopy(pixels, (row - dy) * width, pixels, row * width, width);
             }
-            if (dy > 0) {
-                horizontal = new Rectangle(0, 0, width, dy);
-            } else if (dy < 0) {
-                horizontal = new Rectangle(0, height + dy, width, -dy);
+            for (int row = 0; row < dy; row++) {
+                Arrays.fill(pixels, row * width, (row + 1) * width, 0);
             }
-        } finally {
-            graphics.dispose();
+            horizontal = new Rectangle(0, 0, width, dy);
+        } else if (dy < 0) {
+            int shift = -dy;
+            for (int row = 0; row < height - shift; row++) {
+                System.arraycopy(pixels, (row + shift) * width, pixels, row * width, width);
+            }
+            for (int row = height - shift; row < height; row++) {
+                Arrays.fill(pixels, row * width, (row + 1) * width, 0);
+            }
+            horizontal = new Rectangle(0, height - shift, width, shift);
+        }
+
+        if (dx > 0) {
+            for (int row = 0; row < height; row++) {
+                int offset = row * width;
+                System.arraycopy(pixels, offset, pixels, offset + dx, width - dx);
+                Arrays.fill(pixels, offset, offset + dx, 0);
+            }
+            vertical = new Rectangle(0, 0, dx, height);
+        } else if (dx < 0) {
+            int shift = -dx;
+            for (int row = 0; row < height; row++) {
+                int offset = row * width;
+                System.arraycopy(pixels, offset + shift, pixels, offset, width - shift);
+                Arrays.fill(pixels, offset + width - shift, offset + width, 0);
+            }
+            vertical = new Rectangle(width - shift, 0, shift, height);
         }
 
         if (vertical != null) {
-            clearRect(target, vertical);
             paintDots(target, vertical, scale, translateX, translateY, worldSpacing);
         }
         if (horizontal != null) {
-            clearRect(target, horizontal);
             paintDots(target, horizontal, scale, translateX, translateY, worldSpacing);
         }
     }
