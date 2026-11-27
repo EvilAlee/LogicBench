@@ -158,11 +158,13 @@ final class GridPatternCache {
         double phaseX = positiveModulo(translateX, spacing);
         double phaseY = positiveModulo(translateY, spacing);
 
-        // Start one period before the viewport because a rounded negative
+        // Begin just before the clipped viewport region. A rounded negative
         // lattice coordinate can still land on screen pixel zero.
-        for (int row = -1; ; row++) {
+        int firstRow = (int) Math.floor((top - phaseY) / spacing) - 1;
+        int firstColumn = (int) Math.floor((left - phaseX) / spacing) - 1;
+        for (int row = firstRow; ; row++) {
             int screenY = (int) Math.round(phaseY + row * spacing);
-            if (screenY >= height + dotSize) {
+            if (screenY >= bottom) {
                 break;
             }
             int dotTop = Math.max(top, screenY);
@@ -170,9 +172,9 @@ final class GridPatternCache {
             if (dotBottom <= dotTop) {
                 continue;
             }
-            for (int column = -1; ; column++) {
+            for (int column = firstColumn; ; column++) {
                 int screenX = (int) Math.round(phaseX + column * spacing);
-                if (screenX >= width + dotSize) {
+                if (screenX >= right) {
                     break;
                 }
                 int dotLeft = Math.max(left, screenX);
