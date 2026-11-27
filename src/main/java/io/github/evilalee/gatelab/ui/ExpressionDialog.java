@@ -173,21 +173,26 @@ public final class ExpressionDialog extends JDialog {
     }
 
     private void schedulePreview() {
-        previewScheduler.schedule();
-        currentCompilation = null;
-        generateButton.setEnabled(false);
-        tableModel.setTable(null);
-        tableNote.setText("...");
-        statusLine.setForeground(labelForeground());
-        statusLine.setText("...");
-        truthTable.setEnabled(true);
-        tableScroll.setVisible(true);
+        long started = PerfLog.start();
+        try {
+            previewScheduler.schedule();
+            currentCompilation = null;
+            generateButton.setEnabled(false);
+            tableModel.setTable(null);
+            tableNote.setText("...");
+            statusLine.setForeground(labelForeground());
+            statusLine.setText("...");
+            truthTable.setEnabled(true);
+            tableScroll.setVisible(true);
 
-        boolean containsLibraryCall =
-                containsLibraryComponentCall(expressionText.getText());
-        optimizeInvertingGates.setEnabled(!containsLibraryCall);
-        if (previewWorker != null && !previewWorker.isDone()) {
-            previewWorker.cancel(true);
+            boolean containsLibraryCall =
+                    containsLibraryComponentCall(expressionText.getText());
+            optimizeInvertingGates.setEnabled(!containsLibraryCall);
+            if (previewWorker != null && !previewWorker.isDone()) {
+                previewWorker.cancel(true);
+            }
+        } finally {
+            PerfLog.record("expression.keystroke.edt", started);
         }
     }
 
