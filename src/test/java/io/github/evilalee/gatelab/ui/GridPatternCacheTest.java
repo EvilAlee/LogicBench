@@ -26,21 +26,52 @@ class GridPatternCacheTest {
     }
 
     @Test
-    void cacheReusesTextureTileAcrossPanAndHidesDotsBelowFourPixels() {
+    void cacheReusesWholePeriodPansAndIncrementallyShiftsPartialPans() {
         GridPatternCache cache = new GridPatternCache();
 
-        var first = cache.paintFor(800, 600, 1.0, 24.0, 24.0, 10, 4.0);
-        long tileBuilds = cache.tileBuildCount();
-        var wholeGridPan = cache.paintFor(800, 600, 1.0, 34.0, 24.0, 10, 4.0);
+        var first = cache.imageFor(800, 600, 1.0, 24.0, 24.0, 10, 4.0);
+        var wholeGridPan = cache.imageFor(800, 600, 1.0, 34.0, 24.0, 10, 4.0);
         assertSame(first, wholeGridPan);
-        assertEquals(tileBuilds, cache.tileBuildCount());
+        assertEquals(1, cache.fullRebuildCount());
+        assertEquals(0, cache.incrementalUpdateCount());
 
-        var partialPan = cache.paintFor(800, 600, 1.0, 35.0, 24.0, 10, 4.0);
+        var partialPan = cache.imageFor(800, 600, 1.0, 35.0, 24.0, 10, 4.0);
         assertNotSame(first, partialPan);
-        assertEquals(tileBuilds, cache.tileBuildCount(),
-                "changing only the phase changes the anchor, not the tiny tile");
+        assertEquals(1, cache.fullRebuildCount());
+        assertEquals(1, cache.incrementalUpdateCount());
 
-        assertNull(cache.paintFor(800, 600, 0.25, 35.0, 24.0, 10, 4.0));
-        assertEquals(tileBuilds, cache.tileBuildCount());
+        var fresh = new GridPatternCache().imageFor(
+                800, 600, 1.0, 35.0, 24.0, 10, 4.0);
+        assertImagesEqual(fresh, partialPan,
+                "incremental pan must produce the same dots as a fresh render");
+
+        var diagonalPan = cache.imageFor(800, 600, 1.0, 32.0, 26.0, 10, 4.0);
+        var freshDiagonal = new GridPatternCache().imageFor(
+                800, 600, 1.0, 32.0, 26.0, 10, 4.0);
+        assertImagesEqual(freshDiagonal, diagonalPan,
+                "diagonal partial pan must preserve the exact lattice");
+        assertEquals(1, cache.fullRebuildCount());
+        assertEquals(2, cache.incrementalUpdateCount());
+    }
+
+    @Test
+    void gridDotsAreHiddenWhenRawScreenSpacingFallsBelowFourPixels() {
+        GridPatternCache cache = new GridPatternCache();
+        assertNull(cache.imageFor(800, 600, 0.25, 24.0, 24.0, 10, 4.0));
+        assertEquals(0, cache.fullRebuildCount());
+        assertEquals(0, cache.incrementalUpdateCount());
+    }
+
+    private static void assertImagesEqual(
+            java.awt.image.BufferedImage expected,
+            java.awt.image.BufferedImage actual,
+            String message) {
+        assertEquals(expected.getWidth(), actual.getWidth(), message);
+        assertEquals(expected.getHeight(), actual.getHeight(), message);
+        int[] expectedPixels = expected.getRGB(
+                0, 0, expected.getWidth(), expected.getHeight(), null, 0, expected.getWidth());
+        int[] actualPixels = actual.getRGB(
+                0, 0, actual.getWidth(), actual.getHeight(), null, 0, actual.getWidth());
+        assertArrayEquals(expectedPixels, actualPixels, message);
     }
 }
