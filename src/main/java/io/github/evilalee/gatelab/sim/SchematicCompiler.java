@@ -38,7 +38,8 @@ public final class SchematicCompiler {
             Circuit circuit,
             Map<String, InputPin> inputs,
             Set<String> clockIds,
-            Map<String, OutputProbe> outputs) {
+            Map<String, OutputProbe> outputs,
+            Map<InputPin, Value> fixedInputs) {
         public CompiledCircuit {
             Objects.requireNonNull(circuit, "circuit");
             inputs = java.util.Collections.unmodifiableMap(
@@ -46,6 +47,14 @@ public final class SchematicCompiler {
             clockIds = Set.copyOf(Objects.requireNonNull(clockIds, "clockIds"));
             outputs = java.util.Collections.unmodifiableMap(
                     new LinkedHashMap<>(Objects.requireNonNull(outputs, "outputs")));
+            fixedInputs = java.util.Collections.unmodifiableMap(
+                    new LinkedHashMap<>(Objects.requireNonNull(fixedInputs, "fixedInputs")));
+        }
+
+        /** Retains the pre-fixed-source constructor for existing callers. */
+        public CompiledCircuit(Circuit circuit, Map<String, InputPin> inputs,
+                               Set<String> clockIds, Map<String, OutputProbe> outputs) {
+            this(circuit, inputs, clockIds, outputs, Map.of());
         }
     }
 
@@ -54,7 +63,7 @@ public final class SchematicCompiler {
         Flattened flattened = flatten(schematic);
         return new CompiledCircuit(
                 flattened.circuit(), flattened.inputs(),
-                flattened.clockIds(), flattened.outputs());
+                flattened.clockIds(), flattened.outputs(), flattened.fixedInputs());
     }
 
     public static SimulationResult compileAndSettle(Schematic schematic) {
@@ -197,6 +206,7 @@ public final class SchematicCompiler {
             Map<String, InputPin> inputs,
             Set<String> clockIds,
             Map<String, OutputProbe> outputs,
+            Map<InputPin, Value> fixedInputs,
             Map<String, Gate> gates,
             Set<String> allGateIds,
             ScopeTopology rootScope,
@@ -209,6 +219,7 @@ public final class SchematicCompiler {
         private final Map<String, InputPin> inputs = new LinkedHashMap<>();
         private final Set<String> clockIds = new LinkedHashSet<>();
         private final Map<String, OutputProbe> outputs = new LinkedHashMap<>();
+        private final Map<InputPin, Value> fixedInputs = new LinkedHashMap<>();
         private final Map<String, Gate> gates = new LinkedHashMap<>();
         private final Set<String> allGateIds = new LinkedHashSet<>();
         private final List<PendingPin> pendingPins = new ArrayList<>();
@@ -265,6 +276,7 @@ public final class SchematicCompiler {
                         InputPin constant = new InputPin(engineId);
                         constant.setValue(value);
                         circuit.addComponent(constant);
+                        fixedInputs.put(constant, value);
                         addPending(scope, placed.id(), "out", constant.output());
                     }
                     case "output" -> {
@@ -430,7 +442,7 @@ public final class SchematicCompiler {
             }
             return new Flattened(circuit,
                     Map.copyOf(inputs), Set.copyOf(clockIds), Map.copyOf(outputs),
-                    Map.copyOf(gates), Set.copyOf(allGateIds), rootScope,
+                    Map.copyOf(fixedInputs), Map.copyOf(gates), Set.copyOf(allGateIds), rootScope,
                     unionFind, Map.copyOf(representativePins));
         }
     }

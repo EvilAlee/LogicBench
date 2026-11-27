@@ -92,7 +92,8 @@ public final class AiCircuitService {
             List<NamedExpression> signals,
             Schematic schematic,
             String expressionSource,
-            Map<String, Integer> componentUseCounts) {
+            Map<String, Integer> componentUseCounts,
+            AiSequentialCircuitService.SequenceData sequenceData) {
         public Result {
             if (attemptCount < 0) throw new IllegalArgumentException("attemptCount must not be negative");
             Objects.requireNonNull(status, "status");
@@ -106,6 +107,19 @@ public final class AiCircuitService {
             schematic = schematic == null && layout != null ? layout.schematic() : schematic;
             expressionSource = expressionSource == null ? "" : expressionSource;
             componentUseCounts = Map.copyOf(componentUseCounts == null ? Map.of() : componentUseCounts);
+        }
+
+        /** Compatibility constructor for existing combinational result call sites. */
+        public Result(int attemptCount, Status status, String summary,
+                      List<NamedExpression> expressions, Netlist netlist,
+                      SchematicLayout.LayoutResult layout, TruthTable truthTable,
+                      List<String> mismatchingRows, List<String> attemptLog,
+                      boolean fromCache, String answeredBy, List<String> modelAttempts,
+                      List<NamedExpression> signals, Schematic schematic,
+                      String expressionSource, Map<String, Integer> componentUseCounts) {
+            this(attemptCount, status, summary, expressions, netlist, layout, truthTable,
+                    mismatchingRows, attemptLog, fromCache, answeredBy, modelAttempts,
+                    signals, schematic, expressionSource, componentUseCounts, null);
         }
 
         public Result(int attemptCount, Status status, String summary,
@@ -268,6 +282,10 @@ public final class AiCircuitService {
     }
 
     public String lastRawAnswer() { return lastRawAnswer; }
+
+    void recordLastRawAnswer(String raw) {
+        lastRawAnswer = raw == null ? "" : provider.redact(raw);
+    }
 
     /** JSON schema sent to Gemini for structured output. */
     public static JsonObject responseSchema() {
@@ -622,12 +640,17 @@ public final class AiCircuitService {
             // Natural-language descriptions continue to the provider.
         }
         if (local == null && requiresSequentialBehavior(description)) {
-            String explanation = "Sequential behavior is not available yet. This request requires stored state "
-                    + "(for example a flip-flop or latch), while AI generation currently supports only "
-                    + "combinational library components such as HA and FA.";
-            log.add(explanation);
-            return new Result(0, Status.UNAVAILABLE, explanation,
-                    List.of(), null, null, null, List.of(explanation), log, false);
+            AiSequentialCircuitService sequential = new AiSequentialCircuitService(
+                    provider, gateDefinitions, componentDefinitions, cache);
+            AiSequentialCircuitService.Outcome generated = sequential.generate(
+                    description, cacheOnly, bypassCache, invertingGates);
+            lastRawAnswer = sequential.lastRawAnswer();
+            return new Result(generated.attemptCount(), generated.status(), generated.summary(),
+                    List.of(), null, null, null, generated.mismatchingRows(),
+                    generated.attemptLog(), generated.fromCache(), generated.answeredBy(),
+                    generated.modelAttempts(), List.of(), generated.schematic(),
+                    generated.expressionSource(), generated.componentUseCounts(),
+                    generated.sequenceData());
         }
 
         if (local != null) {
@@ -818,8 +841,9 @@ public final class AiCircuitService {
 
     private static boolean requiresSequentialBehavior(String description) {
         return Pattern.compile(
-                "(?i)\\b(accumulator|accumulate|counter|register|flip[\\s-]*flop|"
-                        + "sequential|stateful|memory|dlatch|dff|tff|jkff)\\b")
+                "(?i)\\b(accumulator|accumulate|counter|register|shift[\\s-]*register|"
+                        + "state[\\s-]*machine|flip[\\s-]*flop|sequential|stateful|memory|"
+                        + "latch|dlatch|dff|tff|jkff)\\b")
                 .matcher(description).find();
     }
 
