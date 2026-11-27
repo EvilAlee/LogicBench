@@ -111,7 +111,9 @@ class UiPerformanceBaselineTest {
             List<String> inputs = compilation.inputComponentIds().keySet().stream().sorted().toList();
             List<String> outputs = compilation.outputComponentIds().keySet().stream().sorted().toList();
             if (inputs.size() <= 10) {
+                long tableStarted = PerfLog.start();
                 TruthTable table = ExpressionDialog.buildEnginePreview(compilation, inputs, outputs);
+                PerfLog.record("expression.truthTable", tableStarted);
                 assertFalse(table.rows().isEmpty());
             }
         }
