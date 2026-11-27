@@ -268,9 +268,9 @@ public final class ExpressionCompiler {
 
         LinkedHashSet<String> variables = new LinkedHashSet<>();
         expressions.forEach(expression -> variables.addAll(expression.expression().variables()));
-        if (variables.size() > 12) {
+        if (variables.size() > 16) {
             throw new IllegalArgumentException(
-                    "netlist has " + variables.size() + " inputs; maximum is 12");
+                    "netlist has " + variables.size() + " inputs; maximum is 16");
         }
 
         Builder builder = new Builder(variables);

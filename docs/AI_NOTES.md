@@ -122,7 +122,7 @@ All limits live in \`AiCircuitLimits\`:
 
 | Item | Limit |
 |---|---:|
-| Primary inputs | 10 |
+| Primary inputs (combinational AI) | 16 |
 | Outputs | 16 |
 | Intermediate signals | 160 |
 | Individual expression length (outputs, signals and spec rules) | 300 characters |
@@ -132,6 +132,11 @@ All limits live in \`AiCircuitLimits\`:
 | Spec rules | 16 |
 | User-supplied expected rows | 64 |
 | Verification attempts | 3 |
+| Sequential non-clock inputs (separate schema) | 8 |
+
+The combinational template catalogue extends only the ranges needed for the
+16-input limit: `ripple_adder n=1..7, carryIn=yes|no` and `mux k=1..3`
+(the 8:1 mux has 11 inputs). All other template ranges are unchanged.
 
 ## Expression and spec languages
 
@@ -158,14 +163,14 @@ For each model answer, in order:
 2. Enforce the 300-character expression/argument limit, 160-signal limit and 3,000-character total expression text. Signals and instances share one ordered namespace. Instance arguments may use declared inputs, earlier signals and earlier instances only. Unknown components, sequential calls, wrong argument counts, scalar use of multi-output components and unknown output pins receive named feedback.
 3. Confirm that the declared primary inputs match the variables used by the answer. A misspelled identifier that becomes an undeclared input is named in the error.
 4. For boxed answers, compile through ComponentExpressionCompiler with BOXED_INSTANCES and raw feedback disabled. Flatten the generated schematic through SchematicCompiler, then enforce the 400-gate limit on the flattened engine circuit. Gate-only answers retain the existing expression compiler and DAG layout path.
-5. Enumerate every input combination using the executable engine. An X output or oscillation fails the attempt. Boxed-instance geometry/connectivity comes from the component-aware compiler. Disconnected declared inputs, constant outputs and unused internal signals are warnings.
-6. Check the user's expected rows, when present.
-7. Parse and execute the spec, when present, across every input combination.
+5. For 10 inputs or fewer, keep the existing exhaustive engine and placed-geometry verification path. For 11..16 inputs, flatten the placed schematic through SchematicCompiler and evaluate all 2^n assignments with the headless bit-parallel evaluator. Each signal is a long[] bit vector: bit r of word w represents row 64*w+r. Flattened combinational boxes and fixed constant sources are included. An X output fails verification.
+6. For 11..16 inputs, compare the packed evaluator with the real engine on a deterministic sample: all-zero, all-one, every single-bit-set row, every single-bit-cleared row, and 512 unique rows generated from a fixed seed. That is 546 engine rows at 16 inputs. Any disagreement or engine oscillation names the failing row and rejects the attempt. This is a sample cross-check, not exhaustive engine execution.
+7. Check user-supplied expected rows against the packed result, and evaluate the executable spec against all 2^n rows. At 10 inputs or fewer, the original exhaustive engine truth table remains the source for both checks. Disconnected declared inputs, constant outputs and unused internal signals remain warnings.
 
 ## Status meanings
 
-- **VERIFIED** means the built circuit agrees with an executable spec or the user's expected rows, and every independent check that was supplied passed. It is not proof that the model understood the user's intent.
-- **BUILT** means JSON, parsing, build, placement, geometry and structural engine checks passed, but neither an executable spec nor user rows were supplied. Read the generated truth table before relying on it.
+- **VERIFIED** means the built circuit agrees with an executable spec or the user's expected rows, and every independent check that was supplied passed. For 11..16 inputs, its status text names the full row count checked against the spec/expected rows and the real-engine sample count. It is not proof that the model understood the user's intent.
+- **BUILT** means JSON, parsing, build, placement, geometry and structural checks passed, but neither an executable spec nor user rows were supplied. For 11..16 inputs, the table shows the total row count, the first 256 rows and any failing rows; the displayed rows do not imply exhaustive engine verification.
 - **UNVERIFIED** means one or more validation checks failed after the available attempts. The best attempt is retained for review and requires the normal confirmation before placement.
 - **FROM CACHE** is the result-source badge when a cached answer is replayed. A cache answer goes through the same current validation path; a legacy entry with only a claimed table is at most BUILT, never VERIFIED from that table.
 - **UNAVAILABLE** means no usable live answer or valid cache answer is available. There is no placeable circuit.
@@ -220,7 +225,7 @@ Default to ripple carry for adders (each carry from the previous carry).
 If the user explicitly asks for carry lookahead, write each carry directly from P, G and CIN using named product signals.
 spec: {buses: {A: [A3,A2,A1,A0]}, rules: [{out, expression}]} using integer arithmetic over bus names, for example S = A + B + CIN, and it must cover every output.
 
-Additional response limits: at most 10 inputs, 16 outputs, 160 signals, 400 gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
+Additional response limits: at most 16 combinational inputs, 16 outputs, 160 signals, 400 flattened gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. The bit-parallel evaluator supports up to 65,536 input rows. Sequential answers use a separate schema and retain their separate 8-input limit. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
 
 Example 1 — 4-bit ripple-carry adder:
 {"summary":"4-bit ripple adder","inputs":["A3","A2","A1","A0","B3","B2","B1","B0","CIN"],
@@ -255,6 +260,6 @@ Continue these partial products with ordered carry-save/ripple sum and carry sig
 ```
 ## Verification performance
 
-The largest supported input space is 10 bits (1,024 engine rows). In GitHub Actions run 44865571316, the 9-input/5-output four-bit adder plus the 8-input/8-output 4×4 multiplier built, laid out, and passed executable-spec verification in **2,611.5 ms combined** (both cases; under the required 10-second CI bound).
+Combinational AI verification supports up to 16 inputs (65,536 rows). Above 10 inputs, the packed evaluator checks every row against the executable spec and user-supplied rows, while the production engine cross-checks a deterministic sample of 2 + 2n + 512 rows (546 at n=16). At 10 inputs or fewer, exhaustive engine verification is unchanged. Each verification attempt retains the 20-second model request budget; packed evaluation and row/spec loops periodically check thread interruption so Cancel remains responsive. The 8:1 mux template (11 inputs) and 7-bit ripple-adder template with carry-in (15 inputs) are in range.
 
-A separate maximum-limit layout stress case used **10 inputs, 16 outputs, and 400 gates** arranged as a 400-stage chain with side-input connections. Its layout took **109,496.9 ms** (about **109.5 seconds**) in the same CI run. This is a deliberately deep, worst-case-shaped layout measurement, not the runtime of the arithmetic examples. Both timings are environment-specific measurements, not performance guarantees.
+The 400-gate layout limit is unchanged. Inverting-gate optimization keeps its existing exhaustive equivalence guard through 12 inputs; above 12 inputs it leaves the netlist unchanged rather than invoking the old exhaustive truth-table generator. Layout remains a separate cost from bit-parallel verification and can dominate unusually deep circuits. Historical timing measurements are environment-specific, not performance guarantees.

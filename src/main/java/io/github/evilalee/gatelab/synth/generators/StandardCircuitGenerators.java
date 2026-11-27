@@ -52,7 +52,7 @@ public final class StandardCircuitGenerators {
 
     private static final List<TemplateGenerator> GENERATORS = List.of(
             definition("ripple_adder", Map.of(
-                    "n", TemplateGenerator.Parameter.integerRange(1, 4),
+                    "n", TemplateGenerator.Parameter.integerRange(1, 7),
                     "carryIn", TemplateGenerator.Parameter.choices("yes", "no")), StandardCircuitGenerators::rippleAdder),
             definition("subtractor", Map.of("n", TemplateGenerator.Parameter.integerRange(1, 4)),
                     StandardCircuitGenerators::subtractor),
@@ -61,8 +61,7 @@ public final class StandardCircuitGenerators {
             definition("array_multiplier", Map.of(
                     "n", TemplateGenerator.Parameter.integerRange(1, 4),
                     "m", TemplateGenerator.Parameter.integerRange(1, 4)), StandardCircuitGenerators::arrayMultiplier),
-            // k=3 requires 11 one-bit inputs (8 data + 3 select), exceeding the shared 10-input cap.
-            definition("mux", Map.of("k", TemplateGenerator.Parameter.integerRange(1, 2)),
+            definition("mux", Map.of("k", TemplateGenerator.Parameter.integerRange(1, 3)),
                     StandardCircuitGenerators::mux),
             definition("decoder", Map.of(
                     "n", TemplateGenerator.Parameter.integerRange(1, 3),
@@ -107,8 +106,8 @@ public final class StandardCircuitGenerators {
     }
 
     private static void validateAnswer(GeneratedCircuit answer) {
-        if (answer.inputs().isEmpty() || answer.inputs().size() > 10) {
-            throw new IllegalArgumentException("generated circuit must have 1 to 10 inputs");
+        if (answer.inputs().isEmpty() || answer.inputs().size() > 16) {
+            throw new IllegalArgumentException("generated circuit must have 1 to 16 inputs");
         }
         if (answer.outputs().isEmpty() || answer.outputs().size() > 16) {
             throw new IllegalArgumentException("generated circuit must have 1 to 16 outputs");
