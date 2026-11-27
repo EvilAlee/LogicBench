@@ -12,6 +12,7 @@ import io.github.evilalee.gatelab.synth.TruthTable;
 import io.github.evilalee.gatelab.synth.TruthTableVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicExpressionVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
+import io.github.evilalee.gatelab.util.PerfLog;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -167,6 +168,15 @@ public final class ExpressionDialog extends JDialog {
     }
 
     private void updatePreview() {
+        long recomputeStarted = PerfLog.start();
+        try {
+            updatePreviewNow();
+        } finally {
+            PerfLog.record("expression.recompute.total", recomputeStarted);
+        }
+    }
+
+    private void updatePreviewNow() {
         currentCompilation = null;
         generateButton.setEnabled(false);
         tableModel.setTable(null);
@@ -181,6 +191,7 @@ public final class ExpressionDialog extends JDialog {
             ComponentExpressionCompiler.CompileOption option = useLegacyCompiler
                     ? ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION
                     : ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES;
+            long compileStarted = PerfLog.start();
             ComponentExpressionCompiler.Compilation compilation =
                     ComponentExpressionCompiler.compile(
                             expressionText.getText(),
@@ -189,6 +200,7 @@ public final class ExpressionDialog extends JDialog {
                             option,
                             true,
                             optimizeInvertingGates.isSelected());
+            PerfLog.record("expression.compile.layout.total", compileStarted);
             currentCompilation = compilation;
 
             boolean sequential = compilation.hasSequentialInstances();
@@ -226,7 +238,9 @@ public final class ExpressionDialog extends JDialog {
                     tableNote.setText("Truth table preview is limited to 10 inputs; "
                             + inputs.size() + " variables are present.");
                 } else {
+                    long tableStarted = PerfLog.start();
                     TruthTable preview = buildEnginePreview(compilation, inputs, outputs);
+                    PerfLog.record("expression.truthTable", tableStarted);
                     tableModel.setTable(preview);
                     tableNote.setText(preview.rows().size() + " rows (engine preview)");
                 }
@@ -240,7 +254,7 @@ public final class ExpressionDialog extends JDialog {
         }
     }
 
-    private static TruthTable buildEnginePreview(
+    static TruthTable buildEnginePreview(
             ComponentExpressionCompiler.Compilation compilation,
             List<String> inputNames,
             List<String> outputNames) {
