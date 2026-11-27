@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import java.util.concurrent.CancellationException;
 
 /** Live expression editor and engine-backed truth-table preview. */
 public final class ExpressionDialog extends JDialog {
@@ -269,7 +270,7 @@ public final class ExpressionDialog extends JDialog {
                     .sorted().toList();
             List<String> outputs = compilation.outputComponentIds().keySet().stream()
                     .sorted().toList();
-            if (inputs.size() > TABLE_INPUT_LIMIT) {
+            if (!shouldBuildTruthTable(inputs.size())) {
                 return new PreviewResult(compilation, null, false, false,
                         inputs, null);
             }
@@ -313,7 +314,7 @@ public final class ExpressionDialog extends JDialog {
                     ? "Variables: none"
                     : "Variables: " + String.join(", ", result.inputs()));
 
-            if (result.inputs().size() > TABLE_INPUT_LIMIT) {
+            if (!shouldBuildTruthTable(result.inputs().size())) {
                 tableNote.setText("Truth table preview is limited to 10 inputs; "
                         + result.inputs().size() + " variables are present.");
                 tableModel.setTable(null);
@@ -354,6 +355,9 @@ public final class ExpressionDialog extends JDialog {
         List<TruthTable.Row> rows = new ArrayList<>();
         int rowCount = 1 << inputNames.size();
         for (int row = 0; row < rowCount; row++) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new CancellationException("Expression preview was superseded");
+            }
             StringBuilder bits = new StringBuilder(inputNames.size());
             for (int index = 0; index < inputNames.size(); index++) {
                 boolean high = ((row >>> (inputNames.size() - index - 1)) & 1) != 0;
@@ -375,6 +379,10 @@ public final class ExpressionDialog extends JDialog {
             schematic.setInputValue(compilation.inputComponentIds().get(input), false);
         }
         return new TruthTable(inputNames, outputNames, rows);
+    }
+
+    static boolean shouldBuildTruthTable(int inputCount) {
+        return inputCount >= 0 && inputCount <= TABLE_INPUT_LIMIT;
     }
 
     private void showError(String message) {
