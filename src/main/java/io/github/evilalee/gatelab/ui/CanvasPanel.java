@@ -20,6 +20,7 @@ import io.github.evilalee.gatelab.sim.ClockStepper;
 import io.github.evilalee.gatelab.sim.PinStateHelper;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.SchematicCompiler.SimulationResult;
+import io.github.evilalee.gatelab.util.PerfLog;
 
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
@@ -1870,6 +1871,7 @@ public final class CanvasPanel extends JPanel {
     @Override
     protected void paintComponent(Graphics graphics) {
         long paintStartedNanos = PAINT_STATS_ENABLED ? System.nanoTime() : 0L;
+        long perfPaintStarted = PerfLog.start();
         super.paintComponent(graphics);
 
         Graphics2D g2 = (Graphics2D) graphics.create();
@@ -1887,15 +1889,18 @@ public final class CanvasPanel extends JPanel {
             if (PAINT_STATS_ENABLED) {
                 recordPaintDuration(System.nanoTime() - paintStartedNanos);
             }
+            PerfLog.record("canvas.paint.total", perfPaintStarted);
         }
     }
 
     /** Blits a client-side software-rendered grid; only view changes rebuild it. */
     private void paintGrid(Graphics graphics) {
+        long started = PerfLog.start();
         ensureGridCache();
         if (gridImage != null) {
             graphics.drawImage(gridImage, 0, 0, null);
         }
+        PerfLog.record("canvas.grid", started);
     }
 
     private void ensureGridCache() {
@@ -2005,6 +2010,7 @@ public final class CanvasPanel extends JPanel {
             int moveDeltaY = gesture == Gesture.MOVE_SELECTION && gestureMoved
                     ? snapToGrid(pointerWorldY - gestureStartWorldY) : 0;
 
+            long wiresStarted = PerfLog.start();
             for (WireSegment wire : schematic.wires()) {
                 boolean selected = selectedWires.contains(wire);
                 boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
@@ -2014,7 +2020,9 @@ public final class CanvasPanel extends JPanel {
                     paintWireSegment(worldGraphics, rendered, simulationResult.valueOf(wire), selected);
                 }
             }
+            PerfLog.record("canvas.wires", wiresStarted);
 
+            long componentsStarted = PerfLog.start();
             for (PlacedComponent component : schematic.components()) {
                 boolean selected = selectedIds.contains(component.id());
                 boolean moving = selected && gesture == Gesture.MOVE_SELECTION && gestureMoved;
@@ -2096,7 +2104,9 @@ public final class CanvasPanel extends JPanel {
                 }
             }
 
+            long pinsStarted = PerfLog.start();
             paintPinDots(screenGraphics, moveDeltaX, moveDeltaY);
+            PerfLog.record("canvas.pinDots", pinsStarted);
 
             for (ComponentInstance instance : schematic.componentInstances()) {
                 ComponentDefinition definition = schematic.componentDefinitionFor(instance);
@@ -2166,6 +2176,7 @@ public final class CanvasPanel extends JPanel {
                     && screenClip.intersects(marqueeScreenBounds())) {
                 paintMarquee(worldGraphics);
             }
+            PerfLog.record("canvas.components", componentsStarted);
         } finally {
             worldGraphics.dispose();
         }
