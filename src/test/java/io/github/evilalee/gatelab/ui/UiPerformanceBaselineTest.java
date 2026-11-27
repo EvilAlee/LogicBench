@@ -63,8 +63,11 @@ class UiPerformanceBaselineTest {
             List<io.github.evilalee.gatelab.model.GateDef> gates = GateLibrary.load().all();
             ComponentLibrary components = ComponentLibrary.load(gates, directory);
 
-            measureExpression("20-line expression text", twentyLineExpression(),
+            String twentyLine = twentyLineExpression();
+            measureExpression("20-line expression text", twentyLine,
                     ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION,
+                    gates, components.all());
+            reportSynchronousEdtBaseline("20-line expression text", twentyLine,
                     gates, components.all());
             measureExpression("typed 4-bit adder", FOUR_BIT_ADDER,
                     ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION,
@@ -124,6 +127,35 @@ class UiPerformanceBaselineTest {
                 compilation.outputComponentIds().size(),
                 compilation.schematic().componentInstances().size());
         return compilation;
+    }
+
+    private static void reportSynchronousEdtBaseline(
+            String label,
+            String source,
+            List<io.github.evilalee.gatelab.model.GateDef> gates,
+            List<io.github.evilalee.gatelab.model.ComponentDefinition> components)
+            throws Exception {
+        double[] elapsedMillis = new double[1];
+        SwingUtilities.invokeAndWait(() -> {
+            long started = System.nanoTime();
+            ComponentExpressionCompiler.Compilation compilation =
+                    ComponentExpressionCompiler.compile(source, gates, components,
+                            ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION,
+                            true, false);
+            List<String> inputs = compilation.inputComponentIds().keySet().stream()
+                    .sorted().toList();
+            List<String> outputs = compilation.outputComponentIds().keySet().stream()
+                    .sorted().toList();
+            if (inputs.size() <= 10) {
+                TruthTable table = ExpressionDialog.buildEnginePreview(
+                        compilation, inputs, outputs);
+                assertFalse(table.rows().isEmpty());
+            }
+            elapsedMillis[0] = (System.nanoTime() - started) / 1_000_000.0;
+        });
+        System.err.printf(Locale.ROOT,
+                "LogicBench perf baseline: %s synchronousEdt=%.3f ms%n",
+                label, elapsedMillis[0]);
     }
 
     private static void reportPaints(String label, CanvasPanel canvas) {
