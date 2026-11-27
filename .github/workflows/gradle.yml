@@ -23,3 +23,5 @@ jobs:
           cache-dependency-path: "**/*.gradle.kts"
       - name: Run headless engine tests
         run: ./gradlew --no-daemon test
+      - name: Run slow differential and large-input tests
+        run: ./gradlew --no-daemon slowTest
