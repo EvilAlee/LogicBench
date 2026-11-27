@@ -142,7 +142,7 @@ public final class ExpressionDialog extends JDialog {
 
             @Override
             public void changedUpdate(DocumentEvent event) {
-                updatePreview();
+                schedulePreview();
             }
         });
 
@@ -158,7 +158,7 @@ public final class ExpressionDialog extends JDialog {
         setMinimumSize(new Dimension(760, 530));
         setSize(900, 650);
         setLocationRelativeTo(owner);
-        updatePreview();
+        schedulePreview();
     }
 
     public static void showDialog(JFrame owner, CanvasPanel canvas) {
@@ -203,7 +203,12 @@ public final class ExpressionDialog extends JDialog {
         SwingWorker<PreviewResult, Void> worker = new SwingWorker<>() {
             @Override
             protected PreviewResult doInBackground() {
-                return computePreview(source, option, optimize);
+                long started = PerfLog.start();
+                try {
+                    return computePreview(source, option, optimize);
+                } finally {
+                    PerfLog.record("expression.recompute.total", started);
+                }
             }
 
             @Override
