@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import java.util.function.Consumer;
 import java.util.concurrent.CancellationException;
 
 /** Live expression editor and engine-backed truth-table preview. */
@@ -173,24 +174,39 @@ public final class ExpressionDialog extends JDialog {
     }
 
     private void schedulePreview() {
+        schedulePreviewRequest(
+                previewScheduler,
+                expressionText.getText(),
+                () -> {
+                    currentCompilation = null;
+                    generateButton.setEnabled(false);
+                    tableModel.setTable(null);
+                    tableNote.setText("...");
+                    statusLine.setForeground(labelForeground());
+                    statusLine.setText("...");
+                    truthTable.setEnabled(true);
+                    tableScroll.setVisible(true);
+                },
+                optimizeInvertingGates::setEnabled,
+                () -> {
+                    if (previewWorker != null && !previewWorker.isDone()) {
+                        previewWorker.cancel(true);
+                    }
+                });
+    }
+
+    static void schedulePreviewRequest(
+            PreviewScheduler scheduler,
+            String source,
+            Runnable markPending,
+            Consumer<Boolean> setOptimizeEnabled,
+            Runnable cancelPreviousWork) {
         long started = PerfLog.start();
         try {
-            previewScheduler.schedule();
-            currentCompilation = null;
-            generateButton.setEnabled(false);
-            tableModel.setTable(null);
-            tableNote.setText("...");
-            statusLine.setForeground(labelForeground());
-            statusLine.setText("...");
-            truthTable.setEnabled(true);
-            tableScroll.setVisible(true);
-
-            boolean containsLibraryCall =
-                    containsLibraryComponentCall(expressionText.getText());
-            optimizeInvertingGates.setEnabled(!containsLibraryCall);
-            if (previewWorker != null && !previewWorker.isDone()) {
-                previewWorker.cancel(true);
-            }
+            scheduler.schedule();
+            markPending.run();
+            setOptimizeEnabled.accept(!containsLibraryComponentCall(source));
+            cancelPreviousWork.run();
         } finally {
             PerfLog.record("expression.keystroke.edt", started);
         }
