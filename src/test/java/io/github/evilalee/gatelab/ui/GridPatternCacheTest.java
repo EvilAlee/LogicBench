@@ -36,7 +36,8 @@ class GridPatternCacheTest {
         assertEquals(0, cache.incrementalUpdateCount());
 
         var partialPan = cache.imageFor(800, 600, 1.0, 35.0, 24.0, 10, 4.0);
-        assertNotSame(first, partialPan);
+        assertSame(first, partialPan,
+                "partial pans should shift the cached viewport image in place");
         assertEquals(1, cache.fullRebuildCount());
         assertEquals(1, cache.incrementalUpdateCount());
 
@@ -46,6 +47,7 @@ class GridPatternCacheTest {
                 "incremental pan must produce the same dots as a fresh render");
 
         var diagonalPan = cache.imageFor(800, 600, 1.0, 32.0, 26.0, 10, 4.0);
+        assertSame(first, diagonalPan);
         var freshDiagonal = new GridPatternCache().imageFor(
                 800, 600, 1.0, 32.0, 26.0, 10, 4.0);
         assertImagesEqual(freshDiagonal, diagonalPan,
