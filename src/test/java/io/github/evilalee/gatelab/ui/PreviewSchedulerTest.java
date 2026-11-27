@@ -39,7 +39,7 @@ class PreviewSchedulerTest {
 
     @Test
     void twentyLineExpressionSchedulingKeepsEdtWorkBelowTwentyMillisPerEdit() throws Exception {
-        String source = String.join("\\n", List.of(
+        String source = String.join("\n", List.of(
                 "I0 := A & B", "I1 := B ^ C", "I2 := C | D", "I3 := D & E",
                 "I4 := E ^ F", "I5 := F | G", "I6 := G & H", "I7 := H ^ I",
                 "I8 := I0 ^ I1", "I9 := I2 & I3", "I10 := I4 | I5", "I11 := I6 ^ I7",
@@ -83,7 +83,7 @@ class PreviewSchedulerTest {
             assertEquals("...", note.getText());
         });
 
-        System.err.printf("LogicBench perf baseline: expression.keystroke.edt=%.3f ms (100 coalesced requests)%n",
+        System.err.printf("LogicBench perf: expression.keystroke.edt=%.3f ms (100 coalesced requests)%n",
                 averageMillis[0]);
         assertTrue(averageMillis[0] < 20.0,
                 "EDT scheduling must stay below 20 ms; measured " + averageMillis[0] + " ms");
