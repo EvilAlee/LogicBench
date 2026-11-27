@@ -791,7 +791,9 @@ public final class AiCircuitService {
                     log.add(statusLine);
                     log.add("Verified the template against its integer specification.");
                     Result verified = result(0, Status.VERIFIED, generated, log, false);
-                    return withSummary(verified, statusLine + " — " + verified.summary());
+                    return generated.engineCrossCheckRows() > 0
+                            ? withSummary(verified, statusLine + " — " + verified.summary())
+                            : verified;
                 }
                 log.add("Generated template did not pass the common compilation/verification pipeline.");
                 return result(0, Status.UNVERIFIED, generated, log, false);
@@ -885,15 +887,20 @@ public final class AiCircuitService {
                             log.add("Verified answer, but could not save the user cache.");
                         }
                     }
-                } else {
+                } else if (current.engineCrossCheckRows() > 0) {
                     log.add("BUILT: " + rows
                             + " truth rows evaluated; no independent spec or expected rows supplied.");
+                } else {
+                    log.add("BUILT: " + rows
+                            + " engine rows generated; no independent check, read the truth table.");
                 }
                 String statusLine = verificationStatusLine(current, expectedRowsText, status);
                 log.add(statusLine);
                 Result verified = result(attemptNumber, status, current, log, false,
                         response.model(), allModelAttempts);
-                return withSummary(verified, statusLine + " — " + verified.summary());
+                return current.engineCrossCheckRows() > 0
+                        ? withSummary(verified, statusLine + " — " + verified.summary())
+                        : verified;
             }
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
@@ -1360,7 +1367,9 @@ public final class AiCircuitService {
                 log.add(statusLine);
                 Result cached = result(attemptCount, status, cachedAttempt, log, true,
                         provider.redact(hit.model()), List.of());
-                return withSummary(cached, statusLine + " — " + cached.summary());
+                return cachedAttempt.engineCrossCheckRows() > 0
+                        ? withSummary(cached, statusLine + " — " + cached.summary())
+                        : cached;
             }
             List<String> failures = new ArrayList<>(cachedAttempt.errors());
             failures.addAll(cachedAttempt.mismatchRows());
