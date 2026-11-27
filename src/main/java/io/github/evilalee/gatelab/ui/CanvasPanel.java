@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.io.ComponentLibrary;
 import io.github.evilalee.gatelab.io.GateLibrary;
+import io.github.evilalee.gatelab.io.SchematicClipboard;
 import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
 import io.github.evilalee.gatelab.model.ComponentInstance;
@@ -35,6 +36,8 @@ import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.HeadlessException;
+import java.awt.Toolkit;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -43,6 +46,8 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -58,12 +63,14 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
 /** Grid canvas for the M4 schematic editor, with an optional M3 SVG gallery. */
 public final class CanvasPanel extends JPanel {
     private static final int WORLD_GRID_SPACING = PlacedComponent.GRID_SPACING;
+    private static final int REPEATED_PASTE_OFFSET = 20;
     private static final double MIN_SCREEN_GRID_SPACING = 4.0;
     private static final double ZOOM_PER_WHEEL_NOTCH = 1.12;
     private static final double DRAG_THRESHOLD_SQUARED = 9.0;
@@ -131,6 +138,7 @@ public final class CanvasPanel extends JPanel {
     private Schematic schematic;
     private final SchematicHistory history = new SchematicHistory();
     private Runnable historyStateListener = () -> { };
+    private Runnable editActionStateListener = () -> { };
     private final Runnable schematicSimulationListener = this::schematicChanged;
     private Consumer<Schematic> schematicReplacementListener = ignored -> { };
     private final List<Consumer<Schematic>> schematicListeners = new ArrayList<>();
@@ -188,6 +196,11 @@ public final class CanvasPanel extends JPanel {
     private double gestureStartWorldY;
     private double pointerWorldX;
     private double pointerWorldY;
+    private boolean pointerKnown;
+    private String lastPasteText;
+    private boolean hasPastedClipboardText;
+    private int lastPasteDeltaX;
+    private int lastPasteDeltaY;
     private boolean gestureMoved;
     private boolean additiveMarquee;
     private Map<String, PlacedComponent> moveStartComponents = Map.of();
@@ -614,6 +627,175 @@ public final class CanvasPanel extends JPanel {
 
     public List<WireSegment> selectedWires() {
         return List.copyOf(selectedWires);
+    }
+
+    /** Whether Cut, Copy, or Duplicate currently has an editable selection. */
+    public boolean hasSelection() {
+        return !readOnly && activeTool != Tool.ADD
+                && (!selectedIds.isEmpty() || !selectedWires.isEmpty());
+    }
+
+    public void setEditActionStateListener(Runnable listener) {
+        editActionStateListener = listener == null ? () -> { } : listener;
+        editActionStateListener.run();
+    }
+
+    /** Copies the current mixed selection to the system clipboard. */
+    public boolean copySelectionToClipboard() {
+        if (!hasSelection()) {
+            return false;
+        }
+        Optional<String> encoded = selectedClipboardText();
+        if (encoded.isEmpty() || !writeSystemClipboard(encoded.get())) {
+            statusMessageListener.accept("Could not access the system clipboard.");
+            return false;
+        }
+        lastPasteText = encoded.get();
+        hasPastedClipboardText = false;
+        return true;
+    }
+
+    /** Cuts the current selection only after the clipboard write succeeds. */
+    public boolean cutSelectionToClipboard() {
+        if (!hasSelection()) {
+            return false;
+        }
+        Optional<String> encoded = selectedClipboardText();
+        if (encoded.isEmpty() || !writeSystemClipboard(encoded.get())) {
+            statusMessageListener.accept("Could not access the system clipboard.");
+            return false;
+        }
+        lastPasteText = encoded.get();
+        hasPastedClipboardText = false;
+        removeCurrentSelection();
+        return true;
+    }
+
+    /** Duplicates the current selection without reading or writing the system clipboard. */
+    public boolean duplicateSelection() {
+        if (!hasSelection()) {
+            return false;
+        }
+        Optional<String> encoded = selectedClipboardText();
+        if (encoded.isEmpty()) {
+            return false;
+        }
+        lastPasteText = encoded.get();
+        hasPastedClipboardText = false;
+        return applyClipboardPaste(encoded.get(), true);
+    }
+
+    /** Pastes only a valid LogicBench marker payload from the system clipboard. */
+    public boolean pasteFromClipboard() {
+        if (readOnly || galleryMode || activeTool == Tool.ADD) {
+            return false;
+        }
+        Optional<String> clipboard = readSystemClipboard();
+        return clipboard.isPresent() && applyClipboardPaste(clipboard.get(), false);
+    }
+
+    public boolean canPasteFromClipboard() {
+        if (readOnly || galleryMode || activeTool == Tool.ADD) {
+            return false;
+        }
+        Optional<String> clipboard = readSystemClipboard();
+        return clipboard.isPresent()
+                && SchematicClipboard.decode(
+                        clipboard.get(), schematic.gateDefinitions(), componentLibrary).isPresent();
+    }
+
+    private Optional<String> selectedClipboardText() {
+        return SchematicClipboard.encode(schematic, selectedIds, selectedWires);
+    }
+
+    private boolean applyClipboardPaste(String clipboardText, boolean forceOffset) {
+        Optional<SchematicClipboard.Payload> decoded = SchematicClipboard.decode(
+                clipboardText, schematic.gateDefinitions(), componentLibrary);
+        if (decoded.isEmpty()) {
+            return false;
+        }
+        boolean repeated = !forceOffset && hasPastedClipboardText
+                && clipboardText.equals(lastPasteText);
+        Integer pointerX = !forceOffset && !repeated && pointerKnown
+                ? (int) Math.floor(pointerWorldX + 0.5) : null;
+        Integer pointerY = pointerX == null
+                ? null : (int) Math.floor(pointerWorldY + 0.5);
+        int fallbackX = repeated ? Math.addExact(lastPasteDeltaX, REPEATED_PASTE_OFFSET)
+                : REPEATED_PASTE_OFFSET;
+        int fallbackY = repeated ? Math.addExact(lastPasteDeltaY, REPEATED_PASTE_OFFSET)
+                : REPEATED_PASTE_OFFSET;
+
+        beginHistoryGesture();
+        Optional<SchematicClipboard.PasteResult> pasted;
+        try {
+            pasted = SchematicClipboard.paste(
+                    schematic, decoded.get(), pointerX, pointerY, fallbackX, fallbackY);
+        } catch (IllegalArgumentException | ArithmeticException exception) {
+            history.cancelPending();
+            statusMessageListener.accept("Paste failed: " + exception.getMessage());
+            return false;
+        }
+        if (pasted.isEmpty()) {
+            history.cancelPending();
+            statusMessageListener.accept(
+                    "No safe paste location was found within 20 grid cells.");
+            return false;
+        }
+
+        SchematicClipboard.PasteResult result = pasted.get();
+        selectedIds.clear();
+        selectedIds.addAll(result.componentIds());
+        selectedWires.clear();
+        selectedWires.addAll(result.wires());
+        lastPasteText = clipboardText;
+        hasPastedClipboardText = true;
+        lastPasteDeltaX = result.deltaX();
+        lastPasteDeltaY = result.deltaY();
+        commitHistoryGesture();
+        notifySelectionChanged();
+        if (result.notices().isEmpty()) {
+            statusMessageListener.accept("");
+        } else {
+            statusMessageListener.accept(String.join(" ", result.notices()));
+        }
+        repaint();
+        return true;
+    }
+
+    private void removeCurrentSelection() {
+        Rectangle oldSelectionBounds = selectionScreenBounds();
+        SchematicClipboard.deleteSelection(
+                schematic, history, selectedIds, selectedWires);
+        selectedIds.clear();
+        selectedWires.clear();
+        notifyHistoryStateChanged();
+        notifySelectionChanged();
+        repaintIfPresent(oldSelectionBounds);
+    }
+
+    private static Optional<String> readSystemClipboard() {
+        try {
+            Transferable contents = Toolkit.getDefaultToolkit()
+                    .getSystemClipboard().getContents(null);
+            if (contents == null || !contents.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                return Optional.empty();
+            }
+            Object value = contents.getTransferData(DataFlavor.stringFlavor);
+            return value instanceof String text ? Optional.of(text) : Optional.empty();
+        } catch (HeadlessException | IllegalStateException | SecurityException
+                | UnsupportedFlavorException | IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private static boolean writeSystemClipboard(String text) {
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new StringSelection(text), null);
+            return true;
+        } catch (HeadlessException | IllegalStateException | SecurityException exception) {
+            return false;
+        }
     }
 
     /** Selected black-box instance ids, exposed to selection observers and headless tests. */
@@ -1162,6 +1344,11 @@ public final class CanvasPanel extends JPanel {
                     Rectangle oldPreviewBounds = previewScreenBounds();
                     pointerFromScreen(event.getPoint());
                     repaintUnion(oldPreviewBounds, previewScreenBounds());
+                } else if (activeTool == Tool.EDIT && !readOnly && gesture == Gesture.NONE) {
+                    Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
+                    pointerWorldX = world.x;
+                    pointerWorldY = world.y;
+                    pointerKnown = true;
                 }
             }
 
@@ -1171,6 +1358,7 @@ public final class CanvasPanel extends JPanel {
                     return;
                 }
                 if (panning) {
+                    pointerFromScreen(event.getPoint());
                     panning = false;
                     lastPanPoint = null;
                     setCursor(Cursor.getDefaultCursor());
@@ -1242,6 +1430,7 @@ public final class CanvasPanel extends JPanel {
         gestureStartWorldY = world.y;
         pointerWorldX = world.x;
         pointerWorldY = world.y;
+        pointerKnown = true;
         gestureStartScreen = event.getPoint();
         gestureMoved = false;
 
@@ -1577,6 +1766,7 @@ public final class CanvasPanel extends JPanel {
         Point2D.Double world = transform.screenToWorld(screenPoint.x, screenPoint.y);
         pointerWorldX = world.x;
         pointerWorldY = world.y;
+        pointerKnown = true;
         updatePreviewPosition(world.x, world.y);
     }
 
@@ -1660,6 +1850,7 @@ public final class CanvasPanel extends JPanel {
     private void notifySelectionChanged() {
         selectionListener.accept(selectedComponents());
         notifyAttributeStateChanged();
+        editActionStateListener.run();
     }
 
     private void resetGesture() {

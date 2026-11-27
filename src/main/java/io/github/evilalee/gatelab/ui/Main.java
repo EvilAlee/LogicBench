@@ -41,6 +41,7 @@ import javax.swing.JTree;
 import javax.swing.TransferHandler;
 import javax.swing.UIManager;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.text.JTextComponent;
 import javax.swing.table.TableCellEditor;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreePath;
@@ -316,16 +317,48 @@ public final class Main {
         edit.add(undo);
         edit.add(redo);
         edit.addSeparator();
-        for (String label : new String[]{"Cut", "Copy", "Paste"}) {
-            JMenuItem placeholder = new JMenuItem(label);
-            placeholder.setEnabled(false);
-            edit.add(placeholder);
-        }
+
+        JMenuItem cut = new JMenuItem("Cut");
+        cut.addActionListener(event -> canvas.cutSelectionToClipboard());
+        JMenuItem copy = new JMenuItem("Copy");
+        copy.addActionListener(event -> canvas.copySelectionToClipboard());
+        JMenuItem paste = new JMenuItem("Paste");
+        paste.addActionListener(event -> canvas.pasteFromClipboard());
+        JMenuItem duplicate = new JMenuItem("Duplicate");
+        duplicate.addActionListener(event -> canvas.duplicateSelection());
+        edit.add(cut);
+        edit.add(copy);
+        edit.add(paste);
+        edit.add(duplicate);
+
+        Runnable updateEditActions = () -> {
+            boolean hasSelection = canvas.hasSelection();
+            cut.setEnabled(hasSelection);
+            copy.setEnabled(hasSelection);
+            duplicate.setEnabled(hasSelection);
+            paste.setEnabled(canvas.canPasteFromClipboard());
+        };
+        canvas.setEditActionStateListener(updateEditActions);
+        edit.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent event) {
+                updateEditActions.run();
+            }
+
+            @Override
+            public void menuDeselected(MenuEvent event) {
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent event) {
+            }
+        });
         canvas.setHistoryStateListener(() -> {
             undo.setEnabled(canvas.canUndo());
             redo.setEnabled(canvas.canRedo());
         });
         installUndoRedoBindings(frame, canvas);
+        installClipboardBindings(frame, canvas);
         menuBar.add(edit);
         menuBar.add(createViewMenu(canvas, waveformVisibility));
         menuBar.add(menuWithDisabledItems("Project", "Project Options..."));
@@ -492,6 +525,59 @@ public final class Main {
                 canvas.redo();
             }
         });
+    }
+
+    private static void installClipboardBindings(JFrame frame, CanvasPanel canvas) {
+        if (frame == null) {
+            return;
+        }
+        javax.swing.InputMap input = frame.getRootPane().getInputMap(
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
+        javax.swing.ActionMap actions = frame.getRootPane().getActionMap();
+        bindClipboardShortcut(input, actions, KeyEvent.VK_X,
+                "logicbench-cut", frame, canvas, canvas::cutSelectionToClipboard);
+        bindClipboardShortcut(input, actions, KeyEvent.VK_C,
+                "logicbench-copy", frame, canvas, canvas::copySelectionToClipboard);
+        bindClipboardShortcut(input, actions, KeyEvent.VK_V,
+                "logicbench-paste", frame, canvas, canvas::pasteFromClipboard);
+        bindClipboardShortcut(input, actions, KeyEvent.VK_D,
+                "logicbench-duplicate", frame, canvas, canvas::duplicateSelection);
+    }
+
+    private static void bindClipboardShortcut(
+            javax.swing.InputMap input,
+            javax.swing.ActionMap actions,
+            int keyCode,
+            String actionName,
+            JFrame frame,
+            CanvasPanel canvas,
+            Runnable action) {
+        input.put(KeyStroke.getKeyStroke(keyCode, InputEvent.CTRL_DOWN_MASK), actionName);
+        actions.put(actionName, new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                if (!isTextEntryFocused(frame)) {
+                    action.run();
+                }
+            }
+        });
+    }
+
+    private static boolean isTextEntryFocused(JFrame frame) {
+        java.awt.Component focus = java.awt.KeyboardFocusManager
+                .getCurrentKeyboardFocusManager().getFocusOwner();
+        if (focus instanceof JTextComponent) {
+            return true;
+        }
+        if (focus instanceof javax.swing.JComboBox<?> combo && combo.isEditable()) {
+            return true;
+        }
+        if (focus instanceof JTable table && table.isEditing()) {
+            return true;
+        }
+        java.awt.Container tableAncestor = focus == null ? null
+                : javax.swing.SwingUtilities.getAncestorOfClass(JTable.class, focus);
+        return tableAncestor instanceof JTable table && table.isEditing();
     }
 
     private static JMenuItem fileItem(
