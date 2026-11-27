@@ -39,12 +39,12 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.HeadlessException;
 import java.awt.Toolkit;
+import java.awt.TexturePaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
-import java.awt.image.BufferedImage;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.datatransfer.StringSelection;
@@ -157,13 +157,7 @@ public final class CanvasPanel extends JPanel {
 
     private final int galleryFirstOriginY;
     private final int galleryRowPitch;
-    private BufferedImage gridImage;
-    private int gridCacheWidth = -1;
-    private int gridCacheHeight = -1;
-    private long gridCacheScaleBits = Long.MIN_VALUE;
-    private long gridCacheTranslateXBits = Long.MIN_VALUE;
-    private long gridCacheTranslateYBits = Long.MIN_VALUE;
-    private long gridCacheRebuildCount;
+    private final GridPatternCache gridPatternCache = new GridPatternCache();
     private long paintStatsWindowStartNanos;
     private long paintStatsPaintCount;
     private long paintStatsTotalNanos;
@@ -555,7 +549,6 @@ public final class CanvasPanel extends JPanel {
             transform.fitToBounds(
                     minX, minY, maxX, maxY, getWidth(), getHeight(), 36.0);
         }
-        gridImage = null;
         repaint();
     }
 
@@ -1344,7 +1337,10 @@ public final class CanvasPanel extends JPanel {
                 if (activeTool == Tool.ADD) {
                     Rectangle oldPreviewBounds = previewScreenBounds();
                     pointerFromScreen(event.getPoint());
-                    repaintUnion(oldPreviewBounds, previewScreenBounds());
+                    Rectangle newPreviewBounds = previewScreenBounds();
+                    if (!oldPreviewBounds.equals(newPreviewBounds)) {
+                        repaintUnion(oldPreviewBounds, newPreviewBounds);
+                    }
                 } else if (activeTool == Tool.EDIT && !readOnly && gesture == Gesture.NONE) {
                     Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
                     pointerWorldX = world.x;
@@ -1893,77 +1889,28 @@ public final class CanvasPanel extends JPanel {
         }
     }
 
-    /** Blits a client-side software-rendered grid; only view changes rebuild it. */
+    /** Paints a reusable screen-space grid texture anchored to the world lattice. */
     private void paintGrid(Graphics graphics) {
         long started = PerfLog.start();
-        ensureGridCache();
-        if (gridImage != null) {
-            graphics.drawImage(gridImage, 0, 0, null);
+        TexturePaint pattern = gridPatternCache.paintFor(
+                getWidth(), getHeight(), transform.scale(),
+                transform.translateX(), transform.translateY(),
+                WORLD_GRID_SPACING, MIN_SCREEN_GRID_SPACING);
+        if (pattern != null && graphics instanceof Graphics2D graphics2D) {
+            java.awt.Paint previous = graphics2D.getPaint();
+            graphics2D.setPaint(pattern);
+            graphics2D.fillRect(0, 0, getWidth(), getHeight());
+            graphics2D.setPaint(previous);
         }
         PerfLog.record("canvas.grid", started);
     }
 
-    private void ensureGridCache() {
-        int width = getWidth();
-        int height = getHeight();
-        if (width <= 0 || height <= 0) {
-            gridImage = null;
-            return;
-        }
-
-        long scaleBits = Double.doubleToLongBits(transform.scale());
-        long translateXBits = Double.doubleToLongBits(transform.translateX());
-        long translateYBits = Double.doubleToLongBits(transform.translateY());
-        if (gridImage != null && gridCacheWidth == width && gridCacheHeight == height
-                && gridCacheScaleBits == scaleBits
-                && gridCacheTranslateXBits == translateXBits
-                && gridCacheTranslateYBits == translateYBits) {
-            return;
-        }
-
-        BufferedImage rebuilt = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-        Graphics2D gridGraphics = rebuilt.createGraphics();
-        try {
-            gridGraphics.setColor(Color.WHITE);
-            gridGraphics.fillRect(0, 0, width, height);
-            gridGraphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_OFF);
-
-            double scale = transform.scale();
-            double screenSpacing = WORLD_GRID_SPACING * scale;
-            int stride = Math.max(1, (int) Math.ceil(
-                    MIN_SCREEN_GRID_SPACING / screenSpacing));
-            double worldStep = WORLD_GRID_SPACING * stride;
-
-            Point2D.Double worldTopLeft = transform.screenToWorld(0.0, 0.0);
-            Point2D.Double worldBottomRight = transform.screenToWorld(width, height);
-            double firstX = Math.ceil(worldTopLeft.x / worldStep) * worldStep;
-            double firstY = Math.ceil(worldTopLeft.y / worldStep) * worldStep;
-
-            int dotSize = screenSpacing >= 8.0 ? 2 : 1;
-            gridGraphics.setColor(new Color(205, 209, 214));
-            for (double worldY = firstY; worldY <= worldBottomRight.y; worldY += worldStep) {
-                int screenY = (int) Math.round(transform.worldToScreen(firstX, worldY).y);
-                for (double worldX = firstX; worldX <= worldBottomRight.x; worldX += worldStep) {
-                    int screenX = (int) Math.round(transform.worldToScreen(worldX, worldY).x);
-                    gridGraphics.fillRect(screenX, screenY, dotSize, dotSize);
-                }
-            }
-        } finally {
-            gridGraphics.dispose();
-        }
-
-        gridImage = rebuilt;
-        gridCacheWidth = width;
-        gridCacheHeight = height;
-        gridCacheScaleBits = scaleBits;
-        gridCacheTranslateXBits = translateXBits;
-        gridCacheTranslateYBits = translateYBits;
-        gridCacheRebuildCount++;
+    long gridCacheRebuildCount() {
+        return gridPatternCache.keyChangeCount();
     }
 
-    long gridCacheRebuildCount() {
-        return gridCacheRebuildCount;
+    long gridTileBuildCount() {
+        return gridPatternCache.tileBuildCount();
     }
 
     private void recordPaintDuration(long durationNanos) {
