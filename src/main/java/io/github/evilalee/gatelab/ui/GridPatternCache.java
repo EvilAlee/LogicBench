@@ -5,13 +5,15 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
+import java.util.Arrays;
 
 /**
  * Caches a transparent viewport-sized grid image. Integer pans shift the
- * existing image and redraw only the newly exposed edge strips.
+ * existing image in place and redraw only the newly exposed edge strips.
  */
 final class GridPatternCache {
-    private static final Color DOT_COLOR = new Color(205, 209, 214);
+    private static final int DOT_ARGB = new Color(205, 209, 214).getRGB();
 
     private GridCacheKey key;
     private BufferedImage image;
@@ -37,7 +39,7 @@ final class GridPatternCache {
         if (width <= 0 || height <= 0 || !next.dotsVisible()) {
             image = null;
         } else if (canShift) {
-            image = shiftAndPaintExposed(
+            shiftAndPaintExposed(
                     image, width, height, (int) Math.rint(translateX - lastTranslateX),
                     (int) Math.rint(translateY - lastTranslateY),
                     scale, translateX, translateY, worldSpacing);
@@ -85,51 +87,59 @@ final class GridPatternCache {
             double translateX, double translateY, int worldSpacing) {
         BufferedImage result = new BufferedImage(
                 width, height, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = result.createGraphics();
-        try {
-            paintDots(graphics, new Rectangle(0, 0, width, height),
-                    width, height, scale, translateX, translateY, worldSpacing);
-        } finally {
-            graphics.dispose();
-        }
+        paintDots(result, new Rectangle(0, 0, width, height),
+                scale, translateX, translateY, worldSpacing);
         return result;
     }
 
-    private static BufferedImage shiftAndPaintExposed(
-            BufferedImage previous, int width, int height, int dx, int dy,
+    private static void shiftAndPaintExposed(
+            BufferedImage target, int width, int height, int dx, int dy,
             double scale, double translateX, double translateY, int worldSpacing) {
-        BufferedImage shifted = new BufferedImage(
-                width, height, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = shifted.createGraphics();
+        Graphics2D graphics = target.createGraphics();
+        Rectangle vertical = null;
+        Rectangle horizontal = null;
         try {
-            graphics.setComposite(AlphaComposite.Src);
-            graphics.drawImage(previous, dx, dy, null);
-            graphics.setComposite(AlphaComposite.SrcOver);
-
+            graphics.copyArea(0, 0, width, height, dx, dy);
             if (dx > 0) {
-                paintDots(graphics, new Rectangle(0, 0, dx, height),
-                        width, height, scale, translateX, translateY, worldSpacing);
+                vertical = new Rectangle(0, 0, dx, height);
             } else if (dx < 0) {
-                paintDots(graphics, new Rectangle(width + dx, 0, -dx, height),
-                        width, height, scale, translateX, translateY, worldSpacing);
+                vertical = new Rectangle(width + dx, 0, -dx, height);
             }
             if (dy > 0) {
-                paintDots(graphics, new Rectangle(0, 0, width, dy),
-                        width, height, scale, translateX, translateY, worldSpacing);
+                horizontal = new Rectangle(0, 0, width, dy);
             } else if (dy < 0) {
-                paintDots(graphics, new Rectangle(0, height + dy, width, -dy),
-                        width, height, scale, translateX, translateY, worldSpacing);
+                horizontal = new Rectangle(0, height + dy, width, -dy);
             }
         } finally {
             graphics.dispose();
         }
-        return shifted;
+
+        if (vertical != null) {
+            clearRect(target, vertical);
+            paintDots(target, vertical, scale, translateX, translateY, worldSpacing);
+        }
+        if (horizontal != null) {
+            clearRect(target, horizontal);
+            paintDots(target, horizontal, scale, translateX, translateY, worldSpacing);
+        }
+    }
+
+    private static void clearRect(BufferedImage target, Rectangle rectangle) {
+        int width = target.getWidth();
+        int height = target.getHeight();
+        int[] pixels = ((DataBufferInt) target.getRaster().getDataBuffer()).getData();
+        int left = Math.max(0, rectangle.x);
+        int top = Math.max(0, rectangle.y);
+        int right = Math.min(width, rectangle.x + rectangle.width);
+        int bottom = Math.min(height, rectangle.y + rectangle.height);
+        for (int y = top; y < bottom; y++) {
+            Arrays.fill(pixels, y * width + left, y * width + right, 0);
+        }
     }
 
     private static void paintDots(
-            Graphics2D graphics, Rectangle clip,
-            int width, int height, double scale,
-            double translateX, double translateY, int worldSpacing) {
+            BufferedImage target, Rectangle clip,
+            double scale, double translateX, double translateY, int worldSpacing) {
         if (clip.isEmpty()) {
             return;
         }
@@ -137,9 +147,14 @@ final class GridPatternCache {
         if (spacing < 4.0) {
             return;
         }
-        graphics.setClip(clip);
-        graphics.setColor(DOT_COLOR);
+        int width = target.getWidth();
+        int height = target.getHeight();
         int dotSize = spacing >= 8.0 ? 2 : 1;
+        int left = Math.max(0, clip.x);
+        int top = Math.max(0, clip.y);
+        int right = Math.min(width, clip.x + clip.width);
+        int bottom = Math.min(height, clip.y + clip.height);
+        int[] pixels = ((DataBufferInt) target.getRaster().getDataBuffer()).getData();
         double phaseX = positiveModulo(translateX, spacing);
         double phaseY = positiveModulo(translateY, spacing);
 
@@ -150,12 +165,24 @@ final class GridPatternCache {
             if (screenY >= height + dotSize) {
                 break;
             }
+            int dotTop = Math.max(top, screenY);
+            int dotBottom = Math.min(bottom, screenY + dotSize);
+            if (dotBottom <= dotTop) {
+                continue;
+            }
             for (int column = -1; ; column++) {
                 int screenX = (int) Math.round(phaseX + column * spacing);
                 if (screenX >= width + dotSize) {
                     break;
                 }
-                graphics.fillRect(screenX, screenY, dotSize, dotSize);
+                int dotLeft = Math.max(left, screenX);
+                int dotRight = Math.min(right, screenX + dotSize);
+                if (dotRight <= dotLeft) {
+                    continue;
+                }
+                for (int y = dotTop; y < dotBottom; y++) {
+                    Arrays.fill(pixels, y * width + dotLeft, y * width + dotRight, DOT_ARGB);
+                }
             }
         }
     }
