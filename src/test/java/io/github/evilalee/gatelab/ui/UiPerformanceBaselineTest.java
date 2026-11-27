@@ -85,6 +85,7 @@ class UiPerformanceBaselineTest {
                 canvas.viewTransform().resetToDefault();
                 canvasReference.set(canvas);
                 reportPaints("4-FA adder at 100% zoom", canvas);
+                reportPanPaints("4-FA adder during one-pixel pan", canvas);
                 canvas.viewTransform().zoomAt(512, 384, 0.5);
                 reportPaints("4-FA adder zoomed out", canvas);
             });
@@ -132,6 +133,27 @@ class UiPerformanceBaselineTest {
             long started = System.nanoTime();
             int samples = 6;
             for (int index = 0; index < samples; index++) {
+                canvas.paint(graphics);
+            }
+            double average = (System.nanoTime() - started)
+                    / (double) samples / 1_000_000.0;
+            System.err.printf(Locale.ROOT,
+                    "LogicBench perf baseline: %s averagePaint=%.3f ms samples=%d%n",
+                    label, average, samples);
+        } finally {
+            graphics.dispose();
+        }
+    }
+
+    private static void reportPanPaints(String label, CanvasPanel canvas) {
+        BufferedImage image = new BufferedImage(
+                canvas.getWidth(), canvas.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            long started = System.nanoTime();
+            int samples = 6;
+            for (int index = 0; index < samples; index++) {
+                canvas.viewTransform().panBy(1.0, 0.0);
                 canvas.paint(graphics);
             }
             double average = (System.nanoTime() - started)
