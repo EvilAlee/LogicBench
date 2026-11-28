@@ -750,6 +750,40 @@ public final class ComponentLibrary {
         chips.add(expressionChip(gateDefinitions, "74139",
                 "Dual 2-to-4 decoders/demultiplexers with active-low outputs",
                 decoder74139, decoder139Rows));
+
+        List<ChipPortSpec> priority148 = List.of(
+                in("4", 1), in("5", 2), in("6", 3), in("7", 4),
+                in("EI", 5), out("A2", 6), out("A1", 7), in("GND", 8),
+                out("A0", 9), in("0", 10), in("1", 11), in("2", 12),
+                in("3", 13), out("GS", 14), out("EO", 15), in("VCC", 16));
+        List<String> priorityTerms = new ArrayList<>();
+        for (int selected = 0; selected < 8; selected++) {
+            List<String> conditions = new ArrayList<>();
+            conditions.add("!EI");
+            for (int higherPriority = 0; higherPriority < selected; higherPriority++) {
+                conditions.add(Integer.toString(higherPriority));
+            }
+            conditions.add("!" + selected);
+            priorityTerms.add("(" + String.join(" & ", conditions) + ")");
+        }
+        String anyPriorityRequest = "(" + String.join(" | ", priorityTerms) + ")";
+        String a2Request = "(" + String.join(" | ",
+                priorityTerms.subList(4, 8)) + ")";
+        String a1Request = "(" + String.join(" | ", List.of(
+                priorityTerms.get(2), priorityTerms.get(3),
+                priorityTerms.get(6), priorityTerms.get(7))) + ")";
+        String a0Request = "(" + String.join(" | ", List.of(
+                priorityTerms.get(1), priorityTerms.get(3),
+                priorityTerms.get(5), priorityTerms.get(7))) + ")";
+        List<ChipOutputExpression> priority148Rows = List.of(
+                new ChipOutputExpression("A2", "!" + a2Request),
+                new ChipOutputExpression("A1", "!" + a1Request),
+                new ChipOutputExpression("A0", "!" + a0Request),
+                new ChipOutputExpression("GS", "!" + anyPriorityRequest),
+                new ChipOutputExpression("EO", "EI | " + anyPriorityRequest));
+        chips.add(expressionChip(gateDefinitions, "74148",
+                "8-to-3 priority encoder with active-low data inputs and encoded outputs",
+                priority148, priority148Rows));
         return List.copyOf(chips);
     }
 
