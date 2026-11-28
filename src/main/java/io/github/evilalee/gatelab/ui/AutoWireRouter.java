@@ -331,9 +331,6 @@ public final class AutoWireRouter {
         if (otherPins.contains(cell) && !cell.equals(start) && !cell.equals(end)) {
             return true;
         }
-        if (wireOrientationAt(request, cell) != 0) {
-            return false;
-        }
         for (GateGeometry.Bounds bounds : request.componentBounds()) {
             int left = Math.floorDiv(bounds.x(), GRID);
             int top = Math.floorDiv(bounds.y(), GRID);
