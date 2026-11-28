@@ -72,12 +72,10 @@ class AutoWireBranchDiagnosticTest {
                 netFor(afterThird, unrelatedOut).pins());
         assertNotEquals(netFor(afterThird, output), netFor(afterThird, unrelatedOut));
 
+        Set<WireSegment> afterThirdGeometry = Set.copyOf(schematic.wires());
         assertTrue(canvas.undo());
         assertEquals(beforeThirdRoute, schematic.wires(),
                 "one undo removes the final branch and restores the exact previous geometry");
-        Set<WireSegment> afterThirdGeometry = Set.copyOf(schematic.wires());
-        assertTrue(canvas.undo());
-        assertEquals(beforeThirdRoute, schematic.wires());
         assertTrue(canvas.redo());
         assertEquals(afterThirdGeometry, Set.copyOf(schematic.wires()));
     }
