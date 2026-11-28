@@ -411,4 +411,64 @@ H=HIGH, L=LOW, X=irrelevant. A and B are common select inputs shared by both fou
 H=HIGH, L=LOW, X=irrelevant. When strobe G is HIGH, outputs are forced LOW. When G is LOW, A/B=LOW selects each channel's A input; A/B=HIGH selects B. The 74157/74LS157 outputs are non-inverting (true data), unlike 74158/74LS158.
 
 **Second-source cross-check:** Nexperia [74HC157/74HCT157](https://xonstorage.z8.web.core.windows.net/pdf/NXP/460325XON.pdf), Rev.8 (28 December 2015), pinning page 3 and function table page 4, independently confirms pin positions 1=S,2/3=1I0/1I1,4=1Y,5/6=2I0/1,7=2Y,8=GND,9=3Y,10/11=3I1/0,12=4Y,13/14=4I1/0,15=E active LOW,16=VCC, as well as the five truth-table rows and true outputs. Nexperia packages are SO16/TSSOP16/DHVQFN16; TI remains the authority for the SN74157 N-package DIP. **Not single-source.**
+## 7483 — NEEDS PIN TABLE; not implemented
 
+**Required TI source attempts:**  
+- https://www.ti.com/lit/gpn/SN7483A  
+- https://www.ti.com/lit/gpn/SN74LS83A  
+
+Neither URL returned an accessible TI part datasheet during this audit. A TI 1984 TTL Data Book (SDYD001, Volume 1) mentions the 83A/LS83A in product information, but that is not the per-part manufacturer datasheet required by the task and does not replace the inaccessible pin/function table. The SN74LS283 datasheet says it is functionally identical to the 83A/LS83A but the terminal arrangement changed; this is specifically not sufficient to infer the 7483 pin map. **No implementation.** Keep listed under NEEDS PIN TABLE until the exact TI 7483/83A pin/function datasheet can be opened.
+
+## 74283 — audited; implementation pending
+
+**TI source:** [SN74LS283 / SN74283](https://www.ti.com/lit/gpn/SN74LS283), datasheet SDLS095A (October 1976, revised March 1988), page 1 package pin configuration, description, and function table.
+
+**Package:** TI page 1 labels SN74283 as N package and SN74LS283 as D or N package. Library uses **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI page 1):**
+
+| Pin | Signal | Direction |
+|---:|---|---|
+| 1 | Σ2 | OUT, sum bit 2 |
+| 2 | B2 | IN |
+| 3 | A2 | IN |
+| 4 | Σ1 | OUT, sum bit 1 |
+| 5 | A1 | IN |
+| 6 | B1 | IN |
+| 7 | C0 | IN, carry input |
+| 8 | GND | IN |
+| 9 | C4 | OUT, carry output |
+| 10 | Σ4 | OUT, sum bit 4 |
+| 11 | B4 | IN |
+| 12 | A4 | IN |
+| 13 | Σ3 | OUT, sum bit 3 |
+| 14 | A3 | IN |
+| 15 | B3 | IN |
+| 16 | VCC | IN |
+
+The 74283 pin order above is the 74283-specific mapping. TI page 1 explicitly says the 283/LS283 functionally match the 83A/LS83A but terminal arrangements changed; no 7483 pins are inferred from this device.
+
+**TI function table (page 1):** the TI table uses A1, B1, A2, B2 as the two low-order bit-pair inputs. It gives outputs Σ1, Σ2, C2 for both possible carry-in values (C0=L and C0=H). Values below are in the order Σ1 Σ2 C2, with H=HIGH and L=LOW.
+
+| A1 B1 A2 B2 | C0=L: Σ1 Σ2 C2 | C0=H: Σ1 Σ2 C2 |
+|---|---|---|
+| L L L L | L L L | H L L |
+| L L L H | L H L | H H L |
+| L L H L | L H L | H H L |
+| L L H H | L L H | H L H |
+| L H L L | H L L | L H L |
+| L H L H | H H L | L L H |
+| L H H L | H H L | L L H |
+| L H H H | H L H | L H H |
+| H L L L | H L L | L H L |
+| H L L H | H H L | L L H |
+| H L H L | H H L | L L H |
+| H L H H | H L H | L H H |
+| H H L L | L H L | H H L |
+| H H L H | L L H | H L H |
+| H H H L | L L H | H L H |
+| H H H H | L H H | H H H |
+
+TI page-1 note states that A1, B1, A2, B2, C0 determine Σ1, Σ2 and internal carry C2; C2 with A3, B3, A4, B4 then determine Σ3, Σ4 and C4. The regression will exercise all 16 listed rows for both C0 cases, then exhaustively compare the flattened 4-bit device against the integer-addition reference over all 512 input combinations.
+
+**Second-source cross-check:** Philips/NXP [74HC283](https://media.digikey.com/pdf/Data%20Sheets/NXP%20PDFs/74HC283.pdf), Rev.03 (11 November 2004), pin configuration page 4 and function table page 5, confirms corresponding physical pin numbers with synonymous names (S2/S1/S4/S3 for TI Σ2/Σ1/Σ4/Σ3; CIN/COUT for C0/C4), the carry-in/sum/carry-out equation, and active-HIGH/active-LOW examples. It lists the N/DIP16 variant. **Not single-source.**
