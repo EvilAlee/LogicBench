@@ -371,3 +371,44 @@ H=HIGH, L=LOW, X=irrelevant. A and B are common select inputs shared by both fou
 
 **Second-source cross-check:** Nexperia [74HC153/74HCT153](https://assets.nexperia.com/documents/data-sheet/74HC_HCT153.pdf), Rev.11 (11 March 2024), pages 3–4, independently confirms the corresponding pin positions, both active-LOW enables, shared select lines, and all nine mux rows. Nexperia package drawings are SO16/TSSOP16; TI remains authoritative for DIP16 N. **Not single-source.**
 
+## 74157 — audited; implementation pending
+
+**TI source:** [SN74157/SN74LS157 shared datasheet](https://www.ti.com/lit/ds/symlink/sn74ls157.pdf), SDLS058 (March 1974, revised March 1988), page 1 DIP/N pin configuration and function table.
+
+**Package:** TI specifies SN74157 in N package; SN74LS157 in D or N. Library package: **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI page 1):**
+
+| Pin | Signal | Direction / behavior |
+|---:|---|---|
+| 1 | A/B | IN, common data select |
+| 2 | 1A | IN, channel 1 data A |
+| 3 | 1B | IN, channel 1 data B |
+| 4 | 1Y | OUT, channel 1 selected data |
+| 5 | 2A | IN, channel 2 data A |
+| 6 | 2B | IN, channel 2 data B |
+| 7 | 2Y | OUT, channel 2 selected data |
+| 8 | GND | IN |
+| 9 | 3Y | OUT, channel 3 selected data |
+| 10 | 3B | IN, channel 3 data B |
+| 11 | 3A | IN, channel 3 data A |
+| 12 | 4Y | OUT, channel 4 selected data |
+| 13 | 4B | IN, channel 4 data B |
+| 14 | 4A | IN, channel 4 data A |
+| 15 | G | IN, active-LOW strobe |
+| 16 | VCC | IN |
+
+**TI function table (page 1), repeated for each of the four channels:**
+
+| G | A/B | A | B | Y |
+|---|---|---|---|---|
+| H | X | X | X | L |
+| L | L | L | X | L |
+| L | L | H | X | H |
+| L | H | X | L | L |
+| L | H | X | H | H |
+
+H=HIGH, L=LOW, X=irrelevant. When strobe G is HIGH, outputs are forced LOW. When G is LOW, A/B=LOW selects each channel's A input; A/B=HIGH selects B. The 74157/74LS157 outputs are non-inverting (true data), unlike 74158/74LS158.
+
+**Second-source cross-check:** Nexperia [74HC157/74HCT157](https://xonstorage.z8.web.core.windows.net/pdf/NXP/460325XON.pdf), Rev.8 (28 December 2015), pinning page 3 and function table page 4, independently confirms pin positions 1=S,2/3=1I0/1I1,4=1Y,5/6=2I0/1,7=2Y,8=GND,9=3Y,10/11=3I1/0,12=4Y,13/14=4I1/0,15=E active LOW,16=VCC, as well as the five truth-table rows and true outputs. Nexperia packages are SO16/TSSOP16/DHVQFN16; TI remains the authority for the SN74157 N-package DIP. **Not single-source.**
+
