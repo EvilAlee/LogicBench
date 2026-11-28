@@ -117,9 +117,13 @@ public record Netlist(
                         "duplicate signal name or gate id: " + gate.id());
             }
             if (!gate.type().acceptsInputCount(gate.inputs().size())) {
+                String required = gate.type().minimumInputCount()
+                        == gate.type().maximumInputCount()
+                                ? Integer.toString(gate.type().minimumInputCount())
+                                : gate.type().minimumInputCount() + ".."
+                                        + gate.type().maximumInputCount();
                 throw new IllegalArgumentException("gate " + gate.id() + " of type "
-                        + gate.type() + " requires " + gate.type().minimumInputCount()
-                        + ".." + gate.type().maximumInputCount()
+                        + gate.type() + " requires " + required
                         + " inputs, got " + gate.inputs().size());
             }
             gatesById.put(gate.id(), gate);
