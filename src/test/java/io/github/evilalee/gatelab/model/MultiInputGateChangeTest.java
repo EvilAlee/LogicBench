@@ -43,7 +43,7 @@ class MultiInputGateChangeTest {
                     .findFirst().orElseThrow();
             assertTrue(net.pins().stream().anyMatch(pin ->
                     pin.componentId().equals(gate.id())
-                            && pin.pinId().equals("in" + index)),
+                            && pin.pinId().equals("in" + retainedIndex)),
                     "surviving input " + index + " should retain its source");
         }
         Connectivity.Net outputNet = topology.nets().stream()
