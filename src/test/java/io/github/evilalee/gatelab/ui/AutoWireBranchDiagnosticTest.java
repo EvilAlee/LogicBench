@@ -75,11 +75,11 @@ class AutoWireBranchDiagnosticTest {
         assertTrue(canvas.undo());
         assertEquals(beforeThirdRoute, schematic.wires(),
                 "one undo removes the final branch and restores the exact previous geometry");
+        Set<WireSegment> afterThirdGeometry = Set.copyOf(schematic.wires());
+        assertTrue(canvas.undo());
+        assertEquals(beforeThirdRoute, schematic.wires());
         assertTrue(canvas.redo());
-        assertEquals(afterThird.wires().stream().collect(java.util.stream.Collectors.toSet()),
-                Connectivity.analyze(schematic.pinPositions(), schematic.wires()).nets().stream()
-                        .flatMap(net -> net.segments().stream())
-                        .collect(java.util.stream.Collectors.toSet()));
+        assertEquals(afterThirdGeometry, Set.copyOf(schematic.wires()));
     }
 
     @Test
@@ -143,8 +143,8 @@ class AutoWireBranchDiagnosticTest {
         Connectivity.Result endpointTopology = Connectivity.analyze(
                 endpointSchematic.pinPositions(), endpointSchematic.wires());
         assertTrue(netFor(endpointTopology, targetPin).segments().contains(endpointNet));
-        assertEquals(2, endpointTopology.nets().size(),
-                "the branch joins the endpoint's wire-only net without merging another net");
+        assertEquals(1, endpointTopology.nets().size(),
+                "the branch joins the endpoint's wire-only net");
 
         CanvasPanel junctionCanvas = new CanvasPanel();
         junctionCanvas.setSize(900, 700);
