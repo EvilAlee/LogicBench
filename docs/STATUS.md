@@ -25,6 +25,8 @@
 
 ## In progress
 - feature-auto-wire: two-click A* orthogonal pin routing, driver checks, one-step undo, and headless router/canvas tests.
+- fix-auto-wire-branching (PR #66): net-aware pin/wire attachment and fan-out routing implemented; headless regression coverage and final CI verification in progress.
+- feature-gates-and-power: production AND/OR/NAND/NOR/XOR/XNOR 2–5 input variants, resize wire preservation, n-ary expression/VHDL export, and VCC/GND/Constant fixed sources with legacy-file migration.
 - feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification.
 - feature-ai-sequential: strict sequential response schema, DFF/DLATCH feedback compilation, reset-from-X checks, SequenceRunner verification, sequential cache replay and a sequence table; does not change the combinational AI path.
 - perf-ui-lag: opt-in EDT/paint profiling, debounced background expression preview, phase-keyed repeating grid texture and reduced no-change hover repaints; acceptance timings and phone-class human checks are tracked in PR #60.

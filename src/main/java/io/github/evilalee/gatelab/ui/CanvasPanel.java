@@ -207,9 +207,13 @@ public final class CanvasPanel extends JPanel {
     private Connectivity.Point wireStartPoint;
     private Connectivity.PinPosition gestureStartPin;
     private WireSegment pendingWireHit;
-    private AutoWireRouter.Endpoint pendingAutoWireStart;
+    private AutoWireRouter.Attachment pendingAutoWireStart;
     private Connectivity.PinPosition pendingAutoWireStartPin;
+    private WireSegment pendingAutoWireStartWire;
+    private AutoWireRouter.Attachment pendingAutoWireTarget;
     private Connectivity.PinPosition pendingAutoWireTargetPin;
+    private WireSegment pendingAutoWireTargetWire;
+    private Connectivity.Point pendingAutoWireHoverPoint;
     private boolean wireAxisChosen;
     private boolean wireHorizontalFirst;
 
@@ -1422,6 +1426,16 @@ public final class CanvasPanel extends JPanel {
                         && pendingAutoWireStart != null && gesture == Gesture.NONE) {
                     Rectangle oldBounds = autoWirePreviewScreenBounds();
                     pointerFromScreen(event.getPoint());
+                    Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
+                    Connectivity.PinPosition pin = pinNear(world.x, world.y);
+                    if (pin != null) {
+                        pendingAutoWireHoverPoint = new Connectivity.Point(pin.x(), pin.y());
+                    } else {
+                        WireSegment wire = schematic.wireAt(
+                                world.x, world.y, 6.0 / transform.scale()).orElse(null);
+                        pendingAutoWireHoverPoint = wire == null ? null
+                                : wireGridPoint(wire, world.x, world.y);
+                    }
                     repaintUnion(oldBounds, autoWirePreviewScreenBounds());
                 } else if (activeTool == Tool.EDIT && !readOnly && gesture == Gesture.NONE) {
                     Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
@@ -1522,18 +1536,48 @@ public final class CanvasPanel extends JPanel {
             Rectangle oldAutoWireBounds = autoWirePreviewScreenBounds();
             if (pin != null) {
                 if (!pin.equals(pendingAutoWireStartPin)) {
+                    pendingAutoWireTarget = AutoWireRouter.Attachment.pin(endpointForPin(pin));
                     pendingAutoWireTargetPin = pin;
+                    pendingAutoWireTargetWire = null;
+                    pendingAutoWireHoverPoint = new Connectivity.Point(pin.x(), pin.y());
                     gestureStartPin = pin;
                     gesture = Gesture.PENDING_AUTO_WIRE_TARGET;
                 }
                 repaintUnion(oldAutoWireBounds, autoWirePreviewScreenBounds());
                 return;
             }
-            clearAutoWirePending();
-            repaintIfPresent(oldAutoWireBounds);
+            if (wireHit != null && additive) {
+                // Shift/Ctrl-click remains a selection gesture, not an auto-wire endpoint.
+                clearAutoWirePending();
+                repaintIfPresent(oldAutoWireBounds);
+            } else if (wireHit != null) {
+                Connectivity.Point point = wireGridPoint(wireHit, world.x, world.y);
+                boolean regrabSelectedStart = pendingAutoWireStartWire != null
+                        && pendingAutoWireStartWire.equals(wireHit)
+                        && point.equals(pendingAutoWireStart.position())
+                        && selectedWires.contains(wireHit);
+                if (regrabSelectedStart) {
+                    // Re-pressing the same selected source point begins the existing drag-move.
+                    clearAutoWirePending();
+                    repaintIfPresent(oldAutoWireBounds);
+                } else {
+                    pendingAutoWireTarget = AutoWireRouter.Attachment.wire(point);
+                    pendingAutoWireTargetPin = null;
+                    pendingAutoWireTargetWire = wireHit;
+                    pendingAutoWireHoverPoint = point;
+                    gesture = Gesture.PENDING_AUTO_WIRE_TARGET;
+                    repaintUnion(oldAutoWireBounds, autoWirePreviewScreenBounds());
+                    return;
+                }
+            } else {
+                clearAutoWirePending();
+                repaintIfPresent(oldAutoWireBounds);
+            }
         }
 
         if (wireHit != null && selectedWires.contains(wireHit) && !additive) {
+            pendingWireHit = wireHit;
+            wireStartPoint = wireGridPoint(wireHit, world.x, world.y);
             gesture = Gesture.MOVE_SELECTION;
             captureSelectionForMove();
             moveStartWires = Set.copyOf(selectedWires);
@@ -1682,33 +1726,45 @@ public final class CanvasPanel extends JPanel {
 
     private void armAutoWire(Connectivity.PinPosition pin) {
         pendingAutoWireStartPin = pin;
-        pendingAutoWireStart = endpointForPin(pin);
+        pendingAutoWireStartWire = null;
+        pendingAutoWireStart = AutoWireRouter.Attachment.pin(endpointForPin(pin));
+        pendingAutoWireHoverPoint = null;
+        statusMessageListener.accept("");
+    }
+
+    private void armAutoWireWire(WireSegment wire, Connectivity.Point point) {
+        pendingAutoWireStartPin = null;
+        pendingAutoWireStartWire = wire;
+        pendingAutoWireStart = AutoWireRouter.Attachment.wire(point);
+        pendingAutoWireHoverPoint = null;
         statusMessageListener.accept("");
     }
 
     private void clearAutoWirePending() {
         pendingAutoWireStart = null;
         pendingAutoWireStartPin = null;
+        pendingAutoWireStartWire = null;
+        pendingAutoWireTarget = null;
         pendingAutoWireTargetPin = null;
+        pendingAutoWireTargetWire = null;
+        pendingAutoWireHoverPoint = null;
     }
 
-    private Rectangle completeAutoWire(Connectivity.PinPosition targetPin) {
-        Connectivity.PinPosition sourcePin = pendingAutoWireStartPin;
-        if (sourcePin == null || targetPin == null) {
+    private Rectangle completeAutoWire() {
+        AutoWireRouter.Attachment sourceAttachment = pendingAutoWireStart;
+        AutoWireRouter.Attachment targetAttachment = pendingAutoWireTarget;
+        if (sourceAttachment == null || targetAttachment == null) {
             return null;
         }
-        AutoWireRouter.Endpoint sourceEndpoint = endpointForPin(sourcePin);
-        AutoWireRouter.Endpoint targetEndpoint = endpointForPin(targetPin);
+
         Connectivity.Result topology = Connectivity.analyze(
                 schematic.pinPositions(), schematic.wires());
-        Connectivity.PinPosition clickedSourcePin = sourcePin;
-        Connectivity.PinPosition clickedTargetPin = targetPin;
-        Connectivity.Net sourceNet = topology.nets().stream()
-                .filter(net -> net.pins().contains(clickedSourcePin)).findFirst().orElse(null);
-        Connectivity.Net targetNet = topology.nets().stream()
-                .filter(net -> net.pins().contains(clickedTargetPin)).findFirst().orElse(null);
+        Connectivity.Net sourceNet = netForAttachment(
+                topology, sourceAttachment, pendingAutoWireStartPin, pendingAutoWireStartWire);
+        Connectivity.Net targetNet = netForAttachment(
+                topology, targetAttachment, pendingAutoWireTargetPin, pendingAutoWireTargetWire);
         if (sourceNet == null || targetNet == null) {
-            statusMessageListener.accept("Could not identify one of the selected pin nets");
+            statusMessageListener.accept("Could not identify one of the selected wire nets");
             return null;
         }
         if (sourceNet.equals(targetNet)) {
@@ -1716,30 +1772,35 @@ public final class CanvasPanel extends JPanel {
             return null;
         }
 
-        if (sourceEndpoint.output() && targetEndpoint.output()) {
-            statusMessageListener.accept("Cannot connect two output pins (two drivers)");
-            return null;
-        }
+        boolean sourcePinOutput = pendingAutoWireStartPin != null
+                && endpointForPin(pendingAutoWireStartPin).output();
+        boolean targetPinOutput = pendingAutoWireTargetPin != null
+                && endpointForPin(pendingAutoWireTargetPin).output();
         int sourceDrivers = outputDriverCount(sourceNet);
         int targetDrivers = outputDriverCount(targetNet);
-        if (!sourceEndpoint.output() && !targetEndpoint.output()
-                && (sourceDrivers > 0 || targetDrivers > 0)) {
-            statusMessageListener.accept(
-                    "Cannot connect two input pins when either net is already driven");
-            return null;
-        }
         if (sourceDrivers > 0 && targetDrivers > 0) {
-            statusMessageListener.accept("Cannot connect nets with multiple output drivers");
+            statusMessageListener.accept(sourcePinOutput && targetPinOutput
+                    ? "Cannot connect two output pins (two drivers)"
+                    : "Cannot connect nets with multiple output drivers");
             return null;
         }
 
-        if (!sourceEndpoint.output() && targetEndpoint.output()) {
-            Connectivity.PinPosition pinSwap = sourcePin;
-            sourcePin = targetPin;
-            targetPin = pinSwap;
-            AutoWireRouter.Endpoint endpointSwap = sourceEndpoint;
-            sourceEndpoint = targetEndpoint;
-            targetEndpoint = endpointSwap;
+        // Route outward from the driven net even if the user clicked the free side first.
+        AutoWireRouter.Attachment routeSource = sourceAttachment;
+        AutoWireRouter.Attachment routeTarget = targetAttachment;
+        Connectivity.Net routeSourceNet = sourceNet;
+        Connectivity.Net routeTargetNet = targetNet;
+        if (sourceDrivers == 0 && targetDrivers > 0) {
+            routeSource = targetAttachment;
+            routeTarget = sourceAttachment;
+            routeSourceNet = targetNet;
+            routeTargetNet = sourceNet;
+        } else if (sourceDrivers == 0 && targetDrivers == 0
+                && !sourcePinOutput && targetPinOutput) {
+            routeSource = targetAttachment;
+            routeTarget = sourceAttachment;
+            routeSourceNet = targetNet;
+            routeTargetNet = sourceNet;
         }
 
         List<GateGeometry.Bounds> obstacles = new ArrayList<>();
@@ -1753,19 +1814,23 @@ public final class CanvasPanel extends JPanel {
         for (ComponentInstance instance : schematic.componentInstances()) {
             obstacles.add(instance.bounds(schematic.componentDefinitionFor(instance)));
         }
-        Connectivity.PinPosition routeSourcePin = sourcePin;
-        Connectivity.PinPosition routeTargetPin = targetPin;
+
+        Set<Connectivity.PinPosition> attachmentPins = new java.util.HashSet<>(
+                routeSourceNet.pins());
+        attachmentPins.addAll(routeTargetNet.pins());
         List<Connectivity.Point> otherPins = schematic.pinPositions().stream()
-                .filter(pin -> !pin.equals(routeSourcePin) && !pin.equals(routeTargetPin))
+                .filter(pin -> !attachmentPins.contains(pin))
                 .map(pin -> new Connectivity.Point(pin.x(), pin.y()))
                 .toList();
 
         AutoWireRouter.Request request = new AutoWireRouter.Request(
-                sourceEndpoint, targetEndpoint, obstacles, otherPins,
-                schematic.wires(), topology.junctions());
+                routeSource, routeTarget, obstacles, otherPins,
+                schematic.wires(), topology.junctions(),
+                List.copyOf(routeSourceNet.segments()),
+                List.copyOf(routeTargetNet.segments()));
         AutoWireRouter.Route route = AutoWireRouter.route(request);
         if (route.segments().isEmpty()) {
-            statusMessageListener.accept("Could not create a wire between these pins");
+            statusMessageListener.accept("Could not create a wire between these endpoints");
             return null;
         }
 
@@ -1780,6 +1845,32 @@ public final class CanvasPanel extends JPanel {
         statusMessageListener.accept(route.usedFallback()
                 ? "Could not find a clean route; drew a direct wire" : "");
         return routeBounds;
+    }
+
+    private Connectivity.Net netForAttachment(
+            Connectivity.Result topology,
+            AutoWireRouter.Attachment attachment,
+            Connectivity.PinPosition pin,
+            WireSegment wire) {
+        if (pin != null) {
+            return topology.nets().stream()
+                    .filter(net -> net.pins().contains(pin))
+                    .findFirst().orElse(null);
+        }
+        if (wire != null) {
+            return topology.nets().stream()
+                    .filter(net -> net.segments().contains(wire))
+                    .findFirst().orElse(null);
+        }
+        Connectivity.Point point = attachment.position();
+        return topology.nets().stream()
+                .filter(net -> net.segments().stream().anyMatch(segment ->
+                        segment.isHorizontal()
+                                ? point.y() == segment.y1()
+                                        && point.x() >= segment.x1() && point.x() <= segment.x2()
+                                : point.x() == segment.x1()
+                                        && point.y() >= segment.y1() && point.y() <= segment.y2()))
+                .findFirst().orElse(null);
     }
 
     private int outputDriverCount(Connectivity.Net net) {
@@ -1854,8 +1945,10 @@ public final class CanvasPanel extends JPanel {
             return List.of();
         }
         Connectivity.Point start = pendingAutoWireStart.position();
-        int targetX = snapToGrid(pointerWorldX);
-        int targetY = snapToGrid(pointerWorldY);
+        int targetX = pendingAutoWireHoverPoint == null
+                ? snapToGrid(pointerWorldX) : pendingAutoWireHoverPoint.x();
+        int targetY = pendingAutoWireHoverPoint == null
+                ? snapToGrid(pointerWorldY) : pendingAutoWireHoverPoint.y();
         boolean horizontalFirst = Math.abs(targetX - start.x())
                 >= Math.abs(targetY - start.y());
         int cornerX = horizontalFirst ? targetX : start.x();
@@ -1878,6 +1971,12 @@ public final class CanvasPanel extends JPanel {
                 pendingAutoWireStart.position().x(), pendingAutoWireStart.position().y());
         Rectangle result = new Rectangle(
                 (int) Math.floor(screen.x) - 9, (int) Math.floor(screen.y) - 9, 18, 18);
+        if (pendingAutoWireHoverPoint != null) {
+            Point2D.Double hover = transform.worldToScreen(
+                    pendingAutoWireHoverPoint.x(), pendingAutoWireHoverPoint.y());
+            result = union(result, new Rectangle(
+                    (int) Math.floor(hover.x) - 9, (int) Math.floor(hover.y) - 9, 18, 18));
+        }
         for (WireSegment segment : autoWirePreviewSegments()) {
             result = union(result, wireSegmentScreenBounds(segment, DIRTY_REGION_MARGIN + 3));
         }
@@ -1948,7 +2047,7 @@ public final class CanvasPanel extends JPanel {
                 gestureVisualScreenBounds(), autoWirePreviewScreenBounds());
         pointerFromScreen(event.getPoint());
         if (gesture == Gesture.PENDING_AUTO_WIRE_TARGET) {
-            Rectangle addedWireBounds = completeAutoWire(pendingAutoWireTargetPin);
+            Rectangle addedWireBounds = completeAutoWire();
             resetGesture();
             clearAutoWirePending();
             repaintUnion(oldGestureBounds,
@@ -1966,6 +2065,7 @@ public final class CanvasPanel extends JPanel {
                 armAutoWire(gestureStartPin);
             } else if (pendingWireHit != null) {
                 selectWireClick(pendingWireHit);
+                armAutoWireWire(pendingWireHit, wireStartPoint);
             }
             resetGesture();
             repaintUnion(oldGestureBounds,
@@ -1992,6 +2092,15 @@ public final class CanvasPanel extends JPanel {
             commitHistoryGesture();
             resetGesture();
             repaintUnion(oldGestureBounds, finalWireBounds);
+            return;
+        }
+
+        if (gesture == Gesture.MOVE_SELECTION && !gestureMoved && pendingWireHit != null) {
+            selectWireClick(pendingWireHit);
+            armAutoWireWire(pendingWireHit, wireStartPoint);
+            resetGesture();
+            repaintUnion(oldGestureBounds,
+                    union(autoWirePreviewScreenBounds(), selectionScreenBounds()));
             return;
         }
 
@@ -2152,7 +2261,10 @@ public final class CanvasPanel extends JPanel {
         wireStartPoint = null;
         gestureStartPin = null;
         pendingWireHit = null;
+        pendingAutoWireTarget = null;
         pendingAutoWireTargetPin = null;
+        pendingAutoWireTargetWire = null;
+        pendingAutoWireHoverPoint = null;
         wireAxisChosen = false;
     }
 
@@ -2394,6 +2506,14 @@ public final class CanvasPanel extends JPanel {
                     if (pendingAutoWireStart != null) {
                         Connectivity.Point anchor = pendingAutoWireStart.position();
                         previewGraphics.drawOval(anchor.x() - 5, anchor.y() - 5, 10, 10);
+                    }
+                    if (pendingAutoWireHoverPoint != null) {
+                        previewGraphics.setColor(new Color(255, 140, 0));
+                        previewGraphics.setStroke(new BasicStroke(
+                                (float) (1.8 / transform.scale())));
+                        previewGraphics.drawOval(
+                                pendingAutoWireHoverPoint.x() - 7,
+                                pendingAutoWireHoverPoint.y() - 7, 14, 14);
                     }
                 } finally {
                     previewGraphics.dispose();
