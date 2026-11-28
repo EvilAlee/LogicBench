@@ -317,7 +317,7 @@ final class LegacySchematicLayout {
             String id = "expr-gate-" + gate.id();
             Node node = componentNode(
                     "gate:" + gate.id(), NodeKind.GATE, column,
-                    gate.id(), id, type);
+                    gate.id(), id, type, gate.inputs().size());
             columns.get(column).add(node);
             signalNodes.put(gate.id(), node);
             gateNodes.put(gate.id(), node);
@@ -516,6 +516,30 @@ final class LegacySchematicLayout {
             throw new IllegalArgumentException("gates.json has no narrow component for: " + family);
         }
         return definition;
+    }
+
+    private GateDef definitionFor(String family, int inputCount) {
+        return definitions.stream()
+                .filter(definition -> definition.family().equals(family)
+                        && definition.size().equals("narrow")
+                        && definition.inputCount() == inputCount)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "gates.json has no narrow " + family
+                                + " component with " + inputCount + " inputs"));
+    }
+
+    private Node componentNode(
+            String key,
+            NodeKind kind,
+            int column,
+            String signal,
+            String componentId,
+            String family,
+            int inputCount) {
+        GateDef definition = definitionFor(family, inputCount);
+        int height = GateGeometry.bounds(definition, Facing.EAST).height();
+        return new Node(key, kind, column, height, signal, componentId, definition);
     }
 
     private static String outputLabelFor(Node node, Netlist netlist) {
