@@ -76,7 +76,7 @@ class DisplayExporterTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent seg7 = schematic.add("seg7", 600, 300, Facing.EAST);
         schematic.setLabel(seg7.id(), "Status");
-        PlacedComponent hex = schematic.add("hexdigit", 1000, 300, Facing.SOUTH);
+        PlacedComponent hex = schematic.add("hexdigit", 1000, 300, Facing.EAST);
         schematic.setLabel(hex.id(), "Nibble");
         wireEveryPinToInput(schematic, seg7);
         wireEveryPinToInput(schematic, hex);
