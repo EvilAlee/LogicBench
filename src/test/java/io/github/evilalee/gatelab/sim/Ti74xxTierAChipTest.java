@@ -39,6 +39,10 @@ class Ti74xxTierAChipTest {
             int g1, int g2Star, int selector, int lowOutput) {
     }
 
+    private record DualDecoderRow(
+            int enable, int b, int a, int lowOutput) {
+    }
+
     private static final List<BcdRow> SN7442_FUNCTION_TABLE = List.of(
             new BcdRow(0b0000, 0),
             new BcdRow(0b0001, 1),
@@ -140,6 +144,18 @@ class Ti74xxTierAChipTest {
         }
     }
 
+    /**
+     * Rows transcribed from TI SN74LS139A datasheet SDLS013, page 1:
+     * https://www.ti.com/lit/gpn/SN74LS139A
+     * This same table applies independently to decoder 1 and decoder 2.
+     */
+    private static final List<DualDecoderRow> SN74139_FUNCTION_TABLE = List.of(
+            new DualDecoderRow(1, -1, -1, -1),
+            new DualDecoderRow(0, 0, 0, 0),
+            new DualDecoderRow(0, 0, 1, 1),
+            new DualDecoderRow(0, 1, 0, 2),
+            new DualDecoderRow(0, 1, 1, 3));
+
     @Test
     void sn74138PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
         ComponentDefinition definition = library().get("74138");
@@ -221,6 +237,65 @@ class Ti74xxTierAChipTest {
     }
 
     @Test
+    void sn74139PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
+        ComponentDefinition definition = library().get("74139");
+        assertEquals("DIP16", definition.packageType());
+        Map<String, Integer> expected = Map.ofEntries(
+                Map.entry("1G", 1), Map.entry("1A", 2), Map.entry("1B", 3),
+                Map.entry("1Y0", 4), Map.entry("1Y1", 5), Map.entry("1Y2", 6),
+                Map.entry("1Y3", 7), Map.entry("GND", 8), Map.entry("2Y3", 9),
+                Map.entry("2Y2", 10), Map.entry("2Y1", 11), Map.entry("2Y0", 12),
+                Map.entry("2B", 13), Map.entry("2A", 14), Map.entry("2G", 15),
+                Map.entry("VCC", 16));
+        Map<String, Integer> actual = new HashMap<>();
+        definition.ports().forEach(port -> actual.put(port.name(), port.pin()));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void sn74139BothDecodersMatchTheSameTiFunctionTableWhenPowered() throws IOException {
+        Schematic schematic = dualDecoderFixture();
+        SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
+        Simulator simulator = new Simulator(compiled.circuit());
+        Map<String, String> inputIds = componentIdsByLabel(schematic, "input");
+        Map<String, String> outputIds = componentIdsByLabel(schematic, "output");
+
+        Map<String, InputPinAccess> inputs = new HashMap<>();
+        for (String name : List.of("1G", "1A", "1B", "2G", "2A", "2B", "VCC", "GND")) {
+            inputs.put(name, new InputPinAccess(compiled.inputs().get(inputIds.get(name))));
+        }
+        simulator.setInputValue(inputs.get("VCC").pin(), Value.ONE);
+        simulator.setInputValue(inputs.get("GND").pin(), Value.ZERO);
+
+        for (DualDecoderRow row : SN74139_FUNCTION_TABLE) {
+            for (String prefix : List.of("1", "2")) {
+                simulator.setInputValue(inputs.get(prefix + "G").pin(),
+                        row.enable() == 1 ? Value.ONE : Value.ZERO);
+                int a = row.a() < 0 ? 0 : row.a();
+                int b = row.b() < 0 ? 0 : row.b();
+                simulator.setInputValue(inputs.get(prefix + "A").pin(), bit(a, 0));
+                simulator.setInputValue(inputs.get(prefix + "B").pin(), bit(b, 0));
+            }
+            simulator.settle();
+
+            for (String prefix : List.of("1", "2")) {
+                for (int output = 0; output < 4; output++) {
+                    String signal = prefix + "Y" + output;
+                    String probe = "probe" + signal;
+                    String probeId = outputIds.get(probe);
+                    assertNotNull(probeId, "missing output probe " + probe);
+                    Value expected = row.lowOutput() == output ? Value.ZERO : Value.ONE;
+                    assertEquals(expected,
+                            simulator.getProbeValue(compiled.outputs().get(probeId)),
+                            "decoder " + prefix + ", G=" + row.enable()
+                                    + ", B=" + row.b() + ", A=" + row.a()
+                                    + ", output " + signal);
+                }
+            }
+        }
+    }
+
+    @Test
     void sn7442OutputIsUnknownWhenItsVccSupplyIsNotConnected() throws IOException {
         Schematic schematic = bcdFixture(false);
         SchematicCompiler.SimulationResult result =
@@ -243,6 +318,37 @@ class Ti74xxTierAChipTest {
             addOutputAt(schematic, "probeY" + output, pins.get("Y" + output));
         }
         return schematic;
+    }
+
+    private static Schematic dualDecoderFixture() throws IOException {
+        ComponentDefinition definition = library().get("74139");
+        Schematic schematic = new Schematic(GATES);
+        ComponentInstance chip = schematic.addInstance(
+                definition, 300, 200, Facing.EAST);
+        Map<String, ComponentInstance.PinGeometry> pins = pins(chip, definition);
+        for (String name : List.of("1G", "1A", "1B", "2G", "2A", "2B")) {
+            addInputAt(schematic, name, pins.get(name), false);
+        }
+        addInputAt(schematic, "GND", pins.get("GND"), false);
+        addInputAt(schematic, "VCC", pins.get("VCC"), true);
+        for (String section : List.of("1", "2")) {
+            for (int output = 0; output < 4; output++) {
+                String signal = section + "Y" + output;
+                addOutputAt(schematic, "probe" + signal, pins.get(signal));
+            }
+        }
+        return schematic;
+    }
+
+    private static Map<String, String> componentIdsByLabel(
+            Schematic schematic, String family) {
+        Map<String, String> result = new HashMap<>();
+        for (PlacedComponent component : schematic.components()) {
+            if (component.typeId().equals(family)) {
+                result.put(component.label(), component.id());
+            }
+        }
+        return result;
     }
 
     private static Schematic bcdFixture(boolean connectVcc) throws IOException {

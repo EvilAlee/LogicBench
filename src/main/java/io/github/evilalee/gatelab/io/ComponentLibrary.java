@@ -731,6 +731,25 @@ public final class ComponentLibrary {
         chips.add(expressionChip(gateDefinitions, "74138",
                 "3-to-8 decoder/demultiplexer with active-low outputs",
                 decoder74138, decoder138Rows));
+
+        List<ChipPortSpec> decoder74139 = List.of(
+                in("1G", 1), in("1A", 2), in("1B", 3),
+                out("1Y0", 4), out("1Y1", 5), out("1Y2", 6), out("1Y3", 7),
+                in("GND", 8), out("2Y3", 9), out("2Y2", 10),
+                out("2Y1", 11), out("2Y0", 12), in("2B", 13),
+                in("2A", 14), in("2G", 15), in("VCC", 16));
+        List<ChipOutputExpression> decoder139Rows = List.of(
+                new ChipOutputExpression("1Y0", "1G | 1B | 1A"),
+                new ChipOutputExpression("1Y1", "1G | 1B | !1A"),
+                new ChipOutputExpression("1Y2", "1G | !1B | 1A"),
+                new ChipOutputExpression("1Y3", "1G | !1B | !1A"),
+                new ChipOutputExpression("2Y0", "2G | 2B | 2A"),
+                new ChipOutputExpression("2Y1", "2G | 2B | !2A"),
+                new ChipOutputExpression("2Y2", "2G | !2B | 2A"),
+                new ChipOutputExpression("2Y3", "2G | !2B | !2A"));
+        chips.add(expressionChip(gateDefinitions, "74139",
+                "Dual 2-to-4 decoders/demultiplexers with active-low outputs",
+                decoder74139, decoder139Rows));
         return List.copyOf(chips);
     }
 

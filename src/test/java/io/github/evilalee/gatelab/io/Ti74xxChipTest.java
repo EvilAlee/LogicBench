@@ -83,6 +83,11 @@ class Ti74xxChipTest {
                 "G1", 6, "Y7", 7, "GND", 8, "Y6", 9, "Y5", 10,
                 "Y4", 11, "Y3", 12, "Y2", 13, "Y1", 14, "Y0", 15, "VCC", 16));
 
+        expected.put("74139", pins(
+                "1G", 1, "1A", 2, "1B", 3, "1Y0", 4, "1Y1", 5,
+                "1Y2", 6, "1Y3", 7, "GND", 8, "2Y3", 9, "2Y2", 10,
+                "2Y1", 11, "2Y0", 12, "2B", 13, "2A", 14, "2G", 15, "VCC", 16));
+
         assertEquals(expected.keySet(), library.builtIns().stream()
                 .filter(definition -> definition.category().equals("TTL 74xx"))
                 .map(ComponentDefinition::name)
@@ -90,7 +95,7 @@ class Ti74xxChipTest {
         for (Map.Entry<String, Map<String, Integer>> entry : expected.entrySet()) {
             ComponentDefinition definition = library.get(entry.getKey());
             assertEquals(
-                    Set.of("7442", "74138").contains(entry.getKey()) ? "DIP16" : "DIP14",
+                    Set.of("7442", "74138", "74139").contains(entry.getKey()) ? "DIP16" : "DIP14",
                     definition.packageType(), entry.getKey());
             assertEquals(entry.getValue(), definition.ports().stream().collect(
                     java.util.stream.Collectors.toMap(
