@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.io;
 
 import io.github.evilalee.gatelab.model.Circuit;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Component;
 import io.github.evilalee.gatelab.model.Gate;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -557,7 +558,217 @@ public final class ComponentLibrary {
                 "FA", "Full adder", "Arithmetic",
                 ports(List.of("A", "B", "CIN"), null, List.of("S", "COUT")), null,
                 new SchematicLayout(gateDefinitions).layout(fullAdder.netlist()).schematic()));
+        result.addAll(createTtlBuiltIns(gateDefinitions));
         return List.copyOf(result);
+    }
+
+    private record ChipPortSpec(
+            String name, int pin, ComponentDefinition.Direction direction) {
+    }
+
+    private record ChipFunction(
+            String output, List<String> inputs, GateOperator operation) {
+        private ChipFunction {
+            inputs = List.copyOf(inputs);
+        }
+    }
+
+    private static ChipPortSpec in(String name, int pin) {
+        return new ChipPortSpec(name, pin, ComponentDefinition.Direction.IN);
+    }
+
+    private static ChipPortSpec out(String name, int pin) {
+        return new ChipPortSpec(name, pin, ComponentDefinition.Direction.OUT);
+    }
+
+    private static ChipFunction fn(String output, GateOperator operation, String... inputs) {
+        return new ChipFunction(output, List.of(inputs), operation);
+    }
+
+    private static List<ComponentDefinition> createTtlBuiltIns(List<GateDef> gateDefinitions) {
+        List<ComponentDefinition> chips = new ArrayList<>();
+        List<ChipPortSpec> quad14 = List.of(
+                in("1A", 1), in("1B", 2), out("1Y", 3),
+                in("2A", 4), in("2B", 5), out("2Y", 6),
+                in("GND", 7), out("3Y", 8), in("3A", 9), in("3B", 10),
+                out("4Y", 11), in("4A", 12), in("4B", 13), in("VCC", 14));
+        chips.add(chip(gateDefinitions, "7400", "Quad 2-input NAND gates", quad14,
+                List.of(
+                        fn("1Y", GateOperator.NAND, "1A", "1B"),
+                        fn("2Y", GateOperator.NAND, "2A", "2B"),
+                        fn("3Y", GateOperator.NAND, "3A", "3B"),
+                        fn("4Y", GateOperator.NAND, "4A", "4B"))));
+
+        List<ChipPortSpec> nor14 = List.of(
+                out("1Y", 1), in("1A", 2), in("1B", 3),
+                out("2Y", 4), in("2A", 5), in("2B", 6),
+                in("GND", 7), in("3A", 8), in("3B", 9), out("3Y", 10),
+                in("4A", 11), in("4B", 12), out("4Y", 13), in("VCC", 14));
+        chips.add(chip(gateDefinitions, "7402", "Quad 2-input NOR gates", nor14,
+                List.of(
+                        fn("1Y", GateOperator.NOR, "1A", "1B"),
+                        fn("2Y", GateOperator.NOR, "2A", "2B"),
+                        fn("3Y", GateOperator.NOR, "3A", "3B"),
+                        fn("4Y", GateOperator.NOR, "4A", "4B"))));
+
+        List<ChipPortSpec> inverter14 = List.of(
+                in("1A", 1), out("1Y", 2), in("2A", 3), out("2Y", 4),
+                in("3A", 5), out("3Y", 6), in("GND", 7),
+                out("4Y", 8), in("4A", 9), out("5Y", 10),
+                in("5A", 11), out("6Y", 12), in("6A", 13), in("VCC", 14));
+        chips.add(chip(gateDefinitions, "7404", "Hex inverter", inverter14,
+                List.of(
+                        fn("1Y", GateOperator.NOT, "1A"),
+                        fn("2Y", GateOperator.NOT, "2A"),
+                        fn("3Y", GateOperator.NOT, "3A"),
+                        fn("4Y", GateOperator.NOT, "4A"),
+                        fn("5Y", GateOperator.NOT, "5A"),
+                        fn("6Y", GateOperator.NOT, "6A"))));
+
+        chips.add(chip(gateDefinitions, "7408", "Quad 2-input AND gates", quad14,
+                List.of(
+                        fn("1Y", GateOperator.AND, "1A", "1B"),
+                        fn("2Y", GateOperator.AND, "2A", "2B"),
+                        fn("3Y", GateOperator.AND, "3A", "3B"),
+                        fn("4Y", GateOperator.AND, "4A", "4B"))));
+        chips.add(chip(gateDefinitions, "7432", "Quad 2-input OR gates", quad14,
+                List.of(
+                        fn("1Y", GateOperator.OR, "1A", "1B"),
+                        fn("2Y", GateOperator.OR, "2A", "2B"),
+                        fn("3Y", GateOperator.OR, "3A", "3B"),
+                        fn("4Y", GateOperator.OR, "4A", "4B"))));
+        chips.add(chip(gateDefinitions, "7486", "Quad 2-input XOR gates", quad14,
+                List.of(
+                        fn("1Y", GateOperator.XOR, "1A", "1B"),
+                        fn("2Y", GateOperator.XOR, "2A", "2B"),
+                        fn("3Y", GateOperator.XOR, "3A", "3B"),
+                        fn("4Y", GateOperator.XOR, "4A", "4B"))));
+
+        List<ChipPortSpec> triple14 = List.of(
+                in("1A", 1), in("1B", 2), in("2A", 3), in("2B", 4),
+                in("2C", 5), out("2Y", 6), in("GND", 7), out("3Y", 8),
+                in("3A", 9), in("3B", 10), in("3C", 11), out("1Y", 12),
+                in("1C", 13), in("VCC", 14));
+        chips.add(chip(gateDefinitions, "7410", "Triple 3-input NAND gates", triple14,
+                List.of(
+                        fn("1Y", GateOperator.NAND, "1A", "1B", "1C"),
+                        fn("2Y", GateOperator.NAND, "2A", "2B", "2C"),
+                        fn("3Y", GateOperator.NAND, "3A", "3B", "3C"))));
+        chips.add(chip(gateDefinitions, "7411", "Triple 3-input AND gates", triple14,
+                List.of(
+                        fn("1Y", GateOperator.AND, "1A", "1B", "1C"),
+                        fn("2Y", GateOperator.AND, "2A", "2B", "2C"),
+                        fn("3Y", GateOperator.AND, "3A", "3B", "3C"))));
+        chips.add(chip(gateDefinitions, "7427", "Triple 3-input NOR gates", triple14,
+                List.of(
+                        fn("1Y", GateOperator.NOR, "1A", "1B", "1C"),
+                        fn("2Y", GateOperator.NOR, "2A", "2B", "2C"),
+                        fn("3Y", GateOperator.NOR, "3A", "3B", "3C"))));
+
+        List<ChipPortSpec> dual4 = List.of(
+                in("1A", 1), in("1B", 2), in("1C", 4), in("1D", 5),
+                out("1Y", 6), in("GND", 7), out("2Y", 8), in("2A", 9),
+                in("2B", 10), in("2C", 12), in("2D", 13), in("VCC", 14));
+        chips.add(chip(gateDefinitions, "7420", "Dual 4-input NAND gates", dual4,
+                List.of(
+                        fn("1Y", GateOperator.NAND, "1A", "1B", "1C", "1D"),
+                        fn("2Y", GateOperator.NAND, "2A", "2B", "2C", "2D"))));
+
+        List<ChipPortSpec> nand8 = List.of(
+                in("A", 1), in("B", 2), in("C", 3), in("D", 4), in("E", 5),
+                in("F", 6), in("GND", 7), out("Y", 8), in("G", 11),
+                in("H", 12), in("VCC", 14));
+        chips.add(chip(gateDefinitions, "7430", "8-input NAND gate", nand8,
+                List.of(fn("Y", GateOperator.NAND, "A", "B", "C", "D", "E", "F", "G", "H"))));
+        return List.copyOf(chips);
+    }
+
+    private static ComponentDefinition chip(
+            List<GateDef> gateDefinitions,
+            String name,
+            String description,
+            List<ChipPortSpec> chipPorts,
+            List<ChipFunction> functions) {
+        List<String> functionalInputs = chipPorts.stream()
+                .filter(port -> port.direction() == ComponentDefinition.Direction.IN)
+                .map(ChipPortSpec::name)
+                .filter(port -> !port.equals("VCC") && !port.equals("GND"))
+                .toList();
+        List<String> functionalOutputs = chipPorts.stream()
+                .filter(port -> port.direction() == ComponentDefinition.Direction.OUT)
+                .map(ChipPortSpec::name)
+                .toList();
+        Map<String, String> inputAlias = new LinkedHashMap<>();
+        for (int index = 0; index < functionalInputs.size(); index++) {
+            inputAlias.put(functionalInputs.get(index), "P" + index);
+        }
+
+        Map<String, String> outputSource = new LinkedHashMap<>();
+        List<Netlist.Gate> gates = new ArrayList<>();
+        int gateNumber = 0;
+        for (ChipFunction function : functions) {
+            String current = inputAlias.get(function.inputs().getFirst());
+            for (int index = 1; index < function.inputs().size(); index++) {
+                boolean finalStep = index == function.inputs().size() - 1;
+                GateOperator operator = function.operation();
+                // Multi-input NAND/NOR use a positive reduction followed by the final inversion.
+                if (function.inputs().size() > 2
+                        && (function.operation() == GateOperator.NAND
+                                || function.operation() == GateOperator.NOR)
+                        && !finalStep) {
+                    operator = function.operation() == GateOperator.NAND
+                            ? GateOperator.AND : GateOperator.OR;
+                }
+                String next = inputAlias.get(function.inputs().get(index));
+                String gateId = "g" + gateNumber++;
+                gates.add(new Netlist.Gate(gateId, operator, List.of(current, next)));
+                current = gateId;
+            }
+            if (function.operation() == GateOperator.NOT) {
+                String gateId = "g" + gateNumber++;
+                gates.add(new Netlist.Gate(gateId, GateOperator.NOT, List.of(current)));
+                current = gateId;
+            }
+            outputSource.put(function.output(), current);
+        }
+
+        List<Netlist.Output> outputs = new ArrayList<>();
+        Map<String, String> outputAlias = new LinkedHashMap<>();
+        for (int index = 0; index < functionalOutputs.size(); index++) {
+            String portName = functionalOutputs.get(index);
+            String alias = "O" + index;
+            outputAlias.put(portName, alias);
+            String source = outputSource.get(portName);
+            if (source == null) {
+                throw new IllegalStateException(name + " has no logic function for output " + portName);
+            }
+            outputs.add(new Netlist.Output(alias, source));
+        }
+        Netlist netlist = new Netlist(
+                new ArrayList<>(inputAlias.values()), outputs, gates);
+        SchematicLayout.LayoutResult layout = new SchematicLayout(gateDefinitions).layout(netlist);
+        Schematic internal = layout.schematic();
+        inputAlias.forEach((portName, alias) ->
+                internal.setLabel(layout.inputComponentIds().get(alias), portName));
+        outputAlias.forEach((portName, alias) ->
+                internal.setLabel(layout.outputComponentIds().get(alias), portName));
+
+        int bottom = internal.pinPositions().stream()
+                .mapToInt(Connectivity.PinPosition::y).max().orElse(0);
+        internal.add(new io.github.evilalee.gatelab.model.PlacedComponent(
+                "chip-vcc", "input", 0, bottom + 80,
+                io.github.evilalee.gatelab.model.Facing.EAST, Map.of(), "VCC"));
+        internal.add(new io.github.evilalee.gatelab.model.PlacedComponent(
+                "chip-gnd", "input", 0, bottom + 120,
+                io.github.evilalee.gatelab.model.Facing.EAST, Map.of(), "GND"));
+
+        List<ComponentDefinition.Port> ports = new ArrayList<>();
+        for (ChipPortSpec port : chipPorts) {
+            ports.add(new ComponentDefinition.Port(
+                    port.name(), port.direction(), false, port.pin()));
+        }
+        return new ComponentDefinition(
+                name, description, "TTL 74xx", ports, null, "DIP14", internal);
     }
 
     private static ComponentDefinition sequentialBuiltIn(

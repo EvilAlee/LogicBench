@@ -22,12 +22,19 @@ public final class ComponentDefinition {
         OUT
     }
 
-    public record Port(String name, Direction direction, boolean isClock) {
+    public record Port(String name, Direction direction, boolean isClock, Integer pin) {
+        public Port(String name, Direction direction, boolean isClock) {
+            this(name, direction, isClock, null);
+        }
+
         public Port {
-            name = requireIdentifier(name, "port name");
+            name = requirePortIdentifier(name, "port name");
             Objects.requireNonNull(direction, "direction");
             if (isClock && direction != Direction.IN) {
                 throw new IllegalArgumentException("clock port must have direction IN: " + name);
+            }
+            if (pin != null && pin < 1) {
+                throw new IllegalArgumentException("physical pin numbers are 1-based: " + name);
             }
         }
     }
@@ -37,6 +44,7 @@ public final class ComponentDefinition {
     private final String category;
     private final List<Port> ports;
     private final String primaryOutput;
+    private final String packageType;
     private final Schematic internalCircuit;
     private final String hash;
 
@@ -47,7 +55,22 @@ public final class ComponentDefinition {
             List<Port> ports,
             String primaryOutput,
             Schematic internalCircuit) {
-        this.name = requireIdentifier(name, "definition name");
+        this(name, description, category, ports, primaryOutput, null, internalCircuit);
+    }
+
+    /** Constructor for DIP-style chip definitions; null packageType means legacy box style. */
+    public ComponentDefinition(
+            String name,
+            String description,
+            String category,
+            List<Port> ports,
+            String primaryOutput,
+            String packageType,
+            Schematic internalCircuit) {
+        String normalizedPackage = normalizePackage(packageType);
+        this.name = normalizedPackage != null && name != null
+                && name.trim().matches("74[0-9]{2}")
+                ? name.trim() : requireIdentifier(name, "definition name");
         this.description = requireText(description, "description");
         this.category = requireText(category, "category");
         this.ports = List.copyOf(Objects.requireNonNull(ports, "ports"));
@@ -69,8 +92,10 @@ public final class ComponentDefinition {
                     "primaryOutput must name an OUT port: " + normalizedPrimary);
         }
         this.primaryOutput = normalizedPrimary;
+        this.packageType = normalizedPackage;
         this.internalCircuit = Objects.requireNonNull(internalCircuit, "internalCircuit").copy();
         validatePorts(this.ports, this.internalCircuit);
+        validateChipPins(this.ports, this.packageType);
         this.hash = calculateHash();
     }
 
@@ -111,7 +136,7 @@ public final class ComponentDefinition {
                 throw new IllegalArgumentException(
                         "definition port component must have a Name: " + component.id());
             }
-            String portName = requireIdentifier(component.label(), "port name");
+            String portName = requirePortIdentifier(component.label(), "port name");
             if (!names.add(portName)) {
                 throw new IllegalArgumentException("duplicate port name: " + portName);
             }
@@ -182,6 +207,13 @@ public final class ComponentDefinition {
             append(canonical, port.direction().name());
             append(canonical, Boolean.toString(port.isClock()));
         }
+        // Keep legacy non-chip hashes byte-for-byte stable.
+        if (packageType != null) {
+            append(canonical, packageType);
+            for (Port port : ports) {
+                append(canonical, port.pin() == null ? "" : port.pin().toString());
+            }
+        }
         append(canonical, internalCircuit.undefinedInputMode().jsonValue());
         internalCircuit.components().stream()
                 .sorted(Comparator.comparing(PlacedComponent::id))
@@ -234,6 +266,59 @@ public final class ComponentDefinition {
         target.append(value.length()).append(':').append(value).append(';');
     }
 
+    private static String normalizePackage(String packageType) {
+        if (packageType == null || packageType.isBlank()) {
+            return null;
+        }
+        String normalized = packageType.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!normalized.equals("DIP14") && !normalized.equals("DIP16")) {
+            throw new IllegalArgumentException("chip package must be DIP14 or DIP16: " + packageType);
+        }
+        return normalized;
+    }
+
+    private static void validateChipPins(List<Port> ports, String packageType) {
+        boolean hasPinNumbers = ports.stream().anyMatch(port -> port.pin() != null);
+        if (packageType == null) {
+            if (hasPinNumbers) {
+                throw new IllegalArgumentException("physical pin numbers require a DIP chip package");
+            }
+            return;
+        }
+        int pinCount = Integer.parseInt(packageType.substring(3));
+        Set<Integer> usedPins = new HashSet<>();
+        for (Port port : ports) {
+            if (port.pin() == null) {
+                throw new IllegalArgumentException(
+                        "chip port " + port.name() + " must declare its physical pin number");
+            }
+            if (port.pin() > pinCount) {
+                throw new IllegalArgumentException(
+                        "chip port " + port.name() + " pin " + port.pin() + " exceeds " + packageType);
+            }
+            if (!usedPins.add(port.pin())) {
+                throw new IllegalArgumentException("duplicate physical chip pin: " + port.pin());
+            }
+        }
+        for (String powerName : List.of("VCC", "GND")) {
+            Port power = ports.stream().filter(port -> port.name().equals(powerName))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                            packageType + " chip definition must include " + powerName));
+            if (power.direction() != Direction.IN) {
+                throw new IllegalArgumentException(powerName + " must be an input port");
+            }
+        }
+    }
+
+    private static String requirePortIdentifier(String value, String label) {
+        String text = requireText(value, label);
+        if (!text.matches("[A-Za-z0-9][A-Za-z0-9_]*")) {
+            throw new IllegalArgumentException(
+                    label + " must contain only letters, digits and underscores: " + value);
+        }
+        return text;
+    }
+
     private static String requireIdentifier(String value, String label) {
         String text = requireText(value, label);
         if (!text.matches("[A-Za-z][A-Za-z0-9_]*")) {
@@ -257,6 +342,8 @@ public final class ComponentDefinition {
     public String category() { return category; }
     public List<Port> ports() { return ports; }
     public String primaryOutput() { return primaryOutput; }
+    public String packageType() { return packageType; }
+    public boolean isChipStyle() { return packageType != null; }
     public String hash() { return hash; }
 
     /** Returns an isolated copy so callers cannot mutate the definition. */

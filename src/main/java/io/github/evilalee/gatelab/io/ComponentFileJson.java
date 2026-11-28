@@ -29,12 +29,18 @@ public final class ComponentFileJson {
         root.addProperty("name", definition.name());
         root.addProperty("description", definition.description());
         root.addProperty("category", definition.category());
+        if (definition.packageType() != null) {
+            root.addProperty("package", definition.packageType());
+        }
         JsonArray ports = new JsonArray();
         for (ComponentDefinition.Port port : definition.ports()) {
             JsonObject item = new JsonObject();
             item.addProperty("name", port.name());
             item.addProperty("direction", port.direction().name());
             item.addProperty("isClock", port.isClock());
+            if (port.pin() != null) {
+                item.addProperty("pin", port.pin());
+            }
             ports.add(item);
         }
         root.add("ports", ports);
@@ -97,7 +103,8 @@ public final class ComponentFileJson {
                 throw new IllegalArgumentException(context + ".direction must be IN or OUT", exception);
             }
             boolean isClock = item.has("isClock") && booleanValue(item, "isClock");
-            ports.add(new ComponentDefinition.Port(portName, direction, isClock));
+            Integer pin = optionalInteger(item, "pin");
+            ports.add(new ComponentDefinition.Port(portName, direction, isClock, pin));
         }
         JsonElement circuitElement = root.has("internalCircuit")
                 ? root.get("internalCircuit") : root.get("circuit");
@@ -105,8 +112,9 @@ public final class ComponentFileJson {
             throw new IllegalArgumentException(".lbcomp internalCircuit must be a circuit object");
         }
         Schematic circuit = SchematicJson.fromJson(circuitElement.toString(), gateDefinitions);
+        String packageType = optionalString(root, "package");
         ComponentDefinition definition = new ComponentDefinition(
-                name, description, category, ports, primaryOutput, circuit);
+                name, description, category, ports, primaryOutput, packageType, circuit);
         if (!definition.hash().equalsIgnoreCase(hash)) {
             throw new IllegalArgumentException("component hash mismatch for " + name
                     + ": stored=" + hash + ", calculated=" + definition.hash());
@@ -124,6 +132,20 @@ public final class ComponentFileJson {
             return new java.math.BigDecimal(value.getAsString()).intValueExact();
         } catch (NumberFormatException | ArithmeticException exception) {
             throw new IllegalArgumentException(".lbcomp " + field + " must be a 32-bit integer", exception);
+        }
+    }
+
+    private static Integer optionalInteger(JsonObject object, String field) {
+        JsonElement value = object.get(field);
+        if (value == null || value.isJsonNull()) return null;
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
+            throw new IllegalArgumentException(".lbcomp " + field + " must be an integer");
+        }
+        try {
+            return new java.math.BigDecimal(value.getAsString()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException exception) {
+            throw new IllegalArgumentException(".lbcomp " + field + " must be a 32-bit integer",
+                    exception);
         }
     }
 

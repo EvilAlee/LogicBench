@@ -490,6 +490,11 @@ public final class Main {
         document.ticksEnabledItem = ticksEnabled;
         simulate.add(tickOnce);
         simulate.add(ticksEnabled);
+        simulate.addSeparator();
+        JCheckBoxMenuItem requireChipPower = new JCheckBoxMenuItem("Require power on chips");
+        requireChipPower.addActionListener(event ->
+                canvas.setRequirePowerOnChips(requireChipPower.isSelected()));
+        simulate.add(requireChipPower);
 
         JRadioButtonMenuItem ignore =
                 new JRadioButtonMenuItem("Ignore unconnected inputs");
@@ -889,9 +894,17 @@ public final class Main {
                 gates.add(new DefaultMutableTreeNode(item));
             }
         }
-        canvas.componentLibrary().builtIns().forEach(definition ->
-                builtIn.add(new DefaultMutableTreeNode(new ComponentTreeItem(
-                        "component:" + definition.name(), definition.name()))));
+        DefaultMutableTreeNode ttl74xx = new DefaultMutableTreeNode("TTL 74xx");
+        for (var definition : canvas.componentLibrary().builtIns()) {
+            DefaultMutableTreeNode node = new DefaultMutableTreeNode(new ComponentTreeItem(
+                    "component:" + definition.name(), definition.name()));
+            if (definition.category().equals("TTL 74xx")) {
+                ttl74xx.add(node);
+            } else {
+                builtIn.add(node);
+            }
+        }
+        builtIn.add(ttl74xx);
         canvas.componentLibrary().userDefinitions().forEach(definition ->
                 myComponents.add(new DefaultMutableTreeNode(new ComponentTreeItem(
                         "component:" + definition.name(), definition.name()))));
@@ -924,6 +937,7 @@ public final class Main {
         tree.expandPath(new TreePath(gates.getPath()));
         tree.expandPath(new TreePath(pins.getPath()));
         tree.expandPath(new TreePath(builtIn.getPath()));
+        tree.expandPath(new TreePath(ttl74xx.getPath()));
         tree.expandPath(new TreePath(myComponents.getPath()));
         javax.swing.tree.DefaultTreeModel componentTreeModel =
                 (javax.swing.tree.DefaultTreeModel) tree.getModel();

@@ -16,6 +16,7 @@ import io.github.evilalee.gatelab.model.SchematicHistory;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.ChipPowerChecker;
 import io.github.evilalee.gatelab.sim.ClockStepper;
 import io.github.evilalee.gatelab.sim.PinStateHelper;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
@@ -172,6 +173,7 @@ public final class CanvasPanel extends JPanel {
     private Tool activeTool = Tool.EDIT;
     private boolean showGateNames = true;
     private boolean showPinDots = true;
+    private boolean requirePowerOnChips;
     private String previewTypeId;
     private String previewComponentName;
     private Facing previewFacing = Facing.EAST;
@@ -337,7 +339,7 @@ public final class CanvasPanel extends JPanel {
         notifySchematicReplaced();
         notifyHistoryStateChanged();
         recomputeSimulation();
-        statusMessageListener.accept(simulationStatusText());
+        statusMessageListener.accept(statusBarText());
         recordSignalSample();
     }
 
@@ -352,6 +354,31 @@ public final class CanvasPanel extends JPanel {
 
     public boolean showPinDots() {
         return showPinDots;
+    }
+
+    /** Enables the transient, non-persisted DIP power diagnostic. */
+    public void setRequirePowerOnChips(boolean required) {
+        if (requirePowerOnChips == required) return;
+        requirePowerOnChips = required;
+        repaint();
+        statusMessageListener.accept(statusBarText());
+    }
+
+    public boolean requirePowerOnChips() {
+        return requirePowerOnChips;
+    }
+
+    public List<ChipPowerChecker.PowerIssue> chipPowerIssues() {
+        if (simulationResult == null) return List.of();
+        return ChipPowerChecker.check(schematic, simulationResult, requirePowerOnChips);
+    }
+
+    private String statusBarText() {
+        if (requirePowerOnChips && simulationResult != null) {
+            String powerText = ChipPowerChecker.statusText(schematic, simulationResult, true);
+            if (!powerText.isBlank()) return powerText;
+        }
+        return simulationStatusText();
     }
 
     @Override
@@ -380,11 +407,28 @@ public final class CanvasPanel extends JPanel {
         if (bestPin == null) {
             return fallback;
         }
-        return bestPin.position().pinId() + " = " + switch (bestPin.value()) {
+        PinStateHelper.Pin selectedPin = bestPin;
+        String value = switch (selectedPin.value()) {
             case ZERO -> "0";
             case ONE -> "1";
             case X -> "X";
         };
+        ComponentInstance instance = schematic.componentInstances().stream()
+                .filter(candidate -> candidate.id().equals(selectedPin.position().componentId()))
+                .findFirst().orElse(null);
+        if (instance != null) {
+            ComponentDefinition definition = schematic.componentDefinitionFor(instance);
+            if (definition.isChipStyle()) {
+                Integer number = definition.ports().stream()
+                        .filter(port -> port.name().equals(selectedPin.position().pinId()))
+                        .map(ComponentDefinition.Port::pin)
+                        .findFirst().orElse(null);
+                if (number != null) {
+                    return "pin " + number + ": " + selectedPin.position().pinId() + " = " + value;
+                }
+            }
+        }
+        return selectedPin.position().pinId() + " = " + value;
     }
 
     /** Installs editor-owned callbacks for clearing and appending waveform history. */
@@ -619,6 +663,9 @@ public final class CanvasPanel extends JPanel {
         simulationResult = SchematicCompiler.compileAndSettle(schematic, simulationResult);
         simulationRecomputeCount++;
         repaint();
+        if (requirePowerOnChips) {
+            statusMessageListener.accept(statusBarText());
+        }
     }
 
     public void resetInputs() {
@@ -2249,6 +2296,10 @@ public final class CanvasPanel extends JPanel {
                 }
             }
 
+            Set<String> unpoweredChipIds = simulationResult == null
+                    ? Set.of()
+                    : ChipPowerChecker.unpoweredInstanceIds(
+                            schematic, simulationResult, requirePowerOnChips);
             for (ComponentInstance instance : schematic.componentInstances()) {
                 ComponentDefinition definition = schematic.componentDefinitionFor(instance);
                 boolean selected = selectedIds.contains(instance.id());
@@ -2266,7 +2317,8 @@ public final class CanvasPanel extends JPanel {
                     } else {
                         worldGraphics.setComposite(AlphaComposite.SrcOver);
                     }
-                    paintComponentInstance(worldGraphics, rendered, definition, geometry, true);
+                    paintComponentInstance(worldGraphics, rendered, definition, geometry,
+                            true, unpoweredChipIds.contains(instance.id()));
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                     if (selected) {
                         paintInstanceSelectionOutline(worldGraphics, rendered, definition);
@@ -2387,9 +2439,20 @@ public final class CanvasPanel extends JPanel {
             ComponentDefinition definition,
             ComponentInstance.Geometry geometry,
             boolean deferLabels) {
+        paintComponentInstance(graphics, instance, definition, geometry, deferLabels, false);
+    }
+
+    private void paintComponentInstance(
+            Graphics2D graphics,
+            ComponentInstance instance,
+            ComponentDefinition definition,
+            ComponentInstance.Geometry geometry,
+            boolean deferLabels,
+            boolean unpowered) {
         if (deferLabels) {
             componentInstanceRenderer.renderSymbol(
-                    graphics, instance, definition, geometry, transform.scale());
+                    graphics, instance, definition, geometry, transform.scale(),
+                    unpowered ? Color.RED : null);
         } else {
             componentInstanceRenderer.render(
                     graphics, instance, definition, geometry, transform.scale());
