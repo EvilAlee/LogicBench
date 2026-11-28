@@ -61,7 +61,7 @@ class GateTypeTest {
 
     @Test
     void variableInputGatesSupportThreeFourAndEightInputs() {
-        for (int count : new int[]{3, 4, 8}) {
+        for (int count : new int[]{3, 4, 5, 8}) {
             Value[] allOnes = new Value[count];
             Arrays.fill(allOnes, Value.ONE);
             assertEquals(Value.ONE, GateType.AND.evaluate(allOnes));
@@ -89,10 +89,67 @@ class GateTypeTest {
     }
 
     @Test
+    void everyThreeValuedTruthTableRowIsCorrectForThreeFourAndFiveInputs() {
+        Value[] alphabet = {Value.ZERO, Value.ONE, Value.X};
+        for (int count : new int[]{3, 4, 5}) {
+            int rows = (int) Math.pow(alphabet.length, count);
+            for (int row = 0; row < rows; row++) {
+                int encoded = row;
+                Value[] inputs = new Value[count];
+                boolean parity = false;
+                boolean hasZero = false;
+                boolean hasOne = false;
+                boolean hasUnknown = false;
+                for (int index = 0; index < count; index++) {
+                    Value value = alphabet[encoded % alphabet.length];
+                    encoded /= alphabet.length;
+                    inputs[index] = value;
+                    hasZero |= value == Value.ZERO;
+                    hasOne |= value == Value.ONE;
+                    hasUnknown |= value == Value.X;
+                    parity ^= value == Value.ONE;
+                }
+                Value and = hasZero ? Value.ZERO : hasUnknown ? Value.X : Value.ONE;
+                Value or = hasOne ? Value.ONE : hasUnknown ? Value.X : Value.ZERO;
+                Value xor = hasUnknown ? Value.X : parity ? Value.ONE : Value.ZERO;
+                assertEquals(and, GateType.AND.evaluate(inputs), "AND count=" + count + " row=" + row);
+                assertEquals(or, GateType.OR.evaluate(inputs), "OR count=" + count + " row=" + row);
+                assertEquals(and.inverted(), GateType.NAND.evaluate(inputs),
+                        "NAND count=" + count + " row=" + row);
+                assertEquals(or.inverted(), GateType.NOR.evaluate(inputs),
+                        "NOR count=" + count + " row=" + row);
+                assertEquals(xor, GateType.XOR.evaluate(inputs),
+                        "XOR count=" + count + " row=" + row);
+                assertEquals(xor.inverted(), GateType.XNOR.evaluate(inputs),
+                        "XNOR count=" + count + " row=" + row);
+            }
+        }
+    }
+
+    @Test
+    void fiveInputUnknownAndControllingValuesFollowThreeValuedRules() {
+        assertEquals(Value.ZERO,
+                GateType.AND.evaluate(Value.ZERO, Value.X, Value.ONE, Value.ONE, Value.ONE));
+        assertEquals(Value.ONE,
+                GateType.OR.evaluate(Value.ONE, Value.X, Value.ZERO, Value.ZERO, Value.ZERO));
+        assertEquals(Value.ONE,
+                GateType.NAND.evaluate(Value.ZERO, Value.X, Value.ONE, Value.ONE, Value.ONE));
+        assertEquals(Value.ZERO,
+                GateType.NOR.evaluate(Value.ONE, Value.X, Value.ZERO, Value.ZERO, Value.ZERO));
+        assertEquals(Value.X,
+                GateType.XOR.evaluate(Value.ONE, Value.ZERO, Value.X, Value.ONE, Value.ZERO));
+        assertEquals(Value.X,
+                GateType.XNOR.evaluate(Value.ONE, Value.ZERO, Value.X, Value.ONE, Value.ZERO));
+    }
+
+    @Test
     void invalidInputCountsAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> new Gate("bad", GateType.AND, 1));
         assertThrows(IllegalArgumentException.class, () -> new Gate("bad", GateType.NOT, 2));
         assertThrows(IllegalArgumentException.class, () -> GateType.XOR.evaluate(Value.ONE));
+        assertThrows(IllegalArgumentException.class, () -> GateType.AND.evaluate(
+                Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE,
+                Value.ONE, Value.ONE, Value.ONE));
         assertThrows(IllegalArgumentException.class, () -> GateType.BUFFER.evaluate(Value.ZERO, Value.ONE));
     }
 }

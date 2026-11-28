@@ -266,13 +266,8 @@ public final class SchematicCompiler {
                         clockIds.add(placed.id());
                         addPending(scope, placed.id(), "out", clock.output());
                     }
-                    case "constant" -> {
-                        Value value = switch (placed.label()) {
-                            case "0" -> Value.ZERO;
-                            case "1" -> Value.ONE;
-                            default -> throw new IllegalArgumentException(
-                                    "constant source " + placed.id() + " must be labeled 0 or 1");
-                        };
+                    case "constant", "vcc", "gnd" -> {
+                        Value value = placed.fixedSourceValue();
                         InputPin constant = new InputPin(engineId);
                         constant.setValue(value);
                         circuit.addComponent(constant);

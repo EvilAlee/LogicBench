@@ -11,6 +11,7 @@ import io.github.evilalee.gatelab.synth.SchematicNetlistExtractor;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -75,7 +76,9 @@ public final class TidyCircuitService {
         if (original.components().stream().noneMatch(component ->
                 !component.typeId().equals("input")
                         && !component.typeId().equals("output")
-                        && !component.typeId().equals("constant"))) {
+                        && !component.typeId().equals("constant")
+                        && !component.typeId().equals("vcc")
+                        && !component.typeId().equals("gnd"))) {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
@@ -136,6 +139,7 @@ public final class TidyCircuitService {
         extraction.constantComponentIds().forEach((signal, oldId) -> {
             String newId = layout.constantComponentIds().get(signal);
             newToOldIds.put(newId, oldId);
+            labelsByNewId.put(newId, oldById.get(oldId).label());
         });
 
         List<PlacedComponent> components = new ArrayList<>();
@@ -181,6 +185,17 @@ public final class TidyCircuitService {
             String newId = layout.outputComponentIds().get(name);
             labelsByNewId.put(newId, oldById.get(oldId).label());
         });
+        original.components().stream()
+                .filter(PlacedComponent::isFixedSource)
+                .sorted(Comparator.comparing(PlacedComponent::id))
+                .forEach(source -> {
+                    String literal = source.fixedSourceValue()
+                            == io.github.evilalee.gatelab.model.Value.ONE ? "1" : "0";
+                    String newId = layout.constantComponentIds().get(literal);
+                    if (newId != null) {
+                        labelsByNewId.putIfAbsent(newId, source.label());
+                    }
+                });
 
         List<PlacedComponent> components = new ArrayList<>();
         for (PlacedComponent component : layout.schematic().components()) {

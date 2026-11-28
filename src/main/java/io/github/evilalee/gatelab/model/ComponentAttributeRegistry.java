@@ -20,7 +20,7 @@ public final class ComponentAttributeRegistry {
 
     private static final AttributeSpec FACING = new AttributeSpec("facing", "Facing", "EAST");
     private static final AttributeSpec SIZE = new AttributeSpec("size", "Size", "narrow");
-    private static final AttributeSpec INPUTS = new AttributeSpec("inputs", "Number of Inputs", "2");
+    private static final AttributeSpec INPUTS = new AttributeSpec("inputs", "Inputs", "2");
 
     private static final Map<String, List<AttributeSpec>> BY_FAMILY = Map.ofEntries(
             Map.entry("and", List.of(FACING, SIZE, INPUTS)),
@@ -32,7 +32,9 @@ public final class ComponentAttributeRegistry {
             Map.entry("not", List.of(FACING, SIZE)),
             Map.entry("buffer", List.of(FACING, SIZE)),
             Map.entry("input", List.of(FACING)),
-            Map.entry("constant", List.of(FACING)),
+            Map.entry("constant", List.of(FACING, new AttributeSpec("value", "Value", "0"))),
+            Map.entry("vcc", List.of(FACING)),
+            Map.entry("gnd", List.of(FACING)),
             Map.entry("output", List.of(FACING)),
             Map.entry("clock", List.of(FACING)));
 
@@ -60,7 +62,7 @@ public final class ComponentAttributeRegistry {
                         "unknown attribute '" + key + "' for component type " + family));
     }
 
-    /** Facing is top-level in the file format; only size/inputs are stored in attrs. */
+    /** Facing is top-level; size, inputs and fixed-source Value are stored in attrs. */
     public static List<AttributeSpec> storedAttributesFor(String family) {
         return forFamily(family).stream()
                 .filter(spec -> !spec.key().equals("facing"))
@@ -85,9 +87,15 @@ public final class ComponentAttributeRegistry {
             }
             return normalized;
         }
+        if (key.equals("value")) {
+            if (!List.of("0", "1").contains(trimmed)) {
+                throw new IllegalArgumentException("unknown Value: " + value);
+            }
+            return trimmed;
+        }
         if (key.equals("inputs")) {
-            if (!List.of("2", "3", "4").contains(trimmed)) {
-                throw new IllegalArgumentException("unknown Number of Inputs value: " + value);
+            if (!List.of("2", "3", "4", "5").contains(trimmed)) {
+                throw new IllegalArgumentException("unknown Inputs value: " + value);
             }
             return trimmed;
         }

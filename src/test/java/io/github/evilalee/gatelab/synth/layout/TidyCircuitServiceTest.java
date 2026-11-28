@@ -234,7 +234,7 @@ class TidyCircuitServiceTest {
                 new SchematicLayout(DEFINITIONS).layout(compilation.netlist());
         PlacedComponent literal = generated.schematic().components().stream()
                 .filter(component -> component.typeId().equals("constant")
-                        && component.label().equals("1"))
+                        && generated.schematic().attributeValue(component.id(), "value").equals("1"))
                 .findFirst().orElseThrow();
         assertThrows(IllegalArgumentException.class,
                 () -> generated.schematic().inputValue(literal.id()));
@@ -245,7 +245,7 @@ class TidyCircuitServiceTest {
         assertEquals(4, result.verificationRows());
         PlacedComponent retainedLiteral = result.schematic().components().stream()
                 .filter(component -> component.typeId().equals("constant")
-                        && component.label().equals("1"))
+                        && result.schematic().attributeValue(component.id(), "value").equals("1"))
                 .findFirst().orElseThrow();
         assertThrows(IllegalArgumentException.class,
                 () -> result.schematic().inputValue(retainedLiteral.id()));
@@ -383,18 +383,9 @@ class TidyCircuitServiceTest {
         unsupported.add("custom", 100, 100, Facing.EAST);
         assertRefusal(unsupported, unsupportedDefinitions, "Unsupported component");
 
-        List<GateDef> threeInputDefinitions = new ArrayList<>(DEFINITIONS);
-        threeInputDefinitions.add(new GateDef(
-                "and-normal-3", "svg/and.svg", 30, 60,
-                List.of(new GateGeometry.Offset(0, 10),
-                        new GateGeometry.Offset(0, 30),
-                        new GateGeometry.Offset(0, 50)),
-                new GateGeometry.Offset(30, 30), "and", "normal", 3));
-        Schematic unsupportedArity = new Schematic(threeInputDefinitions);
-        unsupportedArity.add(
-                "and", 100, 100, Facing.EAST,
-                Map.of("size", "normal", "inputs", "3"));
-        assertRefusal(unsupportedArity, threeInputDefinitions, "Unsupported input count");
+        Schematic invalidArity = new Schematic(DEFINITIONS);
+        assertThrows(IllegalArgumentException.class, () -> invalidArity.add(
+                "and", 100, 100, Facing.EAST, Map.of("inputs", "6")));
     }
 
     private static Schematic simpleCombinationalCircuit() {

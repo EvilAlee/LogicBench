@@ -106,11 +106,27 @@ public final class Schematic {
         if (containsId(component.id())) {
             throw new IllegalArgumentException("duplicate component id: " + component.id());
         }
+        Map<String, String> suppliedAttributes =
+                new LinkedHashMap<>(component.attributes());
+        String label = component.label();
+        // Legacy fixed sources stored their value in label. Migrate that metadata
+        // into the Value attribute before treating label as the optional Name.
+        if (component.typeId().equals("constant")
+                && !suppliedAttributes.containsKey("value")) {
+            if (label.equals("0") || label.equals("1")) {
+                suppliedAttributes.put("value", label);
+                label = "";
+            } else {
+                // Persist even the default so a later Name of "0" or "1"
+                // cannot be confused with the legacy value-in-label encoding.
+                suppliedAttributes.put("value", "0");
+            }
+        }
         Map<String, String> normalized = normalizeStoredAttributes(
-                component.typeId(), component.attributes());
+                component.typeId(), suppliedAttributes);
         PlacedComponent validated = new PlacedComponent(
                 component.id(), component.typeId(), component.x(), component.y(),
-                component.facing(), normalized, component.label());
+                component.facing(), normalized, label);
         definitionFor(validated);
         components.add(validated);
         notifyChanged();
@@ -263,6 +279,9 @@ public final class Schematic {
         ComponentAttributeRegistry.require(family, key);
         if (key.equals("facing")) {
             return List.of("EAST", "NORTH", "WEST", "SOUTH");
+        }
+        if (key.equals("value")) {
+            return List.of("0", "1");
         }
         List<GateDef> variants = variantsFor(family);
         if (key.equals("size")) {
@@ -473,8 +492,80 @@ public final class Schematic {
         if (current.equals(replacement)) {
             return true;
         }
+
+        GateDef previousDefinition = definitionFor(current);
+        GateDef nextDefinition = definitionFor(replacement);
+        if (key.equals("inputs") && previousDefinition.output() != null
+                && nextDefinition.output() != null) {
+            // Catalogue variants keep the existing input-row coordinates stable.
+            // Move the output origin by the SVG centre delta so in0..inN retain
+            // their world positions while the body grows below its original top edge.
+            int outputShift = nextDefinition.output().y() - previousDefinition.output().y();
+            if (outputShift != 0) {
+                GateGeometry.Offset worldShift = GateGeometry.rotate(
+                        new GateGeometry.Offset(0, outputShift), current.facing());
+                replacement = new PlacedComponent(
+                        replacement.id(), replacement.typeId(),
+                        Math.addExact(replacement.x(), worldShift.x()),
+                        Math.addExact(replacement.y(), worldShift.y()),
+                        replacement.facing(), replacement.attributes(), replacement.label());
+            }
+        }
+        Set<PinKey> deletedPins = new HashSet<>();
+        for (int index = nextDefinition.inputs().size();
+                index < previousDefinition.inputs().size(); index++) {
+            deletedPins.add(new PinKey(id, "in" + index));
+        }
+
+        Set<PinKey> disconnectedPins = new HashSet<>(deletedPins);
+        Set<WireSegment> removedWires = new HashSet<>();
+        if (!deletedPins.isEmpty()) {
+            List<Connectivity.PinPosition> originalPins = pinPositions();
+            List<Connectivity.PinPosition> afterPins = originalPins.stream()
+                    .filter(pin -> !deletedPins.contains(key(pin)))
+                    .toList();
+            for (Connectivity.Net net : Connectivity.analyze(originalPins, wires).nets()) {
+                List<Connectivity.PinPosition> survivingPins = net.pins().stream()
+                        .filter(pin -> !deletedPins.contains(key(pin)))
+                        .toList();
+                if (survivingPins.size() <= 1) {
+                    // A source connected only to removed inputs should not be left
+                    // with a dangling wire. Its former net is no longer a required link.
+                    removedWires.addAll(net.segments());
+                    net.pins().forEach(pin -> disconnectedPins.add(key(pin)));
+                    continue;
+                }
+                for (Connectivity.PinPosition deletedPin : net.pins()) {
+                    if (!deletedPins.contains(key(deletedPin))) {
+                        continue;
+                    }
+                    Connectivity.Point point =
+                            new Connectivity.Point(deletedPin.x(), deletedPin.y());
+                    for (WireSegment segment : net.segments()) {
+                        boolean endpoint = (segment.x1() == point.x() && segment.y1() == point.y())
+                                || (segment.x2() == point.x() && segment.y2() == point.y());
+                        if (!endpoint || removedWires.contains(segment)) {
+                            continue;
+                        }
+                        List<WireSegment> candidateWires = wires.stream()
+                                .filter(wire -> !removedWires.contains(wire) && !wire.equals(segment))
+                                .toList();
+                        boolean preservesOtherPins = Connectivity.analyze(
+                                        afterPins, candidateWires).nets().stream()
+                                .anyMatch(candidate -> candidate.pins().containsAll(survivingPins));
+                        if (preservesOtherPins) {
+                            removedWires.add(segment);
+                        }
+                    }
+                }
+            }
+        }
+        List<WireSegment> remainingWires = wires.stream()
+                .filter(wire -> !removedWires.contains(wire))
+                .toList();
         return commitValidatedGesture(
-                Map.of(id, replacement), Set.of(), List.copyOf(wires)).linksFollowed();
+                Map.of(id, replacement), Map.of(), Set.of(), remainingWires,
+                disconnectedPins).linksFollowed();
     }
 
     /**
@@ -485,7 +576,8 @@ public final class Schematic {
             Map<String, PlacedComponent> replacements,
             Set<WireSegment> movingWires,
             List<WireSegment> baseWires) {
-        return commitValidatedGesture(replacements, Map.of(), movingWires, baseWires);
+        return commitValidatedGesture(
+                replacements, Map.of(), movingWires, baseWires, Set.of());
     }
 
     private GestureCommit commitValidatedGesture(
@@ -493,6 +585,16 @@ public final class Schematic {
             Map<String, ComponentInstance> instanceReplacements,
             Set<WireSegment> movingWires,
             List<WireSegment> baseWires) {
+        return commitValidatedGesture(
+                replacements, instanceReplacements, movingWires, baseWires, Set.of());
+    }
+
+    private GestureCommit commitValidatedGesture(
+            Map<String, PlacedComponent> replacements,
+            Map<String, ComponentInstance> instanceReplacements,
+            Set<WireSegment> movingWires,
+            List<WireSegment> baseWires,
+            Set<PinKey> intentionallyDisconnectedPins) {
         List<Connectivity.PinPosition> beforePins = pinPositions();
         List<WireSegment> originalWires = List.copyOf(wires);
         Map<String, PlacedComponent> originalComponents = new HashMap<>();
@@ -514,8 +616,9 @@ public final class Schematic {
         List<WireSegment> stationaryBeforeWires = originalWires.stream()
                 .filter(wire -> !movingWires.contains(wire))
                 .toList();
-        Map<PinKey, Integer> requiredConnectionNetIds =
-                netIds(beforePins, stationaryBeforeWires);
+        Map<PinKey, Integer> requiredConnectionNetIds = new HashMap<>(
+                netIds(beforePins, stationaryBeforeWires));
+        requiredConnectionNetIds.keySet().removeAll(intentionallyDisconnectedPins);
         List<PinMove> pinsToLink = attachedPinsToFollow(
                 replacements, instanceReplacements, movingWires, beforePins, originalWires);
 
@@ -1347,7 +1450,8 @@ public final class Schematic {
                     ComponentAttributeRegistry.require(family, key);
             String value = ComponentAttributeRegistry.normalizeValue(
                     family, key, Objects.requireNonNull(entry.getValue(), "attribute value"));
-            if (!value.equals(spec.defaultValue())) {
+            if (!value.equals(spec.defaultValue())
+                    || (family.equals("constant") && key.equals("value"))) {
                 normalized.put(key, value);
             }
         }

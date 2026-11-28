@@ -17,17 +17,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CanvasPanelNameAttributeTest {
     @Test
-    void nameRowIsAvailableOnlyForInputOutputAndClockComponents() {
-        for (String type : List.of("input", "output", "clock")) {
+    void nameRowIsAvailableForConstantButNotForPowerRailsOrGates() {
+        for (String type : List.of("input", "output", "clock", "constant")) {
             CanvasPanel canvas = canvasWithSelected(type);
             assertTrue(canvas.attributePanelState().rows().stream()
                     .anyMatch(row -> row.key().equals("name") && row.label().equals("Name")),
                     type + " should expose a Name row");
         }
 
-        CanvasPanel gateCanvas = canvasWithSelected("and");
-        assertFalse(gateCanvas.attributePanelState().rows().stream()
-                .anyMatch(row -> row.key().equals("name")));
+        for (String type : List.of("vcc", "gnd", "and")) {
+            CanvasPanel canvas = canvasWithSelected(type);
+            assertFalse(canvas.attributePanelState().rows().stream()
+                    .anyMatch(row -> row.key().equals("name")),
+                    type + " should not expose a Name row");
+        }
     }
 
     @Test

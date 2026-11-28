@@ -23,6 +23,7 @@
 
 ## In progress
 - feature-auto-wire: two-click A* orthogonal pin routing, driver checks, one-step undo, and headless router/canvas tests.
+- feature-gates-and-power: production AND/OR/NAND/NOR/XOR/XNOR 2–5 input variants, resize wire preservation, n-ary expression/VHDL export, and VCC/GND/Constant fixed sources with legacy-file migration.
 - feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification.
 - feature-ai-sequential: strict sequential response schema, DFF/DLATCH feedback compilation, reset-from-X checks, SequenceRunner verification, sequential cache replay and a sequence table; does not change the combinational AI path.
 - perf-ui-lag: opt-in EDT/paint profiling, debounced background expression preview, phase-keyed repeating grid texture and reduced no-change hover repaints; acceptance timings and phone-class human checks are tracked in PR #60.
@@ -47,7 +48,7 @@
 
 ## Known limitations
 - Feedback circuits (including latches) remain at X until an input or Clock source establishes a state.
-- Gates are 2-input only until the M9a/M9b work is complete.
+- Main still ships two-input variants until feature-gates-and-power is merged; that PR adds selectable 2–5 input variants.
 
 ## Decisions
 - Typed expression calls resolve through ComponentLibrary into boxed instances by default; the typed dialog exposes legacy sequential gate expansion explicitly. AI validation remains on the original gate-expansion compiler path with raw feedback disabled. SchematicCompiler remains the single schematic-to-engine flattening path. Tidy still refuses instance-containing schematics until its extraction/layout path is hierarchical.

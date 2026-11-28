@@ -201,14 +201,12 @@ public final class VhdlExporter {
                                     DriverKind.INPUT, placed.id(), pin.pinId(), null, null));
                             case "clock" -> drivers.add(new Driver(
                                     DriverKind.CLOCK, placed.id(), pin.pinId(), null, null));
-                            case "constant" -> {
-                                if (!placed.label().equals("0") && !placed.label().equals("1")) {
-                                    throw new IllegalArgumentException(
-                                            "Constant source " + placed.id() + " must be labeled 0 or 1.");
-                                }
+                            case "constant", "vcc", "gnd" -> {
+                                String value = placed.fixedSourceValue()
+                                        == io.github.evilalee.gatelab.model.Value.ONE ? "1" : "0";
                                 drivers.add(new Driver(
                                         DriverKind.CONSTANT, placed.id(), pin.pinId(),
-                                        null, placed.label()));
+                                        null, value));
                             }
                             default -> drivers.add(new Driver(
                                     DriverKind.GATE, placed.id(), pin.pinId(),
@@ -294,10 +292,11 @@ public final class VhdlExporter {
                                 "Unsupported component for VHDL export: " + component.typeId());
                     }
                     int actualInputs = schematic.definitionFor(component).inputs().size();
-                    if (actualInputs != operator.inputCount()) {
+                    if (!operator.acceptsInputCount(actualInputs)) {
                         throw new IllegalArgumentException(
                                 "Unsupported input count for " + component.typeId()
-                                        + ": expected " + operator.inputCount()
+                                        + ": expected " + operator.minimumInputCount()
+                                        + ".." + operator.maximumInputCount()
                                         + ", found " + actualInputs);
                     }
                     List<String> args = new ArrayList<>();
@@ -402,6 +401,8 @@ public final class VhdlExporter {
                             && !placed.typeId().equals("input")
                             && !placed.typeId().equals("clock")
                             && !placed.typeId().equals("constant")
+                            && !placed.typeId().equals("vcc")
+                            && !placed.typeId().equals("gnd")
                             && !placed.typeId().equals("output")) {
                         consumer = "G:" + placed.id();
                     } else if (instancesById.containsKey(pin.componentId())) {
@@ -742,7 +743,8 @@ public final class VhdlExporter {
     }
 
     private static boolean isGate(PlacedComponent component) {
-        return !Set.of("input", "clock", "constant", "output").contains(component.typeId());
+        return !Set.of("input", "clock", "constant", "vcc", "gnd", "output")
+                .contains(component.typeId());
     }
 
     private static String gateExpression(String typeId, List<String> args) {
@@ -764,9 +766,9 @@ public final class VhdlExporter {
         if (operator.equals("not")) {
             String innerOperator = typeId.equalsIgnoreCase("nand") ? "and"
                     : typeId.equalsIgnoreCase("nor") ? "or" : "xor";
-            return "(not (" + args.get(0) + " " + innerOperator + " " + args.get(1) + "))";
+            return "(not (" + String.join(" " + innerOperator + " ", args) + "))";
         }
-        return "(" + args.get(0) + " " + operator + " " + args.get(1) + ")";
+        return "(" + String.join(" " + operator + " ", args) + ")";
     }
 
     private static boolean visit(String node, Map<String, Set<String>> edges,

@@ -541,11 +541,13 @@ public final class CircuitDescriber {
                 .filter(CircuitDescriber::isConstant).forEach(used::add);
         Map<String, String> result = new LinkedHashMap<>();
         schematic.components().stream()
-                .filter(component -> component.typeId().equals("constant"))
+                .filter(PlacedComponent::isFixedSource)
                 .sorted(Comparator.comparing(PlacedComponent::id))
                 .forEach(component -> {
-                    if (used.contains(component.label())) {
-                        result.putIfAbsent(component.label(), component.id());
+                    String literal = component.fixedSourceValue()
+                            == io.github.evilalee.gatelab.model.Value.ONE ? "1" : "0";
+                    if (used.contains(literal)) {
+                        result.putIfAbsent(literal, component.id());
                     }
                 });
         return result;
@@ -557,7 +559,8 @@ public final class CircuitDescriber {
 
     private static boolean isBoundaryOrConstant(String typeId) {
         return typeId.equals("input") || typeId.equals("clock")
-                || typeId.equals("output") || typeId.equals("constant");
+                || typeId.equals("output") || typeId.equals("constant")
+                || typeId.equals("vcc") || typeId.equals("gnd");
     }
 
     private static void requireGateLimit(long gateCount) {
@@ -824,12 +827,18 @@ public final class CircuitDescriber {
                         internalNames, rendering))
                 .toList();
         return switch (gate.type()) {
-            case AND -> "(" + inputs.get(0) + " & " + inputs.get(1) + ")";
-            case OR -> "(" + inputs.get(0) + " | " + inputs.get(1) + ")";
-            case XOR -> "(" + inputs.get(0) + " ^ " + inputs.get(1) + ")";
-            case NAND -> "(" + inputs.get(0) + " NAND " + inputs.get(1) + ")";
-            case NOR -> "(" + inputs.get(0) + " NOR " + inputs.get(1) + ")";
-            case XNOR -> "(" + inputs.get(0) + " XNOR " + inputs.get(1) + ")";
+            case AND -> "(" + String.join(" & ", inputs) + ")";
+            case OR -> "(" + String.join(" | ", inputs) + ")";
+            case XOR -> "(" + String.join(" ^ ", inputs) + ")";
+            case NAND -> inputs.size() == 2
+                    ? "(" + inputs.get(0) + " NAND " + inputs.get(1) + ")"
+                    : "(NOT (" + String.join(" & ", inputs) + "))";
+            case NOR -> inputs.size() == 2
+                    ? "(" + inputs.get(0) + " NOR " + inputs.get(1) + ")"
+                    : "(NOT (" + String.join(" | ", inputs) + "))";
+            case XNOR -> inputs.size() == 2
+                    ? "(" + inputs.get(0) + " XNOR " + inputs.get(1) + ")"
+                    : "(NOT (" + String.join(" ^ ", inputs) + "))";
             case NOT -> "(NOT " + inputs.getFirst() + ")";
             case BUFFER -> "(" + inputs.getFirst() + ")";
         };

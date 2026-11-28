@@ -144,7 +144,7 @@ public final class FeedbackCircuitExtractor {
             switch (component.typeId()) {
                 case "input" -> inputs.add(component);
                 case "clock" -> clocks.add(component);
-                case "constant" -> constants.add(component);
+                case "constant", "vcc", "gnd" -> constants.add(component);
                 case "output" -> outputs.add(component);
                 default -> {
                     GateOperator operator;
@@ -156,10 +156,11 @@ public final class FeedbackCircuitExtractor {
                                 "Unsupported component: " + component.typeId());
                     }
                     int actualInputs = schematic.definitionFor(component).inputs().size();
-                    if (actualInputs != operator.inputCount()) {
+                    if (!operator.acceptsInputCount(actualInputs)) {
                         throw new IllegalArgumentException(
                                 "Unsupported input count for " + component.typeId()
-                                        + ": expected " + operator.inputCount()
+                                        + ": expected " + operator.minimumInputCount()
+                                        + ".." + operator.maximumInputCount()
                                         + ", found " + actualInputs);
                     }
                     gates.add(component);
@@ -194,11 +195,8 @@ public final class FeedbackCircuitExtractor {
         Map<String, String> constantSignals = new LinkedHashMap<>();
         Map<String, String> constantIds = new LinkedHashMap<>();
         for (PlacedComponent constant : constants) {
-            String signal = switch (constant.label()) {
-                case "0", "1" -> constant.label();
-                default -> throw new IllegalArgumentException(
-                        "Constant source " + constant.id() + " must be labeled 0 or 1.");
-            };
+            String signal = constant.fixedSourceValue()
+                    == io.github.evilalee.gatelab.model.Value.ONE ? "1" : "0";
             constantSignals.put(constant.id(), signal);
             constantIds.putIfAbsent(signal, constant.id());
         }
@@ -253,7 +251,7 @@ public final class FeedbackCircuitExtractor {
             String signal = switch (component.typeId()) {
                 case "input" -> inputNames.get(component.id());
                 case "clock" -> clockNames.get(component.id());
-                case "constant" -> constantSignals.get(component.id());
+                case "constant", "vcc", "gnd" -> constantSignals.get(component.id());
                 default -> gateSignals.get(component.id());
             };
             if (signal == null) {
@@ -354,7 +352,7 @@ public final class FeedbackCircuitExtractor {
 
         List<String> primarySignals = new ArrayList<>();
         rootSources.stream()
-                .filter(source -> !source.typeId().equals("constant"))
+                .filter(source -> !source.isFixedSource())
                 .forEach(source -> primarySignals.add(sourceSignalByComponent.get(source.id())));
         primarySignals.addAll(feedbackEdges.stream()
                 .map(FeedbackEdge::placeholderSignal).toList());

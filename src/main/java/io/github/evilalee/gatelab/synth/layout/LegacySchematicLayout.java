@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.synth.layout;
 
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
@@ -317,7 +318,7 @@ final class LegacySchematicLayout {
             String id = "expr-gate-" + gate.id();
             Node node = componentNode(
                     "gate:" + gate.id(), NodeKind.GATE, column,
-                    gate.id(), id, type);
+                    gate.id(), id, type, gate.inputs().size());
             columns.get(column).add(node);
             signalNodes.put(gate.id(), node);
             gateNodes.put(gate.id(), node);
@@ -436,7 +437,7 @@ final class LegacySchematicLayout {
                         : node.kind == NodeKind.OUTPUT ? outputLabelFor(node, netlist) : "";
                 schematic.add(new PlacedComponent(
                         node.componentId, node.definition.family(), node.x, node.y,
-                        Facing.EAST, Map.of(), label));
+                        Facing.EAST, attributesFor(node), label));
             }
         }
 
@@ -516,6 +517,38 @@ final class LegacySchematicLayout {
             throw new IllegalArgumentException("gates.json has no narrow component for: " + family);
         }
         return definition;
+    }
+
+    private GateDef definitionFor(String family, int inputCount) {
+        return definitions.stream()
+                .filter(definition -> definition.family().equals(family)
+                        && definition.size().equals("narrow")
+                        && definition.inputCount() == inputCount)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "gates.json has no narrow " + family
+                                + " component with " + inputCount + " inputs"));
+    }
+
+    private static Map<String, String> attributesFor(Node node) {
+        if (ComponentAttributeRegistry.supports(node.definition.family(), "inputs")
+                && node.definition.inputCount() != 2) {
+            return Map.of("inputs", Integer.toString(node.definition.inputCount()));
+        }
+        return Map.of();
+    }
+
+    private Node componentNode(
+            String key,
+            NodeKind kind,
+            int column,
+            String signal,
+            String componentId,
+            String family,
+            int inputCount) {
+        GateDef definition = definitionFor(family, inputCount);
+        int height = GateGeometry.bounds(definition, Facing.EAST).height();
+        return new Node(key, kind, column, height, signal, componentId, definition);
     }
 
     private static String outputLabelFor(Node node, Netlist netlist) {

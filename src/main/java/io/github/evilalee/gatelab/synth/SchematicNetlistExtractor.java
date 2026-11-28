@@ -59,7 +59,7 @@ public final class SchematicNetlistExtractor {
             byId.put(component.id(), component);
             switch (component.typeId()) {
                 case "input" -> inputs.add(component);
-                case "constant" -> constants.add(component);
+                case "constant", "vcc", "gnd" -> constants.add(component);
                 case "output" -> outputs.add(component);
                 default -> {
                     GateOperator operator;
@@ -71,10 +71,11 @@ public final class SchematicNetlistExtractor {
                                 "Unsupported component: " + component.typeId());
                     }
                     int actualInputs = schematic.definitionFor(component).inputs().size();
-                    if (actualInputs != operator.inputCount()) {
+                    if (!operator.acceptsInputCount(actualInputs)) {
                         throw new IllegalArgumentException(
                                 "Unsupported input count for " + component.typeId()
-                                        + ": expected " + operator.inputCount()
+                                        + ": expected " + operator.minimumInputCount()
+                                        + ".." + operator.maximumInputCount()
                                         + ", found " + actualInputs);
                     }
                     gates.add(component);
@@ -107,11 +108,9 @@ public final class SchematicNetlistExtractor {
 
         Map<String, String> constantSignals = new LinkedHashMap<>();
         for (PlacedComponent constant : constants) {
-            if (!constant.label().equals("0") && !constant.label().equals("1")) {
-                throw new IllegalArgumentException(
-                        "Constant source " + constant.id() + " must be labeled 0 or 1.");
-            }
-            constantSignals.put(constant.id(), constant.label());
+            String value = constant.fixedSourceValue() == io.github.evilalee.gatelab.model.Value.ONE
+                    ? "1" : "0";
+            constantSignals.put(constant.id(), value);
         }
 
         Map<String, String> gateSignals = new LinkedHashMap<>();
@@ -162,7 +161,7 @@ public final class SchematicNetlistExtractor {
             PlacedComponent component = byId.get(driver.componentId());
             String signal = switch (component.typeId()) {
                 case "input" -> inputNames.get(component.id());
-                case "constant" -> constantSignals.get(component.id());
+                case "constant", "vcc", "gnd" -> constantSignals.get(component.id());
                 default -> gateSignals.get(component.id());
             };
             if (signal == null) {

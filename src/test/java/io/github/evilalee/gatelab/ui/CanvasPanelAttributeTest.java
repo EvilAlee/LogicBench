@@ -19,7 +19,7 @@ class CanvasPanelAttributeTest {
 
         canvas.enterAddMode("and");
         assertEquals("AND", canvas.attributePanelState().title());
-        assertEquals(List.of("Facing", "Size", "Number of Inputs"),
+        assertEquals(List.of("Facing", "Size", "Inputs"),
                 canvas.attributePanelState().rows().stream()
                         .map(CanvasPanel.AttributeRow::label).toList());
 

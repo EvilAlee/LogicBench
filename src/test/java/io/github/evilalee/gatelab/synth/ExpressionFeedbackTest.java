@@ -118,7 +118,8 @@ class ExpressionFeedbackTest {
                 .filter(component -> component.id().equals(constantId))
                 .findFirst().orElseThrow();
         assertEquals("constant", constant.typeId());
-        assertEquals("1", constant.label());
+        assertEquals("1", layout.schematic().attributeValue(constantId, "value"));
+        assertEquals("", constant.label());
         assertThrows(IllegalArgumentException.class,
                 () -> layout.schematic().setInputValue(constantId, false));
 
@@ -128,7 +129,8 @@ class ExpressionFeedbackTest {
         var tidiedConstant = tidied.schematic().components().stream()
                 .filter(component -> component.typeId().equals("constant"))
                 .findFirst().orElseThrow();
-        assertEquals("1", tidiedConstant.label());
+        assertEquals("1", tidied.schematic().attributeValue(tidiedConstant.id(), "value"));
+        assertEquals("", tidiedConstant.label());
         assertThrows(IllegalArgumentException.class,
                 () -> tidied.schematic().setInputValue(tidiedConstant.id(), false));
     }
