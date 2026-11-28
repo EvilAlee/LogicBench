@@ -285,12 +285,12 @@ public final class AutoWireRouter {
                 }
 
                 int nextWireOrientation = wireOrientationAt(request, next);
-                boolean nextIsEndpoint = wireEndpoints.contains(next) || junctions.contains(next);
-                if (nextIsEndpoint || junctions.contains(next)) {
+                if (wireEndpoints.contains(next) || junctions.contains(next)) {
                     continue;
                 }
                 if (nextWireOrientation != 0) {
-                    if (!perpendicularToWire(direction, nextWireOrientation)) {
+                    if (next.equals(end)
+                            || !perpendicularToWire(direction, nextWireOrientation)) {
                         continue;
                     }
                     if (!next.equals(end) && request.source().position().equals(next.worldPoint())) {
