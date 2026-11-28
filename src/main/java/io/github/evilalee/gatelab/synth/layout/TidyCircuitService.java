@@ -75,7 +75,9 @@ public final class TidyCircuitService {
         if (original.components().stream().noneMatch(component ->
                 !component.typeId().equals("input")
                         && !component.typeId().equals("output")
-                        && !component.typeId().equals("constant"))) {
+                        && !component.typeId().equals("constant")
+                        && !component.typeId().equals("vcc")
+                        && !component.typeId().equals("gnd"))) {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
