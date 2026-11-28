@@ -509,14 +509,45 @@ public final class Schematic {
             deletedPins.add(new PinKey(id, "in" + index));
         }
 
-        Set<PinKey> disconnectedPins = new HashSet<>();
+        Set<PinKey> disconnectedPins = new HashSet<>(deletedPins);
         Set<WireSegment> removedWires = new HashSet<>();
         if (!deletedPins.isEmpty()) {
-            for (Connectivity.Net net : Connectivity.analyze(pinPositions(), wires).nets()) {
-                if (net.pins().stream().anyMatch(pin -> deletedPins.contains(key(pin)))) {
-                    net.segments().forEach(removedWires::add);
-                    for (Connectivity.PinPosition pin : net.pins()) {
-                        disconnectedPins.add(key(pin));
+            List<Connectivity.PinPosition> originalPins = pinPositions();
+            List<Connectivity.PinPosition> afterPins = originalPins.stream()
+                    .filter(pin -> !deletedPins.contains(key(pin)))
+                    .toList();
+            for (Connectivity.Net net : Connectivity.analyze(originalPins, wires).nets()) {
+                List<Connectivity.PinPosition> survivingPins = net.pins().stream()
+                        .filter(pin -> !deletedPins.contains(key(pin)))
+                        .toList();
+                if (survivingPins.size() <= 1) {
+                    // A source connected only to removed inputs should not be left
+                    // with a dangling wire. Its former net is no longer a required link.
+                    removedWires.addAll(net.segments());
+                    net.pins().forEach(pin -> disconnectedPins.add(key(pin)));
+                    continue;
+                }
+                for (Connectivity.PinPosition deletedPin : net.pins()) {
+                    if (!deletedPins.contains(key(deletedPin))) {
+                        continue;
+                    }
+                    Connectivity.Point point =
+                            new Connectivity.Point(deletedPin.x(), deletedPin.y());
+                    for (WireSegment segment : net.segments()) {
+                        boolean endpoint = (segment.x1() == point.x() && segment.y1() == point.y())
+                                || (segment.x2() == point.x() && segment.y2() == point.y());
+                        if (!endpoint || removedWires.contains(segment)) {
+                            continue;
+                        }
+                        List<WireSegment> candidateWires = wires.stream()
+                                .filter(wire -> !removedWires.contains(wire) && !wire.equals(segment))
+                                .toList();
+                        boolean preservesOtherPins = Connectivity.analyze(
+                                        afterPins, candidateWires).nets().stream()
+                                .anyMatch(candidate -> candidate.pins().containsAll(survivingPins));
+                        if (preservesOtherPins) {
+                            removedWires.add(segment);
+                        }
                     }
                 }
             }
