@@ -99,3 +99,44 @@ Here H=1, L=0, X=don't-care. The selected output is LOW; all others are HIGH. Th
 
 **Second-source cross-check:** Nexperia [74HC138/74HCT138](https://assets.nexperia.com/documents/data-sheet/74HC_HCT138.pdf), revision 10 (26 February 2024), pages 3–4, confirms the same 16 terminal positions for its SO16 pinout, the two active-LOW enables plus one active-HIGH enable, the same three disable conditions, and the eight active-LOW decoder rows. Its signal names are A0/A1/A2 and E1/E2/E3; these correspond by pin position and polarity to TI A/B/C and G2A/G2B/G1. TI alone is used for SN74LS138's DIP/N package assignment.
 
+## 74139 — audited; implementation pending
+
+**TI source:** [SN74LS139A](https://www.ti.com/lit/gpn/SN74LS139A), datasheet SDLS013 (December 1972, revised March 1988), DIP/N pin assignment and function table on page 1.
+
+**Package:** TI explicitly lists SN74LS139A in D or N 16-pin package. Library package: **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI):**
+
+| Pin | Signal | Direction / behavior |
+|---:|---|---|
+| 1 | 1G | IN, active LOW enable |
+| 2 | 1A | IN, select bit A |
+| 3 | 1B | IN, select bit B |
+| 4 | 1Y0 | OUT, active LOW |
+| 5 | 1Y1 | OUT, active LOW |
+| 6 | 1Y2 | OUT, active LOW |
+| 7 | 1Y3 | OUT, active LOW |
+| 8 | GND | IN |
+| 9 | 2Y3 | OUT, active LOW |
+| 10 | 2Y2 | OUT, active LOW |
+| 11 | 2Y1 | OUT, active LOW |
+| 12 | 2Y0 | OUT, active LOW |
+| 13 | 2B | IN, select bit B |
+| 14 | 2A | IN, select bit A |
+| 15 | 2G | IN, active LOW enable |
+| 16 | VCC | IN |
+
+**TI function table (page 1), independently applies to decoder 1 and decoder 2:**
+
+| G | B | A | Y0 | Y1 | Y2 | Y3 |
+|---|---|---|---|---|---|---|
+| H | X | X | H | H | H | H |
+| L | L | L | L | H | H | H |
+| L | L | H | H | L | H | H |
+| L | H | L | H | H | L | H |
+| L | H | H | H | H | H | L |
+
+H=HIGH, L=LOW, X=irrelevant. Each decoder is independent. When its enable is HIGH, all four outputs are HIGH. When enabled LOW, exactly one output goes LOW, selected by BA=00/01/10/11.
+
+**Second-source cross-check:** Nexperia [74HC139/74HCT139](https://assets.nexperia.com/documents/data-sheet/74HC_HCT139.pdf), Rev.6 (29 February 2024), page 3, pinning/function tables. It independently confirms both decoder enable polarities, the four active-LOW output rows, and the corresponding terminal numbers: 1/15 enables; 2/3 and 14/13 address pairs; 4–7 and 12–9 output groups; 8=GND; 16=VCC. Nexperia uses SO16 package; TI remains the authority for DIP16 N. **Not single-source.**
+
