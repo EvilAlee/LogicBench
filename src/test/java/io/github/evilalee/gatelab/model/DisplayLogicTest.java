@@ -78,12 +78,16 @@ class DisplayLogicTest {
     }
 
     @Test
-    void hexDigitUsesD0AsLeastSignificantBitAndSupportsActiveLowInputs() {
+    void hexDigitUsesD0AsLeastSignificantBitIndependentOfSegmentActiveLevel() {
+        List<DisplayLogic.Input> activeLowData = List.of(
+                input(Value.ZERO), input(Value.ONE), input(Value.ZERO), input(Value.ONE),
+                input(Value.ZERO));
         DisplayLogic.State state = DisplayLogic.hexDigit(
-                nibble(0xA, DisplayLogic.ActiveLevel.LOW),
-                DisplayLogic.ActiveLevel.LOW);
+                activeLowData, DisplayLogic.ActiveLevel.LOW);
         assertEquals(0xA, state.hexDigit());
         assertEquals("A", DisplayLogic.hexCharacter(state.hexDigit()));
+        assertEquals(DisplayLogic.SegmentState.LIT, state.segments().get("dp"),
+                "active-low dp is lit by ZERO");
     }
 
     @Test

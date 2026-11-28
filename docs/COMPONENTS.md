@@ -144,8 +144,9 @@ by weights 2, 4, and 8. Both are sinks, not logic drivers, and have no
 schematic output pin.
 
 Their **Active level** attribute defaults to **High**; choose **Low** to
-invert the input polarity, including the decimal point, for common-anode
-style wiring. **On colour** defaults to **red** and also supports green,
+invert Seg7 segment inputs and the decimal-point input for common-anode
+style wiring. HexDigit's D0-D3 pins always represent ordinary binary bit
+weights; its Active level setting controls only the decimal point. **On colour** defaults to **red** and also supports green,
 yellow, and blue. The ordinary **Name** attribute is saved with the component.
 Seg7 draws a segment lit at the active level, dim at the inactive level,
 and hatched/outlined when a connected pin is X. A bare, unconnected Seg7 pin

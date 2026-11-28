@@ -110,7 +110,8 @@ public final class DisplayLogic {
                 unknown = true;
                 continue;
             }
-            if (isActive(input.value(), activeLevel)) {
+            // HexDigit's D0..D3 are a binary nibble, not active-low segment pins.
+            if (input.value() == Value.ONE) {
                 digit |= 1 << bit;
             }
         }
