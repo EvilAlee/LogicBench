@@ -88,7 +88,7 @@ class ComponentLibraryTest {
 
         Path saved = library.save(definition);
 
-        assertEquals("PassThrough" + ".lbcomp.json", saved.getFileName().toString());
+        assertEquals("PassThrough" + ".lbcomp", saved.getFileName().toString());
         assertTrue(Files.isRegularFile(saved));
         assertTrue(Files.readString(saved).contains("\"internalCircuit\""));
 

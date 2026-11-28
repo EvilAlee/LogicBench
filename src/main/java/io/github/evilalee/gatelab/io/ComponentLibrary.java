@@ -9,6 +9,7 @@ import io.github.evilalee.gatelab.model.InputPin;
 import io.github.evilalee.gatelab.model.OutputProbe;
 import io.github.evilalee.gatelab.model.Pin;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Wire;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
@@ -23,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.IdentityHashMap;
@@ -39,11 +42,14 @@ import java.util.stream.Stream;
  * into ordinary gate schematics at runtime; user definitions are JSON files.
  */
 public final class ComponentLibrary {
-    private static final String USER_EXTENSION = ".lbcomp.json";
+    private static final String USER_EXTENSION = ".lbcomp";
+    private static final String LEGACY_USER_EXTENSION = ".lbcomp.json";
 
     private final List<GateDef> gateDefinitions;
     private final Path userDirectory;
     private final Map<String, ComponentDefinition> definitions = new LinkedHashMap<>();
+    private final Map<String, Path> userFiles = new LinkedHashMap<>();
+    private final List<String> notices = new ArrayList<>();
     private final Set<String> builtInNames;
 
     private ComponentLibrary(Collection<GateDef> gateDefinitions, Path userDirectory)
@@ -61,6 +67,7 @@ public final class ComponentLibrary {
             }
         }
         builtInNames = Set.copyOf(definitions.keySet());
+        migrateLegacyLibrary();
         loadUserDefinitions();
     }
 
@@ -130,54 +137,399 @@ public final class ComponentLibrary {
     /** Saves or replaces a user definition without allowing built-ins to be shadowed. */
     public Path save(ComponentDefinition definition) throws IOException {
         Objects.requireNonNull(definition, "definition");
+        validateUserName(definition.name());
         if (builtInNames.contains(definition.name())) {
             throw new IllegalArgumentException(
-                    "built-in component definitions cannot be overwritten: "
-                            + definition.name());
+                    "built-in component definitions cannot be overwritten: " + definition.name());
         }
         Files.createDirectories(userDirectory);
         Path target = userDirectory.resolve(definition.name() + USER_EXTENSION);
-        Files.writeString(target, ComponentDefinitionJson.toJson(definition),
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-                StandardOpenOption.WRITE);
+        writeAtomically(target, ComponentFileJson.toJson(definition));
         definitions.put(definition.name(), definition);
+        userFiles.put(definition.name(), target);
         return target;
     }
 
-    private void loadUserDefinitions() throws IOException {
+    public static void exportDefinition(ComponentDefinition definition, Path file) throws IOException {
+        Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(file, "file");
+        Path target = file.getFileName().toString().endsWith(USER_EXTENSION)
+                ? file : file.resolveSibling(file.getFileName() + USER_EXTENSION);
+        writeAtomically(target, ComponentFileJson.toJson(definition));
+    }
+
+    public static ComponentDefinition readDefinition(Path file, Collection<GateDef> gates)
+            throws IOException {
+        return ComponentFileJson.fromJson(Files.readString(file, StandardCharsets.UTF_8), gates);
+    }
+
+    public enum ImportChoice { REPLACE, KEEP_BOTH, SKIP }
+    public enum ImportAction { ADDED, REPLACED, KEPT_BOTH, SKIPPED }
+    @FunctionalInterface
+    public interface ImportDecision {
+        ImportChoice choose(ComponentDefinition existing, ComponentDefinition incoming);
+    }
+    public record ImportResult(ImportAction action, ComponentDefinition definition, Path file) { }
+
+    /** Imports one definition; conflict policy is supplied by the caller for headless testing. */
+    public ImportResult importDefinition(ComponentDefinition incoming, ImportDecision decision)
+            throws IOException {
+        Objects.requireNonNull(incoming, "incoming");
+        validateUserName(incoming.name());
+        if (builtInNames.contains(incoming.name())) {
+            return new ImportResult(ImportAction.SKIPPED, incoming, null);
+        }
+        ComponentDefinition existing = definitions.get(incoming.name());
+        if (existing == null) {
+            Path file = save(incoming);
+            return new ImportResult(ImportAction.ADDED, incoming, file);
+        }
+        if (existing.hash().equals(incoming.hash())) {
+            return new ImportResult(ImportAction.SKIPPED, existing, null);
+        }
+        ImportChoice choice = Objects.requireNonNull(
+                decision, "decision").choose(existing, incoming);
+        if (choice == ImportChoice.SKIP) {
+            return new ImportResult(ImportAction.SKIPPED, existing, null);
+        }
+        if (choice == ImportChoice.REPLACE) {
+            Path file = save(incoming);
+            return new ImportResult(ImportAction.REPLACED, incoming, file);
+        }
+        String base = incoming.name();
+        int suffix = 2;
+        String unique;
+        do {
+            unique = base + suffix++;
+        } while (definitions.containsKey(unique)
+                || Files.exists(userDirectory.resolve(unique + USER_EXTENSION)));
+        ComponentDefinition renamed = rename(incoming, unique);
+        Path file = save(renamed);
+        return new ImportResult(ImportAction.KEPT_BOTH, renamed, file);
+    }
+
+    /** Refreshes user files while preserving the runtime-generated built-ins. */
+    public List<String> refresh() {
+        definitions.keySet().removeIf(name -> !builtInNames.contains(name));
+        userFiles.clear();
+        notices.clear();
+        migrateLegacyLibrary();
+        loadUserDefinitions();
+        return notices();
+    }
+
+    public List<String> notices() {
+        return List.copyOf(notices);
+    }
+
+    public Path componentFile(String name) {
+        if (builtInNames.contains(name) || !definitions.containsKey(name)) {
+            throw new IllegalArgumentException("not a user component: " + name);
+        }
+        return userFiles.getOrDefault(name, userDirectory.resolve(name + USER_EXTENSION));
+    }
+
+    /** Deletes exactly the file from which the selected user definition was loaded. */
+    public Path delete(String name) throws IOException {
+        if (builtInNames.contains(name)) {
+            throw new IllegalArgumentException("built-in components cannot be deleted: " + name);
+        }
+        ComponentDefinition existing = definitions.get(name);
+        if (existing == null) {
+            throw new IllegalArgumentException("unknown user component: " + name);
+        }
+        Path file = userFiles.get(name);
+        if (file == null) {
+            throw new IOException("The component is still being served from the legacy library file; "
+                    + "individual deletion is unavailable until that library can be migrated.");
+        }
+        Files.deleteIfExists(file);
+        definitions.remove(name);
+        userFiles.remove(name);
+        return file;
+    }
+
+    /** Lists library definitions and the open document that directly or transitively use a name. */
+    public List<String> dependentsOf(String name, Schematic openDocument) {
+        List<String> result = new ArrayList<>();
+        for (ComponentDefinition candidate : userDefinitions()) {
+            if (!candidate.name().equals(name)
+                    && schematicUses(candidate.internalCircuit(), name, new java.util.HashSet<>())) {
+                result.add("Component " + candidate.name());
+            }
+        }
+        if (openDocument != null
+                && schematicUses(openDocument, name, new java.util.HashSet<>())) {
+            result.add("Open document");
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean schematicUses(
+            Schematic schematic, String name, Set<String> visited) {
+        for (var instance : schematic.componentInstances()) {
+            if (instance.definitionName().equals(name)) {
+                return true;
+            }
+        }
+        for (ComponentDefinition embedded : schematic.componentDefinitions().values()) {
+            if (visited.add(embedded.name())
+                    && schematicUses(embedded.internalCircuit(), name, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void loadUserDefinitions() {
         if (!Files.isDirectory(userDirectory)) {
             return;
         }
         try (Stream<Path> files = Files.list(userDirectory)) {
             for (Path file : files
                     .filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith(USER_EXTENSION))
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return name.endsWith(USER_EXTENSION) || name.endsWith(LEGACY_USER_EXTENSION);
+                    })
                     .sorted()
                     .toList()) {
                 ComponentDefinition definition;
                 try {
-                    definition = ComponentDefinitionJson.fromJson(
-                            Files.readString(file, StandardCharsets.UTF_8), gateDefinitions);
-                } catch (RuntimeException exception) {
-                    throw new IOException(
-                            "invalid component definition file " + file + ": "
-                                    + exception.getMessage(), exception);
+                    definition = readDefinition(file, gateDefinitions);
+                } catch (IOException | RuntimeException exception) {
+                    notices.add("Skipped " + file.getFileName() + ": "
+                            + safeMessage(exception));
+                    continue;
                 }
-                String expectedFileName = definition.name() + USER_EXTENSION;
-                if (!file.getFileName().toString().equals(expectedFileName)) {
-                    throw new IOException(
-                            "component definition file must be named " + expectedFileName
-                                    + ": " + file.getFileName());
+                String expected = definition.name() + USER_EXTENSION;
+                String legacyExpected = definition.name() + LEGACY_USER_EXTENSION;
+                String actual = file.getFileName().toString();
+                if (!actual.equals(expected) && !actual.equals(legacyExpected)) {
+                    notices.add("Skipped " + actual + ": expected " + expected);
+                    continue;
+                }
+                if (builtInNames.contains(definition.name())) {
+                    notices.add("Skipped " + actual + ": built-in name "
+                            + definition.name() + " cannot be replaced");
+                    continue;
                 }
                 if (definitions.containsKey(definition.name())) {
-                    throw new IOException(
-                            "duplicate component definition name: " + definition.name());
+                    notices.add("Skipped " + actual + ": duplicate component name "
+                            + definition.name());
+                    continue;
+                }
+                if (actual.equals(legacyExpected)) {
+                    Path migratedFile = userDirectory.resolve(expected);
+                    try {
+                        try {
+                            Files.move(file, migratedFile, StandardCopyOption.ATOMIC_MOVE);
+                        } catch (AtomicMoveNotSupportedException exception) {
+                            Files.move(file, migratedFile);
+                        }
+                        file = migratedFile;
+                    } catch (IOException exception) {
+                        notices.add("Could not rename legacy file " + actual
+                                + "; it remains usable: " + safeMessage(exception));
+                    }
                 }
                 definitions.put(definition.name(), definition);
+                userFiles.put(definition.name(), file);
+            }
+        } catch (IOException exception) {
+            notices.add("Could not scan component library folder: " + safeMessage(exception));
+        }
+    }
+
+    private void migrateLegacyLibrary() {
+        if (Files.isDirectory(userDirectory)) {
+            return;
+        }
+        Path legacy = null;
+        if (Files.isRegularFile(userDirectory)) {
+            legacy = userDirectory;
+        } else {
+            for (String filename : List.of(
+                    "components.json", "component-library.json", "component_library.json",
+                    "componentLibrary.json", "library.json", "user-library.json",
+                    "user-components.json", "components.lbcomp.json", "components.lbcomp")) {
+                Path candidate = userDirectory.resolveSibling(filename);
+                if (Files.isRegularFile(candidate)) {
+                    legacy = candidate;
+                    break;
+                }
             }
         }
+        if (legacy == null) {
+            return;
+        }
+
+        List<ComponentDefinition> migrated;
+        try {
+            migrated = readLegacyLibrary(legacy);
+        } catch (IOException | RuntimeException exception) {
+            notices.add("Could not migrate " + legacy.getFileName()
+                    + "; the old library file was kept: " + safeMessage(exception));
+            return;
+        }
+
+        Path parent = userDirectory.getParent();
+        Path staging = null;
+        Path backup = uniqueBackupPath(legacy);
+        try {
+            Files.createDirectories(parent);
+            staging = Files.createTempDirectory(parent, ".components-migration-");
+            Set<String> names = new java.util.LinkedHashSet<>();
+            for (ComponentDefinition original : migrated) {
+                ComponentDefinition definition = original;
+                String name = definition.name();
+                if (builtInNames.contains(name) || !names.add(name)) {
+                    int suffix = 2;
+                    String candidate;
+                    do {
+                        candidate = name + suffix++;
+                    } while (builtInNames.contains(candidate) || !names.add(candidate));
+                    definition = rename(definition, candidate);
+                }
+                writeAtomically(staging.resolve(definition.name() + USER_EXTENSION),
+                        ComponentFileJson.toJson(definition));
+            }
+            Files.move(legacy, backup);
+            try {
+                moveDirectory(staging, userDirectory);
+                staging = null;
+            } catch (IOException exception) {
+                Files.move(backup, legacy);
+                throw exception;
+            }
+            notices.add("Migrated " + migrated.size()
+                    + " component(s) to " + userDirectory + ".");
+        } catch (IOException | RuntimeException exception) {
+            if (staging != null) {
+                deleteTreeQuietly(staging);
+            }
+            for (ComponentDefinition definition : migrated) {
+                if (!builtInNames.contains(definition.name())) {
+                    definitions.putIfAbsent(definition.name(), definition);
+                }
+            }
+            notices.add("Could not finish migration from " + legacy.getFileName()
+                    + "; the old library remains available: " + safeMessage(exception));
+        }
+    }
+
+    private List<ComponentDefinition> readLegacyLibrary(Path file) throws IOException {
+        com.google.gson.JsonElement root = com.google.gson.JsonParser.parseString(
+                Files.readString(file, StandardCharsets.UTF_8));
+        List<com.google.gson.JsonElement> entries = new ArrayList<>();
+        if (root.isJsonArray()) {
+            root.getAsJsonArray().forEach(entries::add);
+        } else if (root.isJsonObject()) {
+            com.google.gson.JsonObject object = root.getAsJsonObject();
+            com.google.gson.JsonElement wrapped = object.has("definitions")
+                    ? object.get("definitions")
+                    : object.has("components") ? object.get("components")
+                    : object.has("userComponents") ? object.get("userComponents")
+                    : object.has("library") ? object.get("library") : null;
+            if (wrapped != null && wrapped.isJsonArray()) {
+                wrapped.getAsJsonArray().forEach(entries::add);
+            } else if (wrapped != null && wrapped.isJsonObject()) {
+                wrapped.getAsJsonObject().entrySet().forEach(entry -> {
+                    if (entry.getValue().isJsonObject()) {
+                        entries.add(entry.getValue());
+                    }
+                });
+            } else if (wrapped != null) {
+                throw new IOException("legacy definitions must be an array or object");
+            } else if (object.has("name")) {
+                entries.add(root);
+            } else {
+                object.entrySet().forEach(entry -> {
+                    if (entry.getValue().isJsonObject()) {
+                        entries.add(entry.getValue());
+                    }
+                });
+            }
+        } else {
+            throw new IOException("legacy component library must be a JSON object or array");
+        }
+        List<ComponentDefinition> result = new ArrayList<>();
+        for (com.google.gson.JsonElement item : entries) {
+            if (!item.isJsonObject()) {
+                throw new IOException("legacy component entry must be an object");
+            }
+            String json = item.toString();
+            ComponentDefinition definition;
+            try {
+                definition = ComponentFileJson.fromJson(json, gateDefinitions);
+            } catch (RuntimeException first) {
+                definition = ComponentDefinitionJson.fromJson(json, gateDefinitions);
+            }
+            result.add(definition);
+        }
+        return List.copyOf(result);
+    }
+
+    private static void validateUserName(String name) {
+        if (name == null || !name.matches("[A-Za-z][A-Za-z0-9_]*")) {
+            throw new IllegalArgumentException(
+                    "component name must start with a letter and contain only letters, digits and underscores");
+        }
+    }
+
+    private static ComponentDefinition rename(ComponentDefinition definition, String name) {
+        return new ComponentDefinition(name, definition.description(), definition.category(),
+                definition.ports(), definition.primaryOutput(), definition.internalCircuit());
+    }
+
+    private static Path uniqueBackupPath(Path legacy) {
+        Path backup = legacy.resolveSibling(legacy.getFileName() + ".bak");
+        int suffix = 2;
+        while (Files.exists(backup)) {
+            backup = legacy.resolveSibling(legacy.getFileName() + ".bak" + suffix++);
+        }
+        return backup;
+    }
+
+    private static void writeAtomically(Path target, String content) throws IOException {
+        Path parent = target.toAbsolutePath().normalize().getParent();
+        Files.createDirectories(parent);
+        Path temporary = Files.createTempFile(parent, "." + target.getFileName(), ".tmp");
+        try {
+            Files.writeString(temporary, content, StandardCharsets.UTF_8,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static void moveDirectory(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException exception) {
+            Files.move(source, target);
+        }
+    }
+
+    private static void deleteTreeQuietly(Path directory) {
+        try (Stream<Path> paths = Files.walk(directory)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException ignored) {
+            // Keep the original legacy library intact if staging cleanup itself fails.
+        }
+    }
+
+    private static String safeMessage(Exception exception) {
+        return exception.getMessage() == null
+                ? exception.getClass().getSimpleName() : exception.getMessage();
     }
 
     private static List<ComponentDefinition> createBuiltIns(List<GateDef> gateDefinitions) {
