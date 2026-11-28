@@ -60,6 +60,9 @@ class FixedSourceIntegrationTest {
         PlacedComponent constant = schematic.add(
                 "constant", 100, 100, Facing.NORTH, Map.of("value", "1"));
         assertTrue(schematic.setLabel(constant.id(), "BIAS"));
+        PlacedComponent namedZero = schematic.add(
+                "constant", 150, 100, Facing.EAST, Map.of("value", "0"));
+        assertTrue(schematic.setLabel(namedZero.id(), "1"));
         PlacedComponent vcc = schematic.add("vcc", 200, 100, Facing.WEST);
         PlacedComponent gnd = schematic.add("gnd", 300, 100, Facing.SOUTH);
 
@@ -75,6 +78,12 @@ class FixedSourceIntegrationTest {
                 .findFirst().orElseThrow().fixedSourceValue());
         assertTrue(loaded.components().stream().anyMatch(c -> c.typeId().equals("vcc")));
         assertTrue(loaded.components().stream().anyMatch(c -> c.typeId().equals("gnd")));
+        PlacedComponent loadedNamedZero = loaded.components().stream()
+                .filter(component -> component.id().equals(namedZero.id()))
+                .findFirst().orElseThrow();
+        assertEquals("0", loaded.attributeValue(loadedNamedZero.id(), "value"));
+        assertEquals("1", loadedNamedZero.label(),
+                "an explicit Value preserves a numeric Constant Name");
 
         String legacy = """
                 {"version":1,
