@@ -107,7 +107,7 @@ class Ti74xxTierAChipTest {
                 Value expected = row.lowOutput() == decimal ? Value.ZERO : Value.ONE;
                 assertEquals(expected,
                         simulator.getProbeValue(compiled.outputs().get(
-                                outputIdsByLabel.get(Integer.toString(decimal)))),
+                                outputIdsByLabel.get("probe" + decimal))),
                         "D-C-B-A=" + String.format("%4s", Integer.toBinaryString(row.input()))
                                 .replace(' ', '0') + ", output " + decimal);
             }
