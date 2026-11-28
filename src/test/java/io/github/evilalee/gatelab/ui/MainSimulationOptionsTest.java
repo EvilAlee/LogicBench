@@ -34,32 +34,33 @@ class MainSimulationOptionsTest {
     }
 
     @Test
-    void requirePowerOnChipsCheckboxStartsOffAndDoesNotRecomputeOrChangeHistory() {
+    void chipsNeedPowerCheckboxStartsOnAndRecomputesWithoutChangingHistory() {
         CanvasPanel canvas = new CanvasPanel();
-        assertFalse(canvas.requirePowerOnChips());
+        assertTrue(canvas.chipsNeedPower());
         JMenu simulate = Main.createSimulateMenu(canvas);
-        JCheckBoxMenuItem requirePower = null;
+        JCheckBoxMenuItem chipsNeedPower = null;
         for (java.awt.Component component : simulate.getMenuComponents()) {
             if (component instanceof JCheckBoxMenuItem item
-                    && "Require power on chips".equals(item.getText())) {
-                requirePower = item;
+                    && "Chips need power".equals(item.getText())) {
+                chipsNeedPower = item;
                 break;
             }
         }
-        assertNotNull(requirePower);
-        assertFalse(requirePower.isSelected());
+        assertNotNull(chipsNeedPower);
+        assertTrue(chipsNeedPower.isSelected());
 
         long revision = canvas.schematic().modificationCount();
         long recomputes = canvas.simulationRecomputeCount();
-        requirePower.doClick();
-        assertTrue(canvas.requirePowerOnChips());
+        chipsNeedPower.doClick();
+        assertFalse(canvas.chipsNeedPower());
         assertEquals(revision, canvas.schematic().modificationCount());
-        assertEquals(recomputes, canvas.simulationRecomputeCount());
+        assertEquals(recomputes + 1, canvas.simulationRecomputeCount());
 
-        requirePower.doClick();
-        assertFalse(canvas.requirePowerOnChips());
+        chipsNeedPower.doClick();
+        assertTrue(canvas.chipsNeedPower());
         assertEquals(revision, canvas.schematic().modificationCount());
-        assertEquals(recomputes, canvas.simulationRecomputeCount());
+        assertEquals(recomputes + 2, canvas.simulationRecomputeCount());
+        assertFalse(canvas.canUndo());
     }
 
     private static JRadioButtonMenuItem modeItem(JMenu menu, String label) {

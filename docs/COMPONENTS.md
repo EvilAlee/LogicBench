@@ -74,22 +74,34 @@ path: for example, a gate `g1` inside `U1`, itself nested in `U2`, becomes
 recompile when unrelated components are added.
 
 The definition's boundary Input, Clock, and Output components are not emitted
-as engine sources or sinks. Instead, the compiler finds each boundary
-component's internal net and unions it with the corresponding external
-instance-pin net:
+as engine sources or sinks. The compiler finds each boundary component's
+internal net and connects it to the corresponding external instance-pin net:
 
-- an `IN` port unions the internal Input/Clock output net with the outer
+- an `IN` port connects the internal Input/Clock output net to the outer
   instance input-pin net; the outer circuit supplies its value;
-- an `OUT` port unions the internal Output input net with the outer
-  instance output-pin net; and
-- a direct input-to-output connection is a valid pass-through and needs no
-  synthetic gate.
+- an ordinary (non-chip) `OUT` port connects the internal Output input net
+  directly to the outer instance output-pin net; and
+- a chip-style `OUT` port is routed through a three-valued output mask when
+  **Simulate > Chips need power** is enabled. Its per-instance power-good
+  signal is `VCC AND NOT GND`. The mask is
+  `(powerGood AND output) OR (NOT powerGood AND X)`, built from ordinary
+  engine gates and one internal X-valued fixed source shared by the flattened
+  circuit. A direct input-to-output connection is masked in the same way.
 
 An unconnected instance input remains undriven. It is not replaced with a
 constant; the existing three-valued simulator therefore observes `X` where
-that signal is consumed. Flattening creates no extra gates and introduces no
-simulation ticks or delay. Clock ports are ordinary externally driven input
-nets with clock metadata retained for top-level clock/source handling.
+that signal is consumed. Ordinary boxes add no flattening gates. Each powered
+chip adds three shared power-check gates and three output-mask gates per
+output, so chip outputs retain the engine's normal gate delays, settle limit,
+oscillation reporting, and did-not-settle behavior. No simulator primitive or
+special settle path is used. Clock ports remain externally driven input nets
+with clock metadata retained for top-level clock/source handling.
+
+Only public chip outputs are masked. The chip's internal gates continue to
+simulate while supply is absent: the model does not pause or reset internal
+state on power loss. This is an intentional simplification; sequential state
+is kept and becomes visible again when valid power returns. Chip inputs are
+unaffected by the supply mask.
 
 Nesting is limited to eight component-instance levels. Direct or indirect
 definition cycles are rejected with the complete cycle path. Waveform probes
@@ -117,9 +129,11 @@ from gate netlists and use the same layout engine.
 The **TTL 74xx** Built-in explorer group includes `7400`, `7402`, `7404`,
 `7408`, `7410`, `7411`, `7420`, `7427`, `7430`, `7432`, and
 `7486`. Each is a chip-style DIP14 definition synthesized from LogicBench's
-own gates. Their declared VCC and GND ports are ordinary inputs, but they are
-not needed for logic evaluation: the parts simulate as ideal logic even when
-the supply terminals are left unconnected.
+own gates. With **Chips need power** enabled, a chip's outputs are valid only
+when VCC is 1 and GND is 0; either supply pin unconnected, or an invalid/unknown
+supply level, makes every output `X`. The setting is transient and defaults
+to on at each application launch. Turning it off restores ideal, supply-
+independent logic behavior.
 
 User definitions are stored as one portable `.lbcomp` file per component in
 `~/.config/logicbench/components/` (or
@@ -212,12 +226,19 @@ tooltips. Selecting a component enters placement mode and shows its preview on
 the canvas. Dragging a tree item onto the canvas places it at the drop point.
 Each placement is one undoable operation.
 
-The **Simulate > Require power on chips** checkbox is a transient display
-diagnostic (default off and not stored in circuit files). It reads the current
-simulated net values at each chip's VCC and GND pins. A chip is marked with a
-red outline and listed in the status line as `U3 (7400): no power` unless
-VCC is 1 and GND is 0. This option does not drive the power pins or change
-simulation behavior.
+The **Simulate > Chips need power** checkbox is a transient simulation
+setting (default on at each launch and not stored in circuit files). When
+enabled, a chip is marked with a red outline and listed in the status line as
+`U3 (7400): no power` unless VCC is 1 and GND is 0. Its outputs then simulate
+as `X`; the one-line status also explains that the outputs are unknown and
+names the checkbox that restores ideal logic when turned off. Existing circuits
+with unwired chip supplies therefore show `X` at chip outputs after opening
+or simulating, without a modal dialog.
+
+The expression exporter and structural VHDL exporter describe chip logic as
+if each chip were powered; they do not bake the current supply state into the
+exported logic. The VHDL entity and instance port map still retain the declared
+VCC and GND ports.
 
 The **Circuit > Components** submenu provides **Import component file(s)...**
 (multiple selection), **Export component...**, **Load library file...**,

@@ -20,10 +20,12 @@
 - PR #26: AI circuit generation — Gemini provider, schema-validated expressions, independent engine truth-table verification, offline demos, persistent cache and AI dialog
 - PR #29: visible gate names and editable per-gate labels, with app preferences and version-1 file persistence
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
+- PR #64 / feature-ti-chips-1: DIP14/DIP16 chip-style boxes, physical pin numbers and the first TI 74xx built-in parts
+- PR #65 / feature-gates-and-power: production 2–5 input gate variants and VCC/GND/Constant fixed sources
+- feature-chip-power: three-valued VCC/GND-dependent chip outputs, transient default-on setting, output-X diagnostics, and power-loss state retention
 
 ## In progress
 - feature-auto-wire: two-click A* orthogonal pin routing, driver checks, one-step undo, and headless router/canvas tests.
-- feature-gates-and-power: production AND/OR/NAND/NOR/XOR/XNOR 2–5 input variants, resize wire preservation, n-ary expression/VHDL export, and VCC/GND/Constant fixed sources with legacy-file migration.
 - feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification.
 - feature-ai-sequential: strict sequential response schema, DFF/DLATCH feedback compilation, reset-from-X checks, SequenceRunner verification, sequential cache replay and a sequence table; does not change the combinational AI path.
 - perf-ui-lag: opt-in EDT/paint profiling, debounced background expression preview, phase-keyed repeating grid texture and reduced no-change hover repaints; acceptance timings and phone-class human checks are tracked in PR #60.
@@ -37,7 +39,6 @@
 - feature-circuit-exporter: add deterministic, Swing-free schematic/netlist expression export; headless tests first, Circuit menu action last.
 - feature-copy-paste: mixed-selection clipboard codec, transactional collision-safe paste, Cut/Copy/Paste/Duplicate actions and headless regression coverage.
 - feature-ai-16-inputs: 16-input combinational AI validation with all-row bit-parallel spec checks and deterministic real-engine cross-checks; sequential limits unchanged.
-- feature-ti-chips-1: optional DIP14/DIP16 chip-style definitions, real pin-number geometry and rendering, transient simulated VCC/GND warnings, and the first TI 74xx built-in parts.
 - TI 74xx pinout note: implemented verbatim from the owner's supplied mapping; no discrepancy was identified or changed. Datasheet confirmation remains a human check, especially the listed NC positions on 7420 (3, 11) and 7430 (9, 10, 13).
 - feature-component-files: portable one-file-per-component user library, atomic writes, single-file migration, collision-aware import/export, refresh, and explorer delete/tooltip actions.
 
@@ -50,7 +51,6 @@
 
 ## Known limitations
 - Feedback circuits (including latches) remain at X until an input or Clock source establishes a state.
-- Main still ships two-input variants until feature-gates-and-power is merged; that PR adds selectable 2–5 input variants.
 
 ## Decisions
 - Typed expression calls resolve through ComponentLibrary into boxed instances by default; the typed dialog exposes legacy sequential gate expansion explicitly. AI validation remains on the original gate-expansion compiler path with raw feedback disabled. SchematicCompiler remains the single schematic-to-engine flattening path. Tidy still refuses instance-containing schematics until its extraction/layout path is hierarchical.
