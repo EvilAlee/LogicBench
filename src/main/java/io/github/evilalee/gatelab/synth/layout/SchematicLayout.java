@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.synth.layout;
 
 import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Facing;
@@ -634,7 +635,8 @@ public final class SchematicLayout {
             } else {
                 schematic.add(new PlacedComponent(
                         node.componentId, node.definition.family(), node.x, node.y,
-                        Facing.EAST, Map.of(), labelsById.getOrDefault(node.componentId, "")));
+                        Facing.EAST, attributesFor(node),
+                        labelsById.getOrDefault(node.componentId, "")));
             }
         }
         for (WireSegment wire : wires) {
@@ -1594,7 +1596,7 @@ public final class SchematicLayout {
                 } else {
                     schematic.add(new PlacedComponent(
                             node.componentId, node.definition.family(), node.x, node.y,
-                            Facing.EAST, Map.of(), label));
+                            Facing.EAST, attributesFor(node), label));
                 }
             }
         }
@@ -1686,6 +1688,14 @@ public final class SchematicLayout {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "gates.json has no narrow " + family
                                 + " component with " + inputCount + " inputs"));
+    }
+
+    private static Map<String, String> attributesFor(Node node) {
+        if (ComponentAttributeRegistry.supports(node.definition.family(), "inputs")
+                && node.definition.inputCount() != 2) {
+            return Map.of("inputs", Integer.toString(node.definition.inputCount()));
+        }
+        return Map.of();
     }
 
     private Node componentNode(
