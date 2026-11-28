@@ -140,3 +140,49 @@ H=HIGH, L=LOW, X=irrelevant. Each decoder is independent. When its enable is HIG
 
 **Second-source cross-check:** Nexperia [74HC139/74HCT139](https://assets.nexperia.com/documents/data-sheet/74HC_HCT139.pdf), Rev.6 (29 February 2024), page 3, pinning/function tables. It independently confirms both decoder enable polarities, the four active-LOW output rows, and the corresponding terminal numbers: 1/15 enables; 2/3 and 14/13 address pairs; 4–7 and 12–9 output groups; 8=GND; 16=VCC. Nexperia uses SO16 package; TI remains the authority for DIP16 N. **Not single-source.**
 
+## 74148 — audited; implementation pending
+
+**TI source:** [SN74LS148](https://www.ti.com/lit/gpn/SN74LS148), datasheet SDLS053B (October 1976, revised May 2004), package pin configuration page 1 and **'148/'LS148 function table page 3**.
+
+**Package:** TI identifies SN74148/SN74LS148 for D, N, or NS package; the order table explicitly lists SN74LS148N as PDIP-N. Library package: **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI):**
+
+| Pin | Signal | Direction / behavior |
+|---:|---|---|
+| 1 | 4 | IN, active LOW data input 4 |
+| 2 | 5 | IN, active LOW data input 5 |
+| 3 | 6 | IN, active LOW data input 6 |
+| 4 | 7 | IN, active LOW data input 7 |
+| 5 | EI | IN, active LOW enable |
+| 6 | A2 | OUT, active LOW encoded bit 2 |
+| 7 | A1 | OUT, active LOW encoded bit 1 |
+| 8 | GND | IN |
+| 9 | A0 | OUT, active LOW encoded bit 0 |
+| 10 | 0 | IN, active LOW data input 0 |
+| 11 | 1 | IN, active LOW data input 1 |
+| 12 | 2 | IN, active LOW data input 2 |
+| 13 | 3 | IN, active LOW data input 3 |
+| 14 | GS | OUT, active LOW group-select |
+| 15 | EO | OUT, enable output |
+| 16 | VCC | IN |
+
+**TI function table (page 3), rows transcribed in input order 0,1,2,3,4,5,6,7:**
+
+| EI | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | A2 | A1 | A0 | GS | EO |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| H | X | X | X | X | X | X | X | X | H | H | H | H | H |
+| L | H | H | H | H | H | H | H | H | H | H | H | H | L |
+| L | X | X | X | X | X | X | X | L | L | L | L | L | H |
+| L | X | X | X | X | X | X | L | H | L | L | H | L | H |
+| L | X | X | X | X | X | L | H | H | L | H | L | L | H |
+| L | X | X | X | X | L | H | H | H | L | H | H | L | H |
+| L | X | X | X | L | H | H | H | H | H | L | L | L | H |
+| L | X | X | L | H | H | H | H | H | H | L | H | L | H |
+| L | X | L | H | H | H | H | H | H | H | H | L | L | H |
+| L | L | H | H | H | H | H | H | H | H | H | H | L | H |
+
+H=HIGH, L=LOW, X=irrelevant. Input 0 has highest priority; input 7 has lowest priority. With EI=H the encoder is disabled and all five outputs are HIGH. With EI=L and all data inputs HIGH, A2/A1/A0 and GS are HIGH while EO is LOW. When any data input is LOW, the highest-priority active input is encoded and GS is LOW, EO is HIGH.
+
+**Second-source cross-check:** ST [M74HC148](https://www.st.com/resource/en/datasheet/cd00000265.pdf), document CD00000265, pages 1–2, independently confirms DIP pin assignments, active-LOW data input behavior, the same priority ordering, and all ten rows of the truth table. The ST variant is HC rather than LS, but is explicitly pin/function compatible with the 74-series 148. **Not single-source.**
+
