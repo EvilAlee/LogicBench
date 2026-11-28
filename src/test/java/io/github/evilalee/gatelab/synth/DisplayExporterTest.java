@@ -23,7 +23,13 @@ class DisplayExporterTest {
     @Test
     void expressionAndVhdlExportsExposeEveryDisplayInputAsANamedOutputPort() {
         Schematic schematic = wiredDisplays();
-        CircuitDescriber.Description description = CircuitDescriber.describe(schematic);
+        CircuitDescriber.Description description;
+        try {
+            description = CircuitDescriber.describe(schematic);
+        } catch (IllegalArgumentException exception) {
+            System.out.println("DISPLAY_EXPORT_DEBUG: " + exception.getMessage());
+            throw exception;
+        }
         VhdlExporter.Export vhdl = VhdlExporter.export(schematic, "displays.lbc");
 
         for (String signal : List.of(
@@ -47,8 +53,13 @@ class DisplayExporterTest {
     @Test
     void tidyTreatsEveryDisplayPinAsASeparateNamedSink() {
         Schematic schematic = wiredDisplayThroughBuffer();
-        TidyCircuitService.TidyResult result =
-                TidyCircuitService.tidy(schematic, DEFINITIONS);
+        TidyCircuitService.TidyResult result;
+        try {
+            result = TidyCircuitService.tidy(schematic, DEFINITIONS);
+        } catch (IllegalArgumentException exception) {
+            System.out.println("DISPLAY_TIDY_DEBUG: " + exception.getMessage());
+            throw exception;
+        }
 
         List<PlacedComponent> outputs = result.schematic().components().stream()
                 .filter(component -> component.typeId().equals("output"))
