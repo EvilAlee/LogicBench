@@ -303,6 +303,18 @@ public final class SchematicCompiler {
                         outputs.put(placed.id(), output);
                         addPending(scope, placed.id(), "in0", output.input());
                     }
+                    case "seg7", "hexdigit" -> {
+                        List<String> names =
+                                io.github.evilalee.gatelab.model.DisplayComponent.inputNames(
+                                        placed.typeId());
+                        for (int index = 0; index < names.size(); index++) {
+                            String probeId = engineId + "." + names.get(index).toLowerCase(
+                                    java.util.Locale.ROOT);
+                            OutputProbe sink = new OutputProbe(probeId);
+                            circuit.addComponent(sink);
+                            addPending(scope, placed.id(), "in" + index, sink.input());
+                        }
+                    }
                     default -> compileGate(
                             schematic, scope, placed, engineId, ignoreBareInputs);
                 }

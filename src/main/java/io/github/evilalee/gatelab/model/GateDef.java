@@ -52,10 +52,11 @@ public record GateDef(
         if (output != null) {
             return output;
         }
-        if (inputs.size() != 1) {
+        if (inputs.isEmpty()) {
             throw new IllegalStateException(
-                    "component " + id + " needs exactly one input when it has no output");
+                    "component " + id + " needs at least one input when it has no output");
         }
+        // Multi-input sinks (such as displays) use their first input as the fixed origin.
         return inputs.getFirst();
     }
 
