@@ -39,10 +39,12 @@ public final class DisplayLogic {
                 return unknownHex ? "Hex digit: ?" : "Hex digit: " + HEX_DIGITS[hexDigit];
             }
             List<String> lit = segments.entrySet().stream()
-                    .filter(entry -> entry.getValue() == SegmentState.LIT)
+                    .filter(entry -> entry.getValue() == SegmentState.LIT
+                            && !entry.getKey().equals("dp"))
                     .map(Map.Entry::getKey).toList();
             List<String> unknown = segments.entrySet().stream()
-                    .filter(entry -> entry.getValue() == SegmentState.UNKNOWN)
+                    .filter(entry -> entry.getValue() == SegmentState.UNKNOWN
+                            && !entry.getKey().equals("dp"))
                     .map(Map.Entry::getKey).toList();
             if (unknown.isEmpty()) {
                 for (int digit = 0; digit <= 9; digit++) {
