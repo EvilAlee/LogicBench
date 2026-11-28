@@ -43,7 +43,7 @@
 - TI 74xx pinout note: implemented verbatim from the owner's supplied mapping; no discrepancy was identified or changed. Datasheet confirmation remains a human check, especially the listed NC positions on 7420 (3, 11) and 7430 (9, 10, 13).
 - feature-component-files: portable one-file-per-component user library, atomic writes, single-file migration, collision-aware import/export, refresh, and explorer delete/tooltip actions.
 - PR #67 / feature-chip-power: three-valued VCC/GND-dependent chip outputs, transient default-on setting, output-X diagnostics, and power-loss state retention
-- feature-ti-chips-a: 7442/74138/74139/74148/74151/74153 implemented with TI-row tests; 7447/7448 audited but model-blocked by BI/RBO INOUT/open-collector behavior; 74157 audited and next for implementation.
+- feature-ti-chips-a: 7442/74138/74139/74148/74151/74153/74157 implemented with TI-row tests; 7447/7448 audited but model-blocked by BI/RBO INOUT/open-collector behavior; remaining tier-A parts awaiting source audit/implementation.
 
 ## Next
 1. M9a attribute table with editable labels
