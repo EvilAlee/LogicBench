@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.synth;
 
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 
@@ -17,6 +18,9 @@ import java.util.Set;
 /** Converts the current geometric schematic into a validated combinational netlist. */
 public final class SchematicNetlistExtractor {
     private record PinKey(String componentId, String pinId) {
+    }
+
+    private record OutputSink(PlacedComponent component, String pinId, String signalName) {
     }
 
     public record Extraction(
@@ -53,6 +57,7 @@ public final class SchematicNetlistExtractor {
         List<PlacedComponent> inputs = new ArrayList<>();
         List<PlacedComponent> constants = new ArrayList<>();
         List<PlacedComponent> outputs = new ArrayList<>();
+        List<PlacedComponent> displays = new ArrayList<>();
         List<PlacedComponent> gates = new ArrayList<>();
 
         for (PlacedComponent component : components) {
@@ -61,6 +66,7 @@ public final class SchematicNetlistExtractor {
                 case "input" -> inputs.add(component);
                 case "constant", "vcc", "gnd" -> constants.add(component);
                 case "output" -> outputs.add(component);
+                case "seg7", "hexdigit" -> displays.add(component);
                 default -> {
                     GateOperator operator;
                     try {
@@ -89,11 +95,8 @@ public final class SchematicNetlistExtractor {
                 .thenComparing(PlacedComponent::id);
         inputs.sort(visualOrder);
         outputs.sort(visualOrder);
+        displays.sort(visualOrder);
         gates.sort(visualOrder);
-        if (outputs.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Tidy circuit requires at least one Output component.");
-        }
 
         Map<String, String> inputNames = assignNames(inputs, "In", true);
         Map<String, String> outputNames = assignNames(outputs, "Out", false);
@@ -102,8 +105,34 @@ public final class SchematicNetlistExtractor {
         for (PlacedComponent input : inputs) {
             inputIds.put(inputNames.get(input.id()), input.id());
         }
+        List<OutputSink> outputSinks = new ArrayList<>();
+        Set<String> usedOutputNames = new HashSet<>(outputNames.values());
         for (PlacedComponent output : outputs) {
-            outputIds.put(outputNames.get(output.id()), output.id());
+            String name = outputNames.get(output.id());
+            outputIds.put(name, output.id());
+            outputSinks.add(new OutputSink(output, "in0", name));
+        }
+        for (DisplayComponent.SinkPin sink : DisplayComponent.sinkPins(schematic)) {
+            String name = sink.portName();
+            if (!name.matches("[A-Za-z][A-Za-z0-9_]*")) {
+                throw new IllegalArgumentException(
+                        "Display output name '" + name + "' must be a valid signal name.");
+            }
+            if (!usedOutputNames.add(name)) {
+                throw new IllegalArgumentException("Duplicate component output name: " + name);
+            }
+            PlacedComponent display = byId.get(sink.componentId());
+            outputSinks.add(new OutputSink(display, sink.pinId(), name));
+            outputIds.put(name, sink.componentId());
+        }
+        outputSinks.sort(Comparator
+                .comparingInt((OutputSink sink) -> sink.component().y())
+                .thenComparingInt(sink -> sink.component().x())
+                .thenComparing(sink -> sink.component().id())
+                .thenComparing(OutputSink::pinId));
+        if (outputSinks.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Tidy circuit requires at least one Output component or display.");
         }
 
         Map<String, String> constantSignals = new LinkedHashMap<>();
@@ -186,12 +215,12 @@ public final class SchematicNetlistExtractor {
         }
 
         List<Netlist.Output> netlistOutputs = new ArrayList<>();
-        for (PlacedComponent output : outputs) {
+        for (OutputSink sink : outputSinks) {
             String source = requireDrivenSignal(
-                    netByPin.get(new PinKey(output.id(), "in0")),
+                    netByPin.get(new PinKey(sink.component().id(), sink.pinId())),
                     signalByNet,
-                    "Output " + output.id());
-            netlistOutputs.add(new Netlist.Output(outputNames.get(output.id()), source));
+                    "Display/Output " + sink.component().id() + "." + sink.pinId());
+            netlistOutputs.add(new Netlist.Output(sink.signalName(), source));
         }
 
         Netlist netlist = new Netlist(

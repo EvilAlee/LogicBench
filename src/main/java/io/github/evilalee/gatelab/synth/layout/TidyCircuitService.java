@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.synth.layout;
 
 import io.github.evilalee.gatelab.model.Facing;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
@@ -78,7 +79,8 @@ public final class TidyCircuitService {
                         && !component.typeId().equals("output")
                         && !component.typeId().equals("constant")
                         && !component.typeId().equals("vcc")
-                        && !component.typeId().equals("gnd"))) {
+                        && !component.typeId().equals("gnd")
+                        && !DisplayComponent.isDisplay(component.typeId()))) {
             throw new IllegalArgumentException("Tidy circuit is available when the schematic has a gate.");
         }
 
@@ -130,7 +132,9 @@ public final class TidyCircuitService {
         extraction.outputComponentIds().forEach((signal, oldId) -> {
             String newId = layout.outputComponentIds().get(signal);
             newToOldIds.put(newId, oldId);
-            labelsByNewId.put(newId, oldById.get(oldId).label());
+            PlacedComponent old = oldById.get(oldId);
+            labelsByNewId.put(newId,
+                    DisplayComponent.isDisplay(old.typeId()) ? signal : old.label());
         });
         extraction.gateComponentIds().forEach((signal, oldId) -> {
             String newId = layout.gateComponentIds().get(signal);
@@ -183,7 +187,9 @@ public final class TidyCircuitService {
         });
         extraction.outputComponentIds().forEach((name, oldId) -> {
             String newId = layout.outputComponentIds().get(name);
-            labelsByNewId.put(newId, oldById.get(oldId).label());
+            PlacedComponent old = oldById.get(oldId);
+            labelsByNewId.put(newId,
+                    DisplayComponent.isDisplay(old.typeId()) ? name : old.label());
         });
         original.components().stream()
                 .filter(PlacedComponent::isFixedSource)
