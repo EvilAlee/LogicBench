@@ -148,7 +148,8 @@ class GateTypeTest {
         assertThrows(IllegalArgumentException.class, () -> new Gate("bad", GateType.NOT, 2));
         assertThrows(IllegalArgumentException.class, () -> GateType.XOR.evaluate(Value.ONE));
         assertThrows(IllegalArgumentException.class, () -> GateType.AND.evaluate(
-                Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE));
+                Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE,
+                Value.ONE, Value.ONE, Value.ONE));
         assertThrows(IllegalArgumentException.class, () -> GateType.BUFFER.evaluate(Value.ZERO, Value.ONE));
     }
 }
