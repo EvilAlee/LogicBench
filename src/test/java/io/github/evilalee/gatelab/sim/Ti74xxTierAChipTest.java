@@ -82,10 +82,19 @@ class Ti74xxTierAChipTest {
         SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
         Simulator simulator = new Simulator(compiled.circuit());
 
-        InputPinAccess inputA = new InputPinAccess(compiled.inputs().get("A"));
-        InputPinAccess inputB = new InputPinAccess(compiled.inputs().get("B"));
-        InputPinAccess inputC = new InputPinAccess(compiled.inputs().get("C"));
-        InputPinAccess inputD = new InputPinAccess(compiled.inputs().get("D"));
+        Map<String, String> inputIdsByLabel = new HashMap<>();
+        Map<String, String> outputIdsByLabel = new HashMap<>();
+        for (PlacedComponent component : schematic.components()) {
+            if (component.typeId().equals("input")) {
+                inputIdsByLabel.put(component.label(), component.id());
+            } else if (component.typeId().equals("output")) {
+                outputIdsByLabel.put(component.label(), component.id());
+            }
+        }
+        InputPinAccess inputA = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("A")));
+        InputPinAccess inputB = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("B")));
+        InputPinAccess inputC = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("C")));
+        InputPinAccess inputD = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("D")));
 
         for (BcdRow row : SN7442_FUNCTION_TABLE) {
             simulator.setInputValue(inputA.pin(), bit(row.input(), 0));
@@ -97,9 +106,10 @@ class Ti74xxTierAChipTest {
             for (int decimal = 0; decimal < 10; decimal++) {
                 Value expected = row.lowOutput() == decimal ? Value.ZERO : Value.ONE;
                 assertEquals(expected,
-                        simulator.getProbeValue(compiled.outputs().get("probe" + decimal)),
-                        "D-C-B-A=" + Integer.toBinaryString(row.input())
-                                + ", output " + decimal);
+                        simulator.getProbeValue(compiled.outputs().get(
+                                outputIdsByLabel.get(Integer.toString(decimal)))),
+                        "D-C-B-A=" + String.format("%4s", Integer.toBinaryString(row.input()))
+                                .replace(' ', '0') + ", output " + decimal);
             }
         }
     }
