@@ -1731,7 +1731,7 @@ public final class CanvasPanel extends JPanel {
         double nearestDistance = PlacedComponent.GRID_SPACING / 2.0;
         for (Connectivity.PinPosition pin : schematic.pinPositions()) {
             double distance = Math.hypot(worldX - pin.x(), worldY - pin.y());
-            if (distance <= nearestDistance) {
+            if (distance < nearestDistance) {
                 nearest = pin;
                 nearestDistance = distance;
             }
