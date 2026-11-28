@@ -61,7 +61,7 @@ class GateTypeTest {
 
     @Test
     void variableInputGatesSupportThreeFourAndEightInputs() {
-        for (int count : new int[]{3, 4, 5}) {
+        for (int count : new int[]{3, 4, 5, 8}) {
             Value[] allOnes = new Value[count];
             Arrays.fill(allOnes, Value.ONE);
             assertEquals(Value.ONE, GateType.AND.evaluate(allOnes));
