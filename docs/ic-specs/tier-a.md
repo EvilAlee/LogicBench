@@ -186,3 +186,143 @@ H=HIGH, L=LOW, X=irrelevant. Input 0 has highest priority; input 7 has lowest pr
 
 **Second-source cross-check:** ST [M74HC148](https://www.st.com/resource/en/datasheet/cd00000265.pdf), document CD00000265, pages 1–2, independently confirms DIP pin assignments, active-LOW data input behavior, the same priority ordering, and all ten rows of the truth table. The ST variant is HC rather than LS, but is explicitly pin/function compatible with the 74-series 148. **Not single-source.**
 
+## 7447 — pin/function audit complete; MODEL BLOCKED (BI/RBO bidirectional)
+
+**TI source:** [SN74LS47 shared SN74LS47/SN74LS48 datasheet](https://www.ti.com/lit/ds/symlink/sn74ls47.pdf), SDLS111 (March 1974, revised March 1988), page 1 package pin configuration and page 3 function table T1.
+
+**Package:** SN74LS47 is listed in D or N 16-pin packages; use **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI page 1):**
+
+| Pin | Signal | Direction / behavior |
+|---:|---|---|
+| 1 | B | BCD input, weight 2 |
+| 2 | C | BCD input, weight 4 |
+| 3 | LT | active-LOW lamp-test input |
+| 4 | BI/RBO | bidirectional active-LOW blanking input / ripple-blanking output |
+| 5 | RBI | active-LOW ripple-blanking input |
+| 6 | D | BCD input, weight 8 |
+| 7 | A | BCD input, weight 1 |
+| 8 | GND | IN |
+| 9 | e | segment output |
+| 10 | d | segment output |
+| 11 | c | segment output |
+| 12 | b | segment output |
+| 13 | a | segment output |
+| 14 | g | segment output |
+| 15 | f | segment output |
+| 16 | VCC | IN |
+
+**TI function table T1 (page 3):** table columns are function, LT, RBI, D, C, B, A, BI/RBO, a, b, c, d, e, f, g. TI uses ON/OFF for segment states; since LS47 outputs are active-LOW, ON=LOW and OFF=HIGH.
+
+| Function | LT | RBI | D C B A | BI/RBO | a b c d e f g (TI ON/OFF) |
+|---:|---|---|---|---|---|
+| 0 | H | H | L L L L | H | ON ON ON ON ON ON OFF |
+| 1 | H | X | L L L H | H | OFF ON ON OFF OFF OFF OFF |
+| 2 | H | X | L L H L | H | ON ON OFF ON ON OFF ON |
+| 3 | H | X | L L H H | H | ON ON ON ON OFF OFF ON |
+| 4 | H | X | L H L L | H | OFF ON ON OFF OFF ON ON |
+| 5 | H | X | L H L H | H | ON OFF ON ON OFF ON ON |
+| 6 | H | X | L H H L | H | OFF OFF ON ON ON ON ON |
+| 7 | H | X | L H H H | H | ON ON ON OFF OFF OFF OFF |
+| 8 | H | X | H L L L | H | ON ON ON ON ON ON ON |
+| 9 | H | X | H L L H | H | ON ON ON OFF OFF ON ON |
+| 10 | H | X | H L H L | H | OFF OFF OFF ON ON OFF ON |
+| 11 | H | X | H L H H | H | OFF OFF ON ON OFF OFF ON |
+| 12 | H | X | H H L L | H | OFF ON OFF OFF OFF ON ON |
+| 13 | H | X | H H L H | H | ON OFF OFF ON OFF ON ON |
+| 14 | H | X | H H H L | H | OFF OFF OFF ON ON ON ON |
+| 15 | H | X | H H H H | H | OFF OFF OFF OFF OFF OFF OFF |
+| BI | X | X | X X X X | L | OFF OFF OFF OFF OFF OFF OFF |
+| RBI | H | L | L L L L | L | OFF OFF OFF OFF OFF OFF OFF |
+| LT | L | X | X X X X | H | ON ON ON ON ON ON ON |
+
+H=HIGH, L=LOW, X=irrelevant. TI notes: BI low blanks outputs regardless of other signals; RBI low with BCD zero and LT high blanks zero and asserts RBO low; LT low turns all segments ON when BI/RBO is open/high. BI/RBO is explicitly **wire-AND logic serving as BI and/or RBO**.
+
+**Second-source cross-check:** Fairchild [DM74LS47](https://digsys.upc.edu/csd/chips/classic/74LS47.pdf), DS009817, pages 1–2, independently confirms the N16E DIP pin map, active-LOW open-collector segment outputs, the complete T1 truth table, and the wired-AND/cascading notes. **Not single-source.**
+
+**Model status:** Do not implement with the current component contract. BI/RBO must both accept an external LOW blanking input and sink the internally generated RBO response (wire-AND/open-collector) when RBI and BCD zero are active. ComponentDefinition.Port currently only supports one-way IN or OUT and the simulator has no released/high-impedance net driver semantics. Treating BI/RBO as IN-only or OUT-only would not implement the TI table/cascade behavior exactly.
+
+## 7448 — pin/function audit complete; MODEL BLOCKED (BI/RBO bidirectional)
+
+**TI source:** Same [SN74LS47/SN74LS48 datasheet](https://www.ti.com/lit/ds/symlink/sn74ls47.pdf), SDLS111, page 1 package pin configuration and page 4 function table T2.
+
+**Package:** SN7448 / SN74LS48 is listed in J or N for SN7448 and D or N for SN74LS48; use **DIP16 (N)**.
+
+**DIP16 N top-view pin table:** identical to the T1 map above: 1=B, 2=C, 3=LT (active LOW), 4=BI/RBO (bidirectional active LOW), 5=RBI (active LOW), 6=D, 7=A, 8=GND, 9=e, 10=d, 11=c, 12=b, 13=a, 14=g, 15=f, 16=VCC. TI page 1 shows the pin configuration once for both device families.
+
+**TI function table T2 (page 4):** columns are function, LT, RBI, D, C, B, A, BI/RBO, a, b, c, d, e, f, g. Unlike LS47, LS48 segment outputs are active-HIGH and have internal pull-ups.
+
+| Function | LT | RBI | D C B A | BI/RBO | a b c d e f g |
+|---:|---|---|---|---|---|---|
+| 0 | H | H | L L L L | H | H H H H H H L |
+| 1 | H | X | L L L H | H | L H H L L L L |
+| 2 | H | X | L L H L | H | H H L H H L H |
+| 3 | H | X | L L H H | H | H H H H L L H |
+| 4 | H | X | L H L L | H | L H H L L H H |
+| 5 | H | X | L H L H | H | H L H H L H H |
+| 6 | H | X | L H H L | H | L L H H H H H |
+| 7 | H | X | L H H H | H | H H H L L L L |
+| 8 | H | X | H L L L | H | H H H H H H H |
+| 9 | H | X | H L L H | H | H H H L L H H |
+| 10 | H | X | H L H L | H | L L L H H L H |
+| 11 | H | X | H L H H | H | L L H H L L H |
+| 12 | H | X | H H L L | H | L H L L L H H |
+| 13 | H | X | H H L H | H | H L L H L H H |
+| 14 | H | X | H H H L | H | L L L H H H H |
+| 15 | H | X | H H H H | H | L L L L L L L |
+| BI | X | X | X X X X | L | L L L L L L L |
+| RBI | H | L | L L L L | L | L L L L L L L |
+| LT | L | X | X X X X | H | H H H H H H H |
+
+H=HIGH, L=LOW, X=irrelevant. The same TI note semantics apply: BI low forces the segment outputs LOW; RBI low with BCD zero asserts RBO low and blanks outputs; LT low makes all segment outputs HIGH if BI/RBO is open/high. BI/RBO is a bidirectional wire-AND node.
+
+**Second-source cross-check:** National Semiconductor [DM74LS48](https://www.hatfon.com/class/INNOVAEditor/assets/Entegreler/74LS48.pdf), TL/F/10172 (January 1992), pages 1–3, confirms the DIP pin map, active-HIGH segment outputs/pull-ups, all T2 rows and BI/RBO wired-AND blanking/ripple notes. **Not single-source.**
+
+**Model status:** Same BI/RBO INOUT/open-collector limitation as 7447. Do not create an input-only or output-only approximation.
+
+## 74151 — audited; implementation pending
+
+**TI source:** [SN74LS151](https://www.ti.com/lit/gpn/SN74LS151), datasheet SDLS054 (December 1972, revised March 1988), 16-pin package pin configuration page 1 and 151A/LS151/S151 function table page 4.
+
+**Package:** SN74LS151 is D or N 16-pin package; use **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI page 1):**
+
+| Pin | Signal | Direction |
+|---:|---|---|
+| 1 | D3 | IN |
+| 2 | D2 | IN |
+| 3 | D1 | IN |
+| 4 | D0 | IN |
+| 5 | Y | OUT, selected data |
+| 6 | W | OUT, complement of selected data |
+| 7 | G | IN, active LOW strobe/enable |
+| 8 | GND | IN |
+| 9 | C | IN, select bit 2 |
+| 10 | B | IN, select bit 1 |
+| 11 | A | IN, select bit 0 |
+| 12 | D7 | IN |
+| 13 | D6 | IN |
+| 14 | D5 | IN |
+| 15 | D4 | IN |
+| 16 | VCC | IN |
+
+**TI function table (page 4):**
+
+| C | B | A | G̅ | Y | W |
+|---|---|---|---|---|---|
+| X | X | X | H | L | H |
+| L | L | L | L | D0 | D̅0 |
+| L | L | H | L | D1 | D̅1 |
+| L | H | L | L | D2 | D̅2 |
+| L | H | H | L | D3 | D̅3 |
+| H | L | L | L | D4 | D̅4 |
+| H | L | H | L | D5 | D̅5 |
+| H | H | L | L | D6 | D̅6 |
+| H | H | H | L | D7 | D̅7 |
+
+H=HIGH, L=LOW, X=irrelevant. G high disables the selector and forces Y low/W high. With G low, CBA selects D0–D7 and W is the complement of Y.
+
+**Second-source cross-check:** Nexperia [74HC151/74HCT151](https://assets.nexperia.com/documents/data-sheet/74HC_HCT151.pdf), Rev.11 (11 March 2024), pages 2–4, confirms corresponding pin positions, active-LOW enable, complementary outputs, and the same selection rows. Its package options include SO16/TSSOP16/DHVQFN16, so TI remains the authority for the N-package DIP16 assignment. **Not single-source.**
+
