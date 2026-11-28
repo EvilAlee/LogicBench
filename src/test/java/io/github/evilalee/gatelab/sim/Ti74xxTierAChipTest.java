@@ -95,6 +95,10 @@ class Ti74xxTierAChipTest {
         InputPinAccess inputB = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("B")));
         InputPinAccess inputC = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("C")));
         InputPinAccess inputD = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("D")));
+        InputPinAccess vcc = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("VCC")));
+        InputPinAccess gnd = new InputPinAccess(compiled.inputs().get(inputIdsByLabel.get("GND")));
+        simulator.setInputValue(vcc.pin(), Value.ONE);
+        simulator.setInputValue(gnd.pin(), Value.ZERO);
 
         for (BcdRow row : SN7442_FUNCTION_TABLE) {
             simulator.setInputValue(inputA.pin(), bit(row.input(), 0));
