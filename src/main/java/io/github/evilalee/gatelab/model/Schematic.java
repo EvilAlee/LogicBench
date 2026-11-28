@@ -576,6 +576,15 @@ public final class Schematic {
             Map<String, PlacedComponent> replacements,
             Map<String, ComponentInstance> instanceReplacements,
             Set<WireSegment> movingWires,
+            List<WireSegment> baseWires) {
+        return commitValidatedGesture(
+                replacements, instanceReplacements, movingWires, baseWires, Set.of());
+    }
+
+    private GestureCommit commitValidatedGesture(
+            Map<String, PlacedComponent> replacements,
+            Map<String, ComponentInstance> instanceReplacements,
+            Set<WireSegment> movingWires,
             List<WireSegment> baseWires,
             Set<PinKey> intentionallyDisconnectedPins) {
         List<Connectivity.PinPosition> beforePins = pinPositions();
