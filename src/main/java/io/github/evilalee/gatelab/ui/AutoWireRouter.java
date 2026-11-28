@@ -203,8 +203,147 @@ public final class AutoWireRouter {
                 }
             }
         }
-        return new Route(directFallback(
-                request.source().position(), request.target().position()), true);
+        return safeFallback(request, starts, targets);
+    }
+
+    /**
+     * Keeps the historical two-bend fallback, but never lets it short an unrelated
+     * net. The alternate two-bend orientation is tried before giving up.
+     */
+    private static Route safeFallback(
+            Request request, List<Anchor> starts, List<Anchor> targets) {
+        Set<WireSegment> ownWires = new LinkedHashSet<>(request.sourceNetWires());
+        ownWires.addAll(request.targetNetWires());
+        List<WireSegment> unrelatedWires = request.existingWires().stream()
+                .filter(wire -> !ownWires.contains(wire))
+                .toList();
+        Set<Connectivity.Point> unrelatedJunctions = new HashSet<>();
+        for (Connectivity.Point junction : request.junctions()) {
+            if (!liesOnAny(ownWires, junction)) {
+                unrelatedJunctions.add(junction);
+            }
+        }
+
+        List<WireSegment> best = null;
+        int bestCost = Integer.MAX_VALUE;
+        for (int sourceIndex = 0; sourceIndex < starts.size(); sourceIndex++) {
+            Anchor source = starts.get(sourceIndex);
+            for (Anchor target : targets) {
+                for (List<WireSegment> candidate : fallbackOptions(
+                        source.cell().worldPoint(), target.cell().worldPoint())) {
+                    if (!fallbackAvoidsOtherNets(
+                            candidate, unrelatedWires, unrelatedJunctions, request.otherPins())) {
+                        continue;
+                    }
+                    int cost = routeCost(candidate);
+                    if (cost < bestCost) {
+                        best = candidate;
+                        bestCost = cost;
+                    }
+                }
+            }
+        }
+        return new Route(best == null ? List.of() : best, true);
+    }
+
+    private static List<List<WireSegment>> fallbackOptions(
+            Connectivity.Point source, Connectivity.Point target) {
+        List<WireSegment> preferred = directFallback(source, target);
+        if (source.x() == target.x() || source.y() == target.y()) {
+            return List.of(preferred);
+        }
+        int middleY = snapToGrid(source.y() + (target.y() - source.y()) / 2);
+        List<Connectivity.Point> alternatePoints = List.of(
+                source,
+                new Connectivity.Point(source.x(), middleY),
+                new Connectivity.Point(target.x(), middleY),
+                target);
+        List<WireSegment> alternate = pointsToSegments(alternatePoints);
+        return List.of(preferred, alternate);
+    }
+
+    private static boolean fallbackAvoidsOtherNets(
+            List<WireSegment> candidate,
+            List<WireSegment> unrelatedWires,
+            Set<Connectivity.Point> unrelatedJunctions,
+            List<Connectivity.Point> otherPins) {
+        for (WireSegment routeSegment : candidate) {
+            for (Connectivity.Point pin : otherPins) {
+                if (contains(routeSegment, pin)) {
+                    return false;
+                }
+            }
+            for (Connectivity.Point junction : unrelatedJunctions) {
+                if (contains(routeSegment, junction)) {
+                    return false;
+                }
+            }
+            for (WireSegment other : unrelatedWires) {
+                if (routeSegment.isHorizontal() && other.isHorizontal()
+                        && routeSegment.y1() == other.y1()) {
+                    if (rangesTouch(
+                            routeSegment.x1(), routeSegment.x2(), other.x1(), other.x2())) {
+                        return false;
+                    }
+                } else if (!routeSegment.isHorizontal() && !other.isHorizontal()
+                        && routeSegment.x1() == other.x1()) {
+                    if (rangesTouch(
+                            routeSegment.y1(), routeSegment.y2(), other.y1(), other.y2())) {
+                        return false;
+                    }
+                } else {
+                    Connectivity.Point crossing = intersection(routeSegment, other);
+                    if (crossing != null
+                            && (isEndpoint(routeSegment, crossing)
+                                    || isEndpoint(other, crossing))) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean rangesTouch(int firstStart, int firstEnd, int secondStart, int secondEnd) {
+        return Math.max(firstStart, secondStart) <= Math.min(firstEnd, secondEnd);
+    }
+
+    private static Connectivity.Point intersection(WireSegment first, WireSegment second) {
+        WireSegment horizontal = first.isHorizontal() ? first : second;
+        WireSegment vertical = first.isHorizontal() ? second : first;
+        if (horizontal.isHorizontal() || !vertical.isHorizontal()) {
+            return null;
+        }
+        int x = vertical.x1();
+        int y = horizontal.y1();
+        if (x >= horizontal.x1() && x <= horizontal.x2()
+                && y >= vertical.y1() && y <= vertical.y2()) {
+            return new Connectivity.Point(x, y);
+        }
+        return null;
+    }
+
+    private static boolean isEndpoint(WireSegment wire, Connectivity.Point point) {
+        return (wire.x1() == point.x() && wire.y1() == point.y())
+                || (wire.x2() == point.x() && wire.y2() == point.y());
+    }
+
+    private static boolean contains(WireSegment wire, Connectivity.Point point) {
+        if (wire.isHorizontal()) {
+            return point.y() == wire.y1()
+                    && point.x() >= wire.x1() && point.x() <= wire.x2();
+        }
+        return point.x() == wire.x1()
+                && point.y() >= wire.y1() && point.y() <= wire.y2();
+    }
+
+    private static int routeCost(List<WireSegment> segments) {
+        int cost = BEND_COST * Math.max(0, segments.size() - 1);
+        for (WireSegment segment : segments) {
+            cost += Math.abs(segment.x2() - segment.x1())
+                    + Math.abs(segment.y2() - segment.y1());
+        }
+        return cost;
     }
 
     /** The deliberately simple two-bend path used only when A* cannot find a clean route. */
