@@ -3,6 +3,7 @@ package io.github.evilalee.gatelab.io;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
 import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
 import io.github.evilalee.gatelab.model.PlacedComponent;
@@ -377,7 +378,8 @@ public final class SchematicClipboard {
     }
 
     private static boolean isIo(String typeId) {
-        return typeId.equals("input") || typeId.equals("output") || typeId.equals("clock");
+        return typeId.equals("input") || typeId.equals("output") || typeId.equals("clock")
+                || DisplayComponent.isDisplay(typeId);
     }
 
     private static WireSegment translate(WireSegment wire, int deltaX, int deltaY) {

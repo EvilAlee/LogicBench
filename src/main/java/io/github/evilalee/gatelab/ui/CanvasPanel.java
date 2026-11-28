@@ -7,6 +7,8 @@ import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
 import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.DisplayComponent;
+import io.github.evilalee.gatelab.model.DisplayLogic;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
@@ -136,6 +138,7 @@ public final class CanvasPanel extends JPanel {
     private final GateLibrary gateLibrary;
     private final ComponentLibrary componentLibrary;
     private final GateRenderer gateRenderer;
+    private final DisplayRenderer displayRenderer = new DisplayRenderer();
     private final ComponentInstanceRenderer componentInstanceRenderer =
             new ComponentInstanceRenderer();
     private Schematic schematic;
@@ -408,6 +411,12 @@ public final class CanvasPanel extends JPanel {
         }
 
         Point2D.Double mouse = new Point2D.Double(event.getX(), event.getY());
+        Point2D.Double world = transform.screenToWorld(event.getX(), event.getY());
+        PlacedComponent hovered = schematic.componentAt(
+                (int) Math.floor(world.x), (int) Math.floor(world.y)).orElse(null);
+        if (hovered != null && DisplayComponent.isDisplay(hovered.typeId())) {
+            return displayState(hovered).tooltip(hovered.typeId().equals("hexdigit"));
+        }
         double hitRadius = Math.max(
                 8.0, PinDotStyle.radiusForZoom(transform.scale()) + 4.0);
         double bestDistanceSquared = hitRadius * hitRadius;
@@ -1042,7 +1051,8 @@ public final class CanvasPanel extends JPanel {
 
     private static boolean isNameEditableType(String typeId) {
         return typeId.equals("input") || typeId.equals("output")
-                || typeId.equals("clock") || typeId.equals("constant");
+                || typeId.equals("clock") || typeId.equals("constant")
+                || DisplayComponent.isDisplay(typeId);
     }
 
     private void notifyAttributeStateChanged() {
@@ -2398,8 +2408,16 @@ public final class CanvasPanel extends JPanel {
                 } else {
                     worldGraphics.setComposite(AlphaComposite.SrcOver);
                 }
-                gateRenderer.render(
-                        worldGraphics, definition, component.facing(), x, y);
+                if (DisplayComponent.isDisplay(component.typeId())) {
+                    displayRenderer.render(
+                            worldGraphics, definition, component.facing(), x, y,
+                            component.typeId(), DisplayComponent.inputNames(component.typeId()),
+                            displayState(component),
+                            component.attributes().getOrDefault("onColour", "red"));
+                } else {
+                    gateRenderer.render(
+                            worldGraphics, definition, component.facing(), x, y);
+                }
                 worldGraphics.setComposite(AlphaComposite.SrcOver);
                 if (component.typeId().equals("output")
                         && schematic.isOutputTapped(component.id())) {
@@ -2826,6 +2844,23 @@ public final class CanvasPanel extends JPanel {
         schematic.setLabel(component.id(), field.getText());
         commitHistoryGesture();
         repaint();
+    }
+
+    private DisplayLogic.State displayState(PlacedComponent component) {
+        List<DisplayLogic.Input> values = new ArrayList<>();
+        int count = DisplayComponent.inputNames(component.typeId()).size();
+        for (int index = 0; index < count; index++) {
+            PinStateHelper.Pin pin = pinStateDiagnostics().requirePin(
+                    component.id(), "in" + index);
+            values.add(new DisplayLogic.Input(
+                    pin.value(), pin.state() != PinStateHelper.State.UNCONNECTED));
+        }
+        DisplayLogic.ActiveLevel activeLevel =
+                component.attributes().getOrDefault("activeLevel", "high").equals("low")
+                        ? DisplayLogic.ActiveLevel.LOW : DisplayLogic.ActiveLevel.HIGH;
+        return component.typeId().equals("seg7")
+                ? DisplayLogic.seg7(values, activeLevel)
+                : DisplayLogic.hexDigit(values, activeLevel);
     }
 
     private Value componentSignal(PlacedComponent component) {

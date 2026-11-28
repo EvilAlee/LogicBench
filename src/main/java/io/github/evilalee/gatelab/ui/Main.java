@@ -4,6 +4,7 @@ import com.formdev.flatlaf.FlatLightLaf;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.io.SchematicJson;
 import io.github.evilalee.gatelab.model.PlacedComponent;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import io.github.evilalee.gatelab.sim.SignalRecorder;
@@ -406,7 +407,8 @@ public final class Main {
                         && !component.typeId().equals("clock")
                         && !component.typeId().equals("constant")
                         && !component.typeId().equals("vcc")
-                        && !component.typeId().equals("gnd"));
+                        && !component.typeId().equals("gnd")
+                        && !DisplayComponent.isDisplay(component.typeId()));
         boolean hasClock = schematic.components().stream()
                 .anyMatch(component -> component.typeId().equals("clock"));
         return hasGate && (!hasClock || FeedbackCircuitExtractor.hasFeedback(schematic));
@@ -891,7 +893,8 @@ public final class Main {
         for (String family : GateLibrary.load().families()) {
             ComponentTreeItem item = new ComponentTreeItem(family, treeLabel(family));
             if (family.equals("input") || family.equals("output") || family.equals("clock")
-                    || family.equals("constant") || family.equals("vcc") || family.equals("gnd")) {
+                    || family.equals("constant") || family.equals("vcc") || family.equals("gnd")
+                    || DisplayComponent.isDisplay(family)) {
                 pins.add(new DefaultMutableTreeNode(item));
             } else {
                 gates.add(new DefaultMutableTreeNode(item));
@@ -1033,6 +1036,8 @@ public final class Main {
             case "constant" -> "Constant";
             case "vcc" -> "VCC";
             case "gnd" -> "GND";
+            case "seg7" -> "7-Segment Display";
+            case "hexdigit" -> "Hex Digit";
             default -> id;
         };
     }
