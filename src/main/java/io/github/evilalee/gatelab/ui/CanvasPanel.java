@@ -492,7 +492,7 @@ public final class CanvasPanel extends JPanel {
         }
         simulationRecomputeCount++;
         repaint();
-        statusMessageListener.accept(simulationStatusText());
+        statusMessageListener.accept(statusBarText());
         recordSignalSample();
     }
 

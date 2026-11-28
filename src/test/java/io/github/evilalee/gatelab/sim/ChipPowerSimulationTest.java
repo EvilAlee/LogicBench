@@ -94,6 +94,20 @@ class ChipPowerSimulationTest {
     }
 
     @Test
+    void unpoweredChipUsesOneNonBlockingStatusLineNamingTheCheckbox() {
+        io.github.evilalee.gatelab.ui.CanvasPanel canvas =
+                new io.github.evilalee.gatelab.ui.CanvasPanel();
+        java.util.concurrent.atomic.AtomicReference<String> status =
+                new java.util.concurrent.atomic.AtomicReference<>("");
+        canvas.setStatusMessageListener(status::set);
+        canvas.schematic().addInstance(library().get("7400"), "U3", 200, 200, Facing.EAST);
+
+        assertTrue(status.get().contains("U3 (7400): no power"));
+        assertTrue(status.get().contains("chip outputs are X"));
+        assertTrue(status.get().contains("Chips need power"));
+    }
+
+    @Test
     void flipFlopChipRetainsItsStateAcrossPowerLossAndRestoration() {
         ComponentDefinition definition = poweredDffDefinition();
         Schematic schematic = new Schematic(GATES);
