@@ -19,10 +19,10 @@ class GateLibraryTest {
     private static final int GRID = 10;
 
     @Test
-    void gatesJsonLoadsTwelveDefinitionsAndEverySvgParsesWithJsvg() {
+    void gatesJsonLoadsAllShippedDefinitionsAndEverySvgParsesWithJsvg() {
         GateLibrary library = GateLibrary.load();
 
-        assertEquals(12, library.all().size());
+        assertEquals(32, library.all().size());
         assertSame(library, GateLibrary.load());
 
         SVGLoader loader = new SVGLoader();
@@ -50,11 +50,11 @@ class GateLibraryTest {
     void constantSourceUsesTheInputFootprintWithItsOwnInternalFamily() {
         GateDef constant = GateLibrary.load().get("constant");
         assertEquals("constant", constant.family());
-        assertEquals(20, constant.width());
+        assertEquals(40, constant.width());
         assertEquals(20, constant.height());
         assertEquals(List.of(), constant.inputs());
-        assertEquals(new GateGeometry.Offset(20, 10), constant.output());
-        assertEquals("svg/input.svg", constant.svgResource());
+        assertEquals(new GateGeometry.Offset(40, 10), constant.output());
+        assertEquals("svg/constant.svg", constant.svgResource());
     }
 
     @Test
