@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.synth.layout;
 
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.DisplayComponent;
+import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;

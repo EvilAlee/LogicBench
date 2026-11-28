@@ -1,6 +1,5 @@
 package io.github.evilalee.gatelab.ui;
 
-import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.DisplayLogic;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
