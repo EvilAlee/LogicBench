@@ -630,11 +630,15 @@ class Ti74xxTierAChipTest {
                     row.disabled() ? Value.ONE : Value.ZERO);
             simulator.setInputValue(inputs.get("A/B").pin(),
                     row.select() == 1 ? Value.ONE : Value.ZERO);
+            int[] selectedDataByChannel = new int[4];
             for (int channel = 1; channel <= 4; channel++) {
-                int dataA = row.select() == 0 && !row.disabled()
-                        ? row.selectedValue() : ((channel + (row.select() < 0 ? 0 : row.select())) & 1);
-                int dataB = row.select() == 1 && !row.disabled()
-                        ? row.selectedValue() : 1 - dataA;
+                int selectedData = row.disabled()
+                        ? (channel & 1)
+                        : row.selectedValue() ^ ((channel - 1) & 1);
+                selectedDataByChannel[channel - 1] = selectedData;
+                int unselectedData = 1 - selectedData;
+                int dataA = row.select() == 1 ? unselectedData : selectedData;
+                int dataB = row.select() == 1 ? selectedData : unselectedData;
                 simulator.setInputValue(inputs.get(channel + "A").pin(),
                         dataA == 1 ? Value.ONE : Value.ZERO);
                 simulator.setInputValue(inputs.get(channel + "B").pin(),
@@ -643,10 +647,9 @@ class Ti74xxTierAChipTest {
             simulator.settle();
 
             for (int channel = 1; channel <= 4; channel++) {
-                int selectedData = row.select() == 0
-                        ? componentData(row, channel, true) : componentData(row, channel, false);
-                Value expected = row.disabled() ? Value.ZERO
-                        : selectedData == 1 ? Value.ONE : Value.ZERO;
+                int selectedData = selectedDataByChannel[channel - 1];
+                Value expected = !row.disabled() && selectedData == 1
+                        ? Value.ONE : Value.ZERO;
                 String output = channel + "Y";
                 assertEquals(expected,
                         simulator.getProbeValue(compiled.outputs().get(
@@ -655,14 +658,6 @@ class Ti74xxTierAChipTest {
                                 + ", A/B=" + row.select() + ", channel=" + channel);
             }
         }
-    }
-
-    private static int componentData(QuadMultiplexerRow row, int channel, boolean inputA) {
-        int alternate = (channel + (row.select() < 0 ? 0 : row.select())) & 1;
-        if (row.disabled()) {
-            return alternate;
-        }
-        return row.selectedValue();
     }
 
     @Test
