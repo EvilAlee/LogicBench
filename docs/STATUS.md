@@ -22,7 +22,6 @@
 - Sequential clock controls: app-controlled Clock source, headless tick/reset controller, version-1 clock-level persistence, Tick Once and Ticks Enabled
 - PR #64 / feature-ti-chips-1: DIP14/DIP16 chip-style boxes, physical pin numbers and the first TI 74xx built-in parts
 - PR #65 / feature-gates-and-power: production 2–5 input gate variants and VCC/GND/Constant fixed sources
-- feature-chip-power: three-valued VCC/GND-dependent chip outputs, transient default-on setting, output-X diagnostics, and power-loss state retention
 
 ## In progress
 - feature-auto-wire: two-click A* orthogonal pin routing, driver checks, one-step undo, and headless router/canvas tests.
@@ -41,6 +40,7 @@
 - feature-ai-16-inputs: 16-input combinational AI validation with all-row bit-parallel spec checks and deterministic real-engine cross-checks; sequential limits unchanged.
 - TI 74xx pinout note: implemented verbatim from the owner's supplied mapping; no discrepancy was identified or changed. Datasheet confirmation remains a human check, especially the listed NC positions on 7420 (3, 11) and 7430 (9, 10, 13).
 - feature-component-files: portable one-file-per-component user library, atomic writes, single-file migration, collision-aware import/export, refresh, and explorer delete/tooltip actions.
+- feature-chip-power: three-valued VCC/GND-dependent chip outputs, transient default-on setting, output-X diagnostics, and power-loss state retention
 
 ## Next
 1. M9a attribute table with editable labels
