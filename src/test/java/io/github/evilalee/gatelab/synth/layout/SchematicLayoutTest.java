@@ -235,7 +235,8 @@ class SchematicLayoutTest {
         for (Map.Entry<String, String> entry : placed.constantComponentIds().entrySet()) {
             PlacedComponent component = component(schematic, entry.getValue());
             assertEquals("constant", component.typeId());
-            assertEquals(entry.getKey(), component.label());
+            assertEquals(entry.getKey(), schematic.attributeValue(component.id(), "value"));
+            assertEquals("", component.label());
             assertThrows(IllegalArgumentException.class,
                     () -> schematic.inputValue(component.id()));
         }
