@@ -77,6 +77,10 @@ class Ti74xxChipTest {
                 "0", 1, "1", 2, "2", 3, "3", 4, "4", 5, "5", 6,
                 "6", 7, "GND", 8, "7", 9, "8", 10, "9", 11,
                 "D", 12, "C", 13, "B", 14, "A", 15, "VCC", 16));
+        expected.put("74138", pins(
+                "A", 1, "B", 2, "C", 3, "G2A", 4, "G2B", 5,
+                "G1", 6, "Y7", 7, "GND", 8, "Y6", 9, "Y5", 10,
+                "Y4", 11, "Y3", 12, "Y2", 13, "Y1", 14, "Y0", 15, "VCC", 16));
 
         assertEquals(expected.keySet(), library.builtIns().stream()
                 .filter(definition -> definition.category().equals("TTL 74xx"))
