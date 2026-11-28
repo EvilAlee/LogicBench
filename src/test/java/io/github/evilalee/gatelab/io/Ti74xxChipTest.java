@@ -88,7 +88,8 @@ class Ti74xxChipTest {
                 .collect(java.util.stream.Collectors.toSet()));
         for (Map.Entry<String, Map<String, Integer>> entry : expected.entrySet()) {
             ComponentDefinition definition = library.get(entry.getKey());
-            assertEquals(entry.getKey().equals("7442") ? "DIP16" : "DIP14",
+            assertEquals(
+                    Set.of("7442", "74138").contains(entry.getKey()) ? "DIP16" : "DIP14",
                     definition.packageType(), entry.getKey());
             assertEquals(entry.getValue(), definition.ports().stream().collect(
                     java.util.stream.Collectors.toMap(
