@@ -10,6 +10,7 @@ import io.github.evilalee.gatelab.model.GateType;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.util.PerfLog;
 import io.github.evilalee.gatelab.model.WireSegment;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 
@@ -174,9 +175,11 @@ public final class ComponentExpressionCompiler {
             ExpressionCompiler.Compilation legacy =
                     ExpressionCompiler.compile(source, allowRawFeedback, invertingGates);
             SchematicLayout layoutEngine = new SchematicLayout(gates);
+            long layoutStarted = PerfLog.start();
             SchematicLayout.LayoutResult layout = legacy.hasFeedback()
                     ? layoutEngine.layoutFeedback(legacy.feedbackExtraction().orElseThrow())
                     : layoutEngine.layout(legacy.netlist());
+            PerfLog.record("expression.layout", layoutStarted);
             return new Compilation(layout.schematic(),
                     layout.inputComponentIds(), layout.clockComponentIds(),
                     layout.outputComponentIds(), legacy.hasSequentialParts(),
@@ -236,7 +239,10 @@ public final class ComponentExpressionCompiler {
         }
 
         private Compilation compile(String source) {
+            long parseStarted = PerfLog.start();
             parseStatements(source);
+            PerfLog.record("expression.parse", parseStarted);
+            long compileStarted = PerfLog.start();
             List<Statement> outputAssignments = assignments.values().stream()
                     .filter(statement -> statement.kind() == AssignmentKind.OUTPUT)
                     .toList();
@@ -254,7 +260,10 @@ public final class ComponentExpressionCompiler {
                         output.name(), signal));
             }
 
+            PerfLog.record("expression.compile", compileStarted);
+            long layoutStarted = PerfLog.start();
             Schematic schematic = layoutAndRoute();
+            PerfLog.record("expression.layout", layoutStarted);
             verifyConnectivity(schematic);
             Map<String, String> inputs = new LinkedHashMap<>();
             Map<String, String> clocks = new LinkedHashMap<>();

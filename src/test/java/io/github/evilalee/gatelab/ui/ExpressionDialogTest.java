@@ -19,6 +19,13 @@ class ExpressionDialogTest {
     }
 
     @Test
+    void truthTablePreviewStopsAtTheExistingTenInputLimit() {
+        assertTrue(ExpressionDialog.shouldBuildTruthTable(0));
+        assertTrue(ExpressionDialog.shouldBuildTruthTable(10));
+        assertFalse(ExpressionDialog.shouldBuildTruthTable(11));
+    }
+
+    @Test
     void reusedOutputAssignmentShowsTheExactNonBlockingHint() {
         ExpressionCompiler.Compilation compilation = ExpressionCompiler.compile(
                 "S0C = A & B\nF = S0C | C");

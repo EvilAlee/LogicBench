@@ -12,6 +12,7 @@ import io.github.evilalee.gatelab.synth.TruthTable;
 import io.github.evilalee.gatelab.synth.TruthTableVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicExpressionVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
+import io.github.evilalee.gatelab.util.PerfLog;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -27,6 +28,7 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
+import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -44,6 +46,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import java.util.function.Consumer;
+import java.util.concurrent.CancellationException;
 
 /** Live expression editor and engine-backed truth-table preview. */
 public final class ExpressionDialog extends JDialog {
@@ -64,6 +68,9 @@ public final class ExpressionDialog extends JDialog {
     private final JTable truthTable = new JTable(tableModel);
     private JScrollPane tableScroll;
     private final JButton generateButton = new JButton("Generate");
+    private final PreviewScheduler previewScheduler =
+            new PreviewScheduler(300, this::startPreview);
+    private SwingWorker<PreviewResult, Void> previewWorker;
     private final JCheckBox optimizeInvertingGates =
             new JCheckBox("Optimize with NAND/NOR/XNOR", false);
     private final JCheckBox expandSequentialParts =
@@ -97,8 +104,8 @@ public final class ExpressionDialog extends JDialog {
         expressionControls.add(expandSequentialParts);
         expressionControls.add(statusLine);
         expressionPanel.add(expressionControls, BorderLayout.SOUTH);
-        optimizeInvertingGates.addActionListener(event -> updatePreview());
-        expandSequentialParts.addActionListener(event -> updatePreview());
+        optimizeInvertingGates.addActionListener(event -> schedulePreview());
+        expandSequentialParts.addActionListener(event -> schedulePreview());
 
         truthTable.setFillsViewportHeight(true);
         truthTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
@@ -127,17 +134,17 @@ public final class ExpressionDialog extends JDialog {
         expressionText.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent event) {
-                updatePreview();
+                schedulePreview();
             }
 
             @Override
             public void removeUpdate(DocumentEvent event) {
-                updatePreview();
+                schedulePreview();
             }
 
             @Override
             public void changedUpdate(DocumentEvent event) {
-                updatePreview();
+                schedulePreview();
             }
         });
 
@@ -153,7 +160,7 @@ public final class ExpressionDialog extends JDialog {
         setMinimumSize(new Dimension(760, 530));
         setSize(900, 650);
         setLocationRelativeTo(owner);
-        updatePreview();
+        schedulePreview();
     }
 
     public static void showDialog(JFrame owner, CanvasPanel canvas) {
@@ -166,81 +173,202 @@ public final class ExpressionDialog extends JDialog {
         dialog.setVisible(true);
     }
 
-    private void updatePreview() {
-        currentCompilation = null;
-        generateButton.setEnabled(false);
-        tableModel.setTable(null);
-        tableNote.setText(" ");
-        truthTable.setEnabled(true);
-        tableScroll.setVisible(true);
+    private void schedulePreview() {
+        schedulePreviewRequest(
+                previewScheduler,
+                expressionText.getText(),
+                () -> {
+                    currentCompilation = null;
+                    generateButton.setEnabled(false);
+                    tableModel.setTable(null);
+                    tableNote.setText("...");
+                    statusLine.setForeground(labelForeground());
+                    statusLine.setText("...");
+                    truthTable.setEnabled(true);
+                    tableScroll.setVisible(true);
+                },
+                optimizeInvertingGates::setEnabled,
+                () -> {
+                    if (previewWorker != null && !previewWorker.isDone()) {
+                        previewWorker.cancel(true);
+                    }
+                });
+    }
+
+    static void schedulePreviewRequest(
+            PreviewScheduler scheduler,
+            String source,
+            Runnable markPending,
+            Consumer<Boolean> setOptimizeEnabled,
+            Runnable cancelPreviousWork) {
+        long started = PerfLog.start();
         try {
-            boolean containsLibraryCall =
-                    containsLibraryComponentCall(expressionText.getText());
-            boolean useLegacyCompiler = expandSequentialParts.isSelected() || !containsLibraryCall;
-            optimizeInvertingGates.setEnabled(useLegacyCompiler);
-            ComponentExpressionCompiler.CompileOption option = useLegacyCompiler
-                    ? ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION
-                    : ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES;
+            scheduler.schedule();
+            markPending.run();
+            setOptimizeEnabled.accept(!containsLibraryComponentCall(source));
+            cancelPreviousWork.run();
+        } finally {
+            PerfLog.record("expression.keystroke.edt", started);
+        }
+    }
+
+    private void startPreview() {
+        long generation = previewScheduler.generation();
+        String source = expressionText.getText();
+        boolean useLegacyCompiler = expandSequentialParts.isSelected()
+                || !containsLibraryComponentCall(source);
+        boolean optimize = optimizeInvertingGates.isSelected();
+        ComponentExpressionCompiler.CompileOption option = useLegacyCompiler
+                ? ComponentExpressionCompiler.CompileOption.LEGACY_SEQUENTIAL_GATE_EXPANSION
+                : ComponentExpressionCompiler.CompileOption.BOXED_INSTANCES;
+
+        SwingWorker<PreviewResult, Void> worker = new SwingWorker<>() {
+            @Override
+            protected PreviewResult doInBackground() {
+                long started = PerfLog.start();
+                try {
+                    return computePreview(source, option, optimize);
+                } finally {
+                    PerfLog.record("expression.recompute.total", started);
+                }
+            }
+
+            @Override
+            protected void done() {
+                if (!previewScheduler.isCurrent(generation) || isCancelled()) {
+                    return;
+                }
+                try {
+                    applyPreview(get());
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    showError("Preview interrupted");
+                } catch (java.util.concurrent.ExecutionException exception) {
+                    Throwable cause = exception.getCause();
+                    showError(cause == null ? exception.getMessage() : cause.getMessage());
+                }
+            }
+        };
+        previewWorker = worker;
+        worker.execute();
+    }
+
+    private static PreviewResult computePreview(
+            String source,
+            ComponentExpressionCompiler.CompileOption option,
+            boolean optimize) {
+        try {
             ComponentExpressionCompiler.Compilation compilation =
                     ComponentExpressionCompiler.compile(
-                            expressionText.getText(),
+                            source,
                             GateLibrary.load().all(),
                             ComponentLibrary.load().all(),
                             option,
                             true,
-                            optimizeInvertingGates.isSelected());
-            currentCompilation = compilation;
+                            optimize);
 
-            boolean sequential = compilation.hasSequentialInstances();
-            if (sequential) {
-                statusLine.setForeground(labelForeground());
-                statusLine.setText(SEQUENTIAL_STATUS);
-                tableScroll.setVisible(false);
+            if (compilation.hasSequentialInstances()) {
                 SchematicCompiler.SimulationResult initial =
                         SchematicCompiler.compileAndSettle(compilation.schematic());
                 if (initial.oscillating()) {
                     throw new IllegalStateException("Circuit did not settle");
                 }
-            } else if (compilation.hasFeedback()) {
-                statusLine.setForeground(labelForeground());
-                statusLine.setText("Feedback circuit");
-                tableScroll.setVisible(false);
-                tableNote.setText(FEEDBACK_PREVIEW_NOTE);
-                truthTable.setEnabled(false);
-                SchematicCompiler.SimulationResult initial =
-                        SchematicCompiler.compileAndSettle(compilation.schematic());
-                if (initial.oscillating()) {
-                    throw new IllegalStateException("Circuit did not settle");
-                }
-            } else {
-                List<String> inputs = compilation.inputComponentIds().keySet().stream()
-                        .sorted().toList();
-                List<String> outputs = compilation.outputComponentIds().keySet().stream()
-                        .sorted().toList();
-                statusLine.setForeground(labelForeground());
-                statusLine.setText(inputs.isEmpty()
-                        ? "Variables: none"
-                        : "Variables: " + String.join(", ", inputs));
-
-                if (inputs.size() > TABLE_INPUT_LIMIT) {
-                    tableNote.setText("Truth table preview is limited to 10 inputs; "
-                            + inputs.size() + " variables are present.");
-                } else {
-                    TruthTable preview = buildEnginePreview(compilation, inputs, outputs);
-                    tableModel.setTable(preview);
-                    tableNote.setText(preview.rows().size() + " rows (engine preview)");
-                }
+                return new PreviewResult(compilation, null, true, false,
+                        List.of(), null);
             }
-            generateButton.setEnabled(true);
+
+            if (compilation.hasFeedback()) {
+                SchematicCompiler.SimulationResult initial =
+                        SchematicCompiler.compileAndSettle(compilation.schematic());
+                if (initial.oscillating()) {
+                    throw new IllegalStateException("Circuit did not settle");
+                }
+                return new PreviewResult(compilation, null, false, true,
+                        List.of(), null);
+            }
+
+            List<String> inputs = compilation.inputComponentIds().keySet().stream()
+                    .sorted().toList();
+            List<String> outputs = compilation.outputComponentIds().keySet().stream()
+                    .sorted().toList();
+            if (!shouldBuildTruthTable(inputs.size())) {
+                return new PreviewResult(compilation, null, false, false,
+                        inputs, null);
+            }
+
+            long tableStarted = PerfLog.start();
+            TruthTable preview = buildEnginePreview(compilation, inputs, outputs);
+            PerfLog.record("expression.truthTable", tableStarted);
+            return new PreviewResult(compilation, preview, false, false, inputs, null);
         } catch (ParseException exception) {
-            showError("Parse error at position " + exception.position()
-                    + ": " + exception.detail());
+            return new PreviewResult(null, null, false, false, List.of(),
+                    "Parse error at position " + exception.position()
+                            + ": " + exception.detail());
         } catch (IllegalArgumentException | IllegalStateException exception) {
-            showError(exception.getMessage());
+            return new PreviewResult(null, null, false, false, List.of(),
+                    exception.getMessage() == null
+                            ? "Invalid expression" : exception.getMessage());
         }
     }
 
-    private static TruthTable buildEnginePreview(
+    private void applyPreview(PreviewResult result) {
+        if (result.error() != null) {
+            showError(result.error());
+            return;
+        }
+
+        currentCompilation = result.compilation();
+        if (result.sequential()) {
+            statusLine.setForeground(labelForeground());
+            statusLine.setText(SEQUENTIAL_STATUS);
+            tableScroll.setVisible(false);
+            tableNote.setText(" ");
+        } else if (result.feedback()) {
+            statusLine.setForeground(labelForeground());
+            statusLine.setText("Feedback circuit");
+            tableScroll.setVisible(false);
+            tableNote.setText(FEEDBACK_PREVIEW_NOTE);
+            truthTable.setEnabled(false);
+        } else {
+            statusLine.setForeground(labelForeground());
+            statusLine.setText(result.inputs().isEmpty()
+                    ? "Variables: none"
+                    : "Variables: " + String.join(", ", result.inputs()));
+
+            if (!shouldBuildTruthTable(result.inputs().size())) {
+                tableNote.setText("Truth table preview is limited to 10 inputs; "
+                        + result.inputs().size() + " variables are present.");
+                tableModel.setTable(null);
+            } else {
+                tableModel.setTable(result.table());
+                tableNote.setText(result.table().rows().size() + " rows (engine preview)");
+            }
+        }
+        generateButton.setEnabled(true);
+    }
+
+    private record PreviewResult(
+            ComponentExpressionCompiler.Compilation compilation,
+            TruthTable table,
+            boolean sequential,
+            boolean feedback,
+            List<String> inputs,
+            String error) {
+        private PreviewResult {
+            inputs = List.copyOf(inputs);
+        }
+    }
+
+    @Override
+    public void dispose() {
+        previewScheduler.invalidate();
+        if (previewWorker != null) {
+            previewWorker.cancel(true);
+        }
+        super.dispose();
+    }
+
+    static TruthTable buildEnginePreview(
             ComponentExpressionCompiler.Compilation compilation,
             List<String> inputNames,
             List<String> outputNames) {
@@ -248,6 +376,9 @@ public final class ExpressionDialog extends JDialog {
         List<TruthTable.Row> rows = new ArrayList<>();
         int rowCount = 1 << inputNames.size();
         for (int row = 0; row < rowCount; row++) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new CancellationException("Expression preview was superseded");
+            }
             StringBuilder bits = new StringBuilder(inputNames.size());
             for (int index = 0; index < inputNames.size(); index++) {
                 boolean high = ((row >>> (inputNames.size() - index - 1)) & 1) != 0;
@@ -269,6 +400,10 @@ public final class ExpressionDialog extends JDialog {
             schematic.setInputValue(compilation.inputComponentIds().get(input), false);
         }
         return new TruthTable(inputNames, outputNames, rows);
+    }
+
+    static boolean shouldBuildTruthTable(int inputCount) {
+        return inputCount >= 0 && inputCount <= TABLE_INPUT_LIMIT;
     }
 
     private void showError(String message) {

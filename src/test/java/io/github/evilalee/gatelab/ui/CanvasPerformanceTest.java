@@ -67,6 +67,17 @@ class CanvasPerformanceTest {
     }
 
     @Test
+    void panningAndZoomingDoNotRecomputeTheCircuit() {
+        CanvasPanel canvas = new CanvasPanel();
+        long recomputations = canvas.simulationRecomputeCount();
+
+        canvas.viewTransform().panBy(17.0, -9.0);
+        canvas.viewTransform().zoomAt(300.0, 250.0, 1.25);
+
+        assertEquals(recomputations, canvas.simulationRecomputeCount());
+    }
+
+    @Test
     void fractionalControlWheelRotationStillZoomsPrecisely() {
         CanvasPanel canvas = new CanvasPanel();
         double originalScale = canvas.viewTransform().scale();

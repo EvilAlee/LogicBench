@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.ui;
 
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SignalRecorder;
+import io.github.evilalee.gatelab.util.PerfLog;
 
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -114,6 +115,7 @@ public final class WaveformPanel extends JPanel {
 
         @Override
         protected void paintComponent(Graphics graphics) {
+            long started = PerfLog.start();
             super.paintComponent(graphics);
             Graphics2D g2 = (Graphics2D) graphics.create();
             try {
@@ -153,6 +155,7 @@ public final class WaveformPanel extends JPanel {
                 }
             } finally {
                 g2.dispose();
+                PerfLog.record("canvas.waveform", started);
             }
         }
 

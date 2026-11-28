@@ -9,6 +9,7 @@ import io.github.evilalee.gatelab.model.OutputProbe;
 import io.github.evilalee.gatelab.model.Pin;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.Wire;
+import io.github.evilalee.gatelab.util.PerfLog;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -148,6 +149,7 @@ public final class ExpressionCompiler {
     public static Compilation compile(
             String source, boolean allowRawFeedback, boolean invertingGates) {
         Objects.requireNonNull(source, "source");
+        long parseStarted = PerfLog.start();
         List<Statement> statements = splitStatements(source);
         if (statements.isEmpty()) {
             throw new ParseException(0, "expression list is empty");
@@ -167,6 +169,8 @@ public final class ExpressionCompiler {
             }
             assignments.add(assignment);
         }
+        PerfLog.record("expression.parse", parseStarted);
+        long compileStarted = PerfLog.start();
 
         List<Assignment> outputAssignments = assignments.stream()
                 .filter(assignment -> assignment.kind() == AssignmentKind.OUTPUT)
@@ -239,6 +243,7 @@ public final class ExpressionCompiler {
                             clocks,
                             rawExtraction.outputComponentIds(),
                             rawExtraction.gateComponentIds());
+            PerfLog.record("expression.compile", compileStarted);
             return new Compilation(
                     build.netlist(), expressions, reusedOutputNames, Optional.of(extraction),
                     true, clockNames.stream().findFirst(), Optional.of(build.sequentialCircuit()));
@@ -262,6 +267,7 @@ public final class ExpressionCompiler {
                     FeedbackCircuitExtractor.extract(netlist).orElseThrow(() ->
                             new IllegalArgumentException(
                                     "feedback definitions must contain a gate-level cycle"));
+            PerfLog.record("expression.compile", compileStarted);
             return new Compilation(
                     netlist, expressions, reusedOutputNames, Optional.of(extraction));
         }
@@ -284,6 +290,7 @@ public final class ExpressionCompiler {
         if (invertingGates) {
             netlist = InvertingGateMapper.optimize(netlist);
         }
+        PerfLog.record("expression.compile", compileStarted);
         return new Compilation(netlist, expressions, reusedOutputNames);
     }
 

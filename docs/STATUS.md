@@ -24,6 +24,7 @@
 ## In progress
 - feature-ai-components: AI generation can use boxed HA/FA and user-defined combinational library components, with bounded redacted raw-answer diagnostics and flatten/engine verification.
 - feature-ai-sequential: strict sequential response schema, DFF/DLATCH feedback compilation, reset-from-X checks, SequenceRunner verification, sequential cache replay and a sequence table; does not change the combinational AI path.
+- perf-ui-lag: opt-in EDT/paint profiling, debounced background expression preview, phase-keyed repeating grid texture and reduced no-change hover repaints; acceptance timings and phone-class human checks are tracked in PR #60.
 - feature-ai-explain: read-only AI explanations of the open schematic, with deterministic engine facts, pre-send request preview, and no placement or cache interaction.
 - fix-instance-selection: component box instances participate in mixed click/marquee selection, drag, rotate, delete and undo/redo; instance pins use validated wire-follow routing.
 - feature-expression-feedback: resolve all named expression definitions independent of line order, and build feedback schematics through the existing feedback-lane layout path with connectivity verification.
