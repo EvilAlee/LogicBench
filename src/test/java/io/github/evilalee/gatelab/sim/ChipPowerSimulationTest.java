@@ -231,7 +231,7 @@ class ChipPowerSimulationTest {
         addInputAt(internal, "supply-vcc", 100, bottom + 60, true, "VCC", "input");
         addInputAt(internal, "supply-gnd", 100, bottom + 100, false, "GND", "input");
         return new ComponentDefinition(
-                "DFF-Powered-Test", "D flip-flop with DIP supplies", "Test",
+                "DFFPoweredTest", "D flip-flop with DIP supplies", "Test",
                 List.of(
                         new ComponentDefinition.Port("D", ComponentDefinition.Direction.IN, false, 2),
                         new ComponentDefinition.Port("CLK", ComponentDefinition.Direction.IN, true, 3),
