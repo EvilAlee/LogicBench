@@ -806,6 +806,29 @@ public final class ComponentLibrary {
                 mux151, List.of(
                         new ChipOutputExpression("Y", mux151Y),
                         new ChipOutputExpression("W", "!(" + mux151Y + ")"))));
+
+        List<ChipPortSpec> mux153 = List.of(
+                in("1G", 1), in("B", 2), in("1C3", 3), in("1C2", 4),
+                in("1C1", 5), in("1C0", 6), out("1Y", 7), in("GND", 8),
+                out("2Y", 9), in("2C0", 10), in("2C1", 11), in("2C2", 12),
+                in("2C3", 13), in("A", 14), in("2G", 15), in("VCC", 16));
+        List<String> mux153FirstTerms = new ArrayList<>();
+        List<String> mux153SecondTerms = new ArrayList<>();
+        for (int selected = 0; selected < 4; selected++) {
+            String selectB = ((selected >>> 1) & 1) == 1 ? "B" : "!B";
+            String selectA = (selected & 1) == 1 ? "A" : "!A";
+            mux153FirstTerms.add("(!1G & " + selectB + " & " + selectA
+                    + " & 1C" + selected + ")");
+            mux153SecondTerms.add("(!2G & " + selectB + " & " + selectA
+                    + " & 2C" + selected + ")");
+        }
+        chips.add(expressionChip(gateDefinitions, "74153",
+                "Dual 4-to-1 multiplexers with shared select inputs and active-low strobes",
+                mux153, List.of(
+                        new ChipOutputExpression("1Y",
+                                "(" + String.join(" | ", mux153FirstTerms) + ")"),
+                        new ChipOutputExpression("2Y",
+                                "(" + String.join(" | ", mux153SecondTerms) + ")"))));
         return List.copyOf(chips);
     }
 

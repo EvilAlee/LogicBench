@@ -50,6 +50,10 @@ class Ti74xxTierAChipTest {
     private record MultiplexerRow(int selector, boolean disabled) {
     }
 
+    private record DualMultiplexerRow(
+            int b, int a, int selectedData, boolean disabled) {
+    }
+
     private static final List<BcdRow> SN7442_FUNCTION_TABLE = List.of(
             new BcdRow(0b0000, 0),
             new BcdRow(0b0001, 1),
@@ -197,6 +201,22 @@ class Ti74xxTierAChipTest {
             new MultiplexerRow(5, false),
             new MultiplexerRow(6, false),
             new MultiplexerRow(7, false));
+
+    /**
+     * Rows transcribed from TI SN74LS153 datasheet SDLS055A, page 1:
+     * https://www.ti.com/lit/ds/symlink/sn74ls153.pdf
+     * The same function table applies independently to each mux section.
+     */
+    private static final List<DualMultiplexerRow> SN74153_FUNCTION_TABLE = List.of(
+            new DualMultiplexerRow(-1, -1, -1, true),
+            new DualMultiplexerRow(0, 0, 0, false),
+            new DualMultiplexerRow(0, 0, 1, false),
+            new DualMultiplexerRow(0, 1, 0, false),
+            new DualMultiplexerRow(0, 1, 1, false),
+            new DualMultiplexerRow(1, 0, 0, false),
+            new DualMultiplexerRow(1, 0, 1, false),
+            new DualMultiplexerRow(1, 1, 0, false),
+            new DualMultiplexerRow(1, 1, 1, false));
 
     @Test
     void sn74138PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
@@ -480,6 +500,86 @@ class Ti74xxTierAChipTest {
     }
 
     @Test
+    void sn74153PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
+        ComponentDefinition definition = library().get("74153");
+        assertEquals("DIP16", definition.packageType());
+        Map<String, Integer> expected = Map.ofEntries(
+                Map.entry("1G", 1), Map.entry("B", 2), Map.entry("1C3", 3),
+                Map.entry("1C2", 4), Map.entry("1C1", 5), Map.entry("1C0", 6),
+                Map.entry("1Y", 7), Map.entry("GND", 8), Map.entry("2Y", 9),
+                Map.entry("2C0", 10), Map.entry("2C1", 11), Map.entry("2C2", 12),
+                Map.entry("2C3", 13), Map.entry("A", 14), Map.entry("2G", 15),
+                Map.entry("VCC", 16));
+        Map<String, Integer> actual = new HashMap<>();
+        definition.ports().forEach(port -> actual.put(port.name(), port.pin()));
+        assertEquals(expected, actual);
+        assertEquals(ComponentDefinition.Direction.IN,
+                definition.ports().stream().filter(port -> port.name().equals("VCC"))
+                        .findFirst().orElseThrow().direction());
+        assertEquals(ComponentDefinition.Direction.IN,
+                definition.ports().stream().filter(port -> port.name().equals("GND"))
+                        .findFirst().orElseThrow().direction());
+    }
+
+    @Test
+    void sn74153BothSectionsMatchTheTiFunctionRowsWithIndependentStrobes()
+            throws IOException {
+        Schematic schematic = dualMultiplexerFixture();
+        SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
+        Simulator simulator = new Simulator(compiled.circuit());
+        Map<String, String> inputIds = componentIdsByLabel(schematic, "input");
+        Map<String, String> outputIds = componentIdsByLabel(schematic, "output");
+        Map<String, InputPinAccess> inputs = new HashMap<>();
+        for (String name : List.of("1G", "2G", "A", "B",
+                "1C0", "1C1", "1C2", "1C3",
+                "2C0", "2C1", "2C2", "2C3", "VCC", "GND")) {
+            inputs.put(name, new InputPinAccess(compiled.inputs().get(inputIds.get(name))));
+        }
+        simulator.setInputValue(inputs.get("VCC").pin(), Value.ONE);
+        simulator.setInputValue(inputs.get("GND").pin(), Value.ZERO);
+
+        for (DualMultiplexerRow row : SN74153_FUNCTION_TABLE) {
+            for (int dataPattern : new int[]{0b1001, 0b0110}) {
+                for (int data = 0; data < 4; data++) {
+                    boolean firstHigh = ((dataPattern >>> data) & 1) == 1;
+                    boolean secondHigh = !firstHigh;
+                    simulator.setInputValue(inputs.get("1C" + data).pin(),
+                            firstHigh ? Value.ONE : Value.ZERO);
+                    simulator.setInputValue(inputs.get("2C" + data).pin(),
+                            secondHigh ? Value.ONE : Value.ZERO);
+                }
+                // Exercise the independently controlled sections in opposite states.
+                simulator.setInputValue(inputs.get("1G").pin(),
+                        row.disabled() ? Value.ONE : Value.ZERO);
+                simulator.setInputValue(inputs.get("2G").pin(),
+                        row.disabled() ? Value.ZERO : Value.ONE);
+                int selectorA = row.a() < 0 ? 0 : row.a();
+                int selectorB = row.b() < 0 ? 0 : row.b();
+                simulator.setInputValue(inputs.get("A").pin(), bit(selectorA, 0));
+                simulator.setInputValue(inputs.get("B").pin(), bit(selectorB, 0));
+                simulator.settle();
+
+                Value firstExpected = row.disabled() ? Value.ZERO
+                        : ((dataPattern >>> row.selectedData()) & 1) == 1
+                                ? Value.ONE : Value.ZERO;
+                Value secondExpected = row.disabled() ? Value.ONE
+                        : ((dataPattern >>> row.selectedData()) & 1) == 1
+                                ? Value.ZERO : Value.ONE;
+                assertEquals(firstExpected,
+                        simulator.getProbeValue(compiled.outputs().get(
+                                outputIds.get("probe1Y"))),
+                        "section 1, B=" + row.b() + ", A=" + row.a()
+                                + ", data=0x" + Integer.toHexString(dataPattern));
+                assertEquals(secondExpected,
+                        simulator.getProbeValue(compiled.outputs().get(
+                                outputIds.get("probe2Y"))),
+                        "section 2, B=" + row.b() + ", A=" + row.a()
+                                + ", data=0x" + Integer.toHexString(dataPattern));
+            }
+        }
+    }
+
+    @Test
     void sn7442OutputIsUnknownWhenItsVccSupplyIsNotConnected() throws IOException {
         Schematic schematic = bcdFixture(false);
         SchematicCompiler.SimulationResult result =
@@ -501,6 +601,24 @@ class Ti74xxTierAChipTest {
         for (int output = 0; output < 8; output++) {
             addOutputAt(schematic, "probeY" + output, pins.get("Y" + output));
         }
+        return schematic;
+    }
+
+    private static Schematic dualMultiplexerFixture() throws IOException {
+        ComponentDefinition definition = library().get("74153");
+        Schematic schematic = new Schematic(GATES);
+        ComponentInstance chip = schematic.addInstance(
+                definition, 350, 250, Facing.EAST);
+        Map<String, ComponentInstance.PinGeometry> pins = pins(chip, definition);
+        for (String signal : List.of("1G", "2G", "A", "B",
+                "1C0", "1C1", "1C2", "1C3",
+                "2C0", "2C1", "2C2", "2C3")) {
+            addInputAt(schematic, signal, pins.get(signal), false);
+        }
+        addInputAt(schematic, "GND", pins.get("GND"), false);
+        addInputAt(schematic, "VCC", pins.get("VCC"), true);
+        addOutputAt(schematic, "probe1Y", pins.get("1Y"));
+        addOutputAt(schematic, "probe2Y", pins.get("2Y"));
         return schematic;
     }
 
