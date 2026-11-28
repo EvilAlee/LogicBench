@@ -559,14 +559,15 @@ class Ti74xxTierAChipTest {
                 simulator.setInputValue(inputs.get("B").pin(), bit(selectorB, 0));
                 simulator.settle();
 
-                boolean selectedDataHigh = row.disabled() ? false
-                        : ((dataPattern >>> row.selectedData()) & 1) == 1;
-                Value firstExpected = selectedDataHigh ? Value.ONE : Value.ZERO;
-                // The second strobe is opposite: it is enabled on the first
-                // channel's disabled row and uses the complementary data pattern.
-                boolean secondDataHigh = !selectedDataHigh;
-                Value secondExpected = row.disabled()
-                        ? (secondDataHigh ? Value.ONE : Value.ZERO) : Value.ZERO;
+                int selectedData = row.selectedData() < 0 ? 0 : row.selectedData();
+                boolean firstDataHigh = ((dataPattern >>> selectedData) & 1) == 1;
+                Value firstExpected = !row.disabled() && firstDataHigh
+                        ? Value.ONE : Value.ZERO;
+                // The second strobe is opposite and its data pins carry the
+                // complement of the first section's data pattern.
+                boolean secondDataHigh = !firstDataHigh;
+                Value secondExpected = row.disabled() && secondDataHigh
+                        ? Value.ONE : Value.ZERO;
                 assertEquals(firstExpected,
                         simulator.getProbeValue(compiled.outputs().get(
                                 outputIds.get("probe1Y"))),
