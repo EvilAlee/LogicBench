@@ -119,10 +119,18 @@ class FixedSourceIntegrationTest {
         SchematicClipboard.PasteResult result = SchematicClipboard.paste(
                 target, payload, null, null, 200, 200).orElseThrow();
         assertEquals(3, result.componentIds().size());
-        assertTrue(target.components().stream().anyMatch(c ->
-                c.typeId().equals("vcc") && c.fixedSourceValue() == Value.ONE));
-        assertTrue(target.components().stream().anyMatch(c ->
-                c.typeId().equals("gnd") && c.fixedSourceValue() == Value.ZERO));
+        PlacedComponent pastedVcc = target.components().stream()
+                .filter(c -> c.typeId().equals("vcc")).findFirst().orElseThrow();
+        PlacedComponent pastedGnd = target.components().stream()
+                .filter(c -> c.typeId().equals("gnd")).findFirst().orElseThrow();
+        assertEquals(Facing.EAST, pastedVcc.facing());
+        assertEquals(Facing.SOUTH, pastedGnd.facing());
+        assertEquals(Value.ONE, pastedVcc.fixedSourceValue());
+        assertEquals(Value.ZERO, pastedGnd.fixedSourceValue());
+        assertEquals(1, target.pinPositions().stream()
+                .filter(pin -> pin.componentId().equals(pastedVcc.id())).count());
+        assertEquals(1, target.pinPositions().stream()
+                .filter(pin -> pin.componentId().equals(pastedGnd.id())).count());
         PlacedComponent pastedConstant = target.components().stream()
                 .filter(c -> c.typeId().equals("constant")).findFirst().orElseThrow();
         assertEquals("1", target.attributeValue(pastedConstant.id(), "value"));
