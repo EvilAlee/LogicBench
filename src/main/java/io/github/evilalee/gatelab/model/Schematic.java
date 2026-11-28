@@ -283,6 +283,12 @@ public final class Schematic {
         if (key.equals("value")) {
             return List.of("0", "1");
         }
+        if (key.equals("activeLevel")) {
+            return List.of("high", "low");
+        }
+        if (key.equals("onColour")) {
+            return List.of("red", "green", "yellow", "blue");
+        }
         List<GateDef> variants = variantsFor(family);
         if (key.equals("size")) {
             return variants.stream().map(GateDef::size).distinct()

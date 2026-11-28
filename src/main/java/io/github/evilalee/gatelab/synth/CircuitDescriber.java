@@ -1,6 +1,8 @@
 package io.github.evilalee.gatelab.synth;
 
 import io.github.evilalee.gatelab.model.ComponentDefinition;
+import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -75,6 +77,13 @@ public final class CircuitDescriber {
     private record GraphSource(Netlist netlist, SignalMappings mappings) {
     }
 
+    private record DisplayProjection(
+            Schematic schematic, Map<String, String> originalDisplayByOutputId) {
+        private DisplayProjection {
+            originalDisplayByOutputId = Map.copyOf(originalDisplayByOutputId);
+        }
+    }
+
     private record BoxExport(
             ComponentInstance instance,
             ComponentDefinition definition,
@@ -110,6 +119,15 @@ public final class CircuitDescriber {
     /** Describes a placed schematic without changing its labels, wires, or source values. */
     public static Description describe(Schematic schematic) {
         Objects.requireNonNull(schematic, "schematic");
+        if (schematic.components().stream().anyMatch(
+                component -> DisplayComponent.isDisplay(component.typeId()))) {
+            DisplayProjection projection = projectDisplays(schematic);
+            Description projected = describe(projection.schematic());
+            Map<String, String> componentIds = new LinkedHashMap<>(projected.componentIds());
+            componentIds.replaceAll((signal, componentId) ->
+                    projection.originalDisplayByOutputId().getOrDefault(componentId, componentId));
+            return new Description(projected.text(), componentIds);
+        }
         if (!schematic.componentInstances().isEmpty()) {
             return describeWithInstances(schematic);
         }
@@ -563,7 +581,59 @@ public final class CircuitDescriber {
     private static boolean isBoundaryOrConstant(String typeId) {
         return typeId.equals("input") || typeId.equals("clock")
                 || typeId.equals("output") || typeId.equals("constant")
-                || typeId.equals("vcc") || typeId.equals("gnd");
+                || typeId.equals("vcc") || typeId.equals("gnd")
+                || DisplayComponent.isDisplay(typeId);
+    }
+
+    /**
+     * Projects display input-only sink pins to coincident Output probes. The
+     * expression language represents sinks as named outputs.
+     */
+    private static DisplayProjection projectDisplays(Schematic source) {
+        Schematic projected = source.copy();
+        Map<String, String> originalByOutputId = new LinkedHashMap<>();
+        Map<String, Connectivity.PinPosition> pinByKey = new HashMap<>();
+        for (Connectivity.PinPosition pin : source.pinPositions()) {
+            pinByKey.put(pin.componentId() + "|" + pin.pinId(), pin);
+        }
+        GateDef outputDefinition = source.gateDefinitions().stream()
+                .filter(definition -> definition.family().equals("output"))
+                .findFirst().orElseThrow(() ->
+                        new IllegalStateException("Output probe geometry is missing."));
+        Set<String> usedIds = new HashSet<>();
+        source.components().forEach(component -> usedIds.add(component.id()));
+        source.componentInstances().forEach(instance -> usedIds.add(instance.id()));
+        List<DisplayComponent.SinkPin> displaySinks = DisplayComponent.sinkPins(source);
+        int generated = 1;
+        for (PlacedComponent display : source.components()) {
+            if (!DisplayComponent.isDisplay(display.typeId())) {
+                continue;
+            }
+            List<DisplayComponent.SinkPin> sinks = displaySinks.stream()
+                    .filter(sink -> sink.componentId().equals(display.id()))
+                    .toList();
+            projected.remove(display.id());
+            for (DisplayComponent.SinkPin sink : sinks) {
+                Connectivity.PinPosition position = pinByKey.get(
+                        sink.componentId() + "|" + sink.pinId());
+                if (position == null) {
+                    throw new IllegalStateException(
+                            "Missing display pin " + sink.componentId() + "." + sink.pinId());
+                }
+                String id;
+                do {
+                    id = "display-export-" + generated++;
+                } while (!usedIds.add(id));
+                GateGeometry.Offset outputPinOffset =
+                        GateGeometry.inputOffsets(outputDefinition, Facing.EAST).getFirst();
+                projected.add(new PlacedComponent(
+                        id, "output", position.x() - outputPinOffset.x(),
+                        position.y() - outputPinOffset.y(),
+                        Facing.EAST, Map.of(), sink.portName()));
+                originalByOutputId.put(id, display.id());
+            }
+        }
+        return new DisplayProjection(projected, originalByOutputId);
     }
 
     private static void requireGateLimit(long gateCount) {

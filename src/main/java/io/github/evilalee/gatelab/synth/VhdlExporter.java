@@ -3,6 +3,7 @@ package io.github.evilalee.gatelab.synth;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
 import io.github.evilalee.gatelab.model.ComponentInstance;
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
@@ -451,6 +452,11 @@ public final class VhdlExporter {
 
     public static TestbenchCapability testbenchCapability(Schematic schematic) {
         Objects.requireNonNull(schematic, "schematic");
+        if (schematic.components().stream().anyMatch(
+                c -> DisplayComponent.isDisplay(c.typeId()))) {
+            return new TestbenchCapability(false,
+                    "Testbench is unavailable for circuits containing display sinks.");
+        }
         if (schematic.components().stream().anyMatch(c -> c.typeId().equals("clock"))) {
             return new TestbenchCapability(false,
                     "Testbench is unavailable for circuits containing a Clock component.");
@@ -721,6 +727,10 @@ public final class VhdlExporter {
             ports.add(new Port(raw, name, direction,
                     component.typeId().equals("clock"), component.id(), pin));
         }
+        for (DisplayComponent.SinkPin sink : DisplayComponent.sinkPins(schematic)) {
+            ports.add(new Port(sink.portName(), identifiers.allocate(sink.portName()),
+                    "out", false, sink.componentId(), sink.pinId()));
+        }
         return List.copyOf(ports);
     }
 
@@ -745,8 +755,8 @@ public final class VhdlExporter {
     }
 
     private static boolean isGate(PlacedComponent component) {
-        return !Set.of("input", "clock", "constant", "vcc", "gnd", "output")
-                .contains(component.typeId());
+        return !Set.of("input", "clock", "constant", "vcc", "gnd", "output",
+                "seg7", "hexdigit").contains(component.typeId());
     }
 
     private static String gateExpression(String typeId, List<String> args) {

@@ -22,7 +22,7 @@ class GateLibraryTest {
     void gatesJsonLoadsAllShippedDefinitionsAndEverySvgParsesWithJsvg() {
         GateLibrary library = GateLibrary.load();
 
-        assertEquals(32, library.all().size());
+        assertEquals(34, library.all().size());
         assertSame(library, GateLibrary.load());
 
         SVGLoader loader = new SVGLoader();

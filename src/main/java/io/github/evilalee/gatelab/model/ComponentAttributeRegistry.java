@@ -36,7 +36,13 @@ public final class ComponentAttributeRegistry {
             Map.entry("vcc", List.of(FACING)),
             Map.entry("gnd", List.of(FACING)),
             Map.entry("output", List.of(FACING)),
-            Map.entry("clock", List.of(FACING)));
+            Map.entry("clock", List.of(FACING)),
+            Map.entry("seg7", List.of(FACING,
+                    new AttributeSpec("activeLevel", "Active level", "high"),
+                    new AttributeSpec("onColour", "On colour", "red"))),
+            Map.entry("hexdigit", List.of(FACING,
+                    new AttributeSpec("activeLevel", "Active level", "high"),
+                    new AttributeSpec("onColour", "On colour", "red"))));
 
     private ComponentAttributeRegistry() {
     }
@@ -99,6 +105,20 @@ public final class ComponentAttributeRegistry {
             }
             return trimmed;
         }
+        if (key.equals("activeLevel")) {
+            String normalized = trimmed.toLowerCase(Locale.ROOT);
+            if (!List.of("high", "low").contains(normalized)) {
+                throw new IllegalArgumentException("unknown Active level: " + value);
+            }
+            return normalized;
+        }
+        if (key.equals("onColour")) {
+            String normalized = trimmed.toLowerCase(Locale.ROOT);
+            if (!List.of("red", "green", "yellow", "blue").contains(normalized)) {
+                throw new IllegalArgumentException("unknown On colour: " + value);
+            }
+            return normalized;
+        }
         throw new IllegalArgumentException("unsupported attribute: " + key);
     }
 
@@ -109,6 +129,8 @@ public final class ComponentAttributeRegistry {
             case "size" -> value.substring(0, 1).toUpperCase(Locale.ROOT)
                     + value.substring(1).toLowerCase(Locale.ROOT);
             case "inputs" -> value;
+            case "activeLevel", "onColour" -> value.substring(0, 1).toUpperCase(Locale.ROOT)
+                    + value.substring(1).toLowerCase(Locale.ROOT);
             default -> value;
         };
     }

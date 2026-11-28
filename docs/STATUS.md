@@ -24,6 +24,7 @@
 - PR #65 / feature-gates-and-power: production 2–5 input gate variants and VCC/GND/Constant fixed sources
 
 ## In progress
+- feature-displays: input-only Seg7 and HexDigit sinks, three-valued display decoding, active-level/colour/Name attributes, canvas rendering, expression/VHDL export ports, Tidy sink extraction, and headless tests.
 - feature-auto-wire: two-click A* orthogonal pin routing, driver checks, one-step undo, and headless router/canvas tests.
 - fix-auto-wire-branching (PR #66): net-aware pin/wire attachment and fan-out routing implemented; headless regression coverage and final CI verification in progress.
 - feature-gates-and-power: production AND/OR/NAND/NOR/XOR/XNOR 2–5 input variants, resize wire preservation, n-ary expression/VHDL export, and VCC/GND/Constant fixed sources with legacy-file migration.

@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.synth;
 
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.DisplayComponent;
 import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 
@@ -22,6 +23,9 @@ import java.util.Set;
  */
 public final class FeedbackCircuitExtractor {
     private record PinKey(String componentId, String pinId) {
+    }
+
+    private record OutputSink(PlacedComponent component, String pinId, String signalName) {
     }
 
     private record GateInputEdge(
@@ -137,6 +141,7 @@ public final class FeedbackCircuitExtractor {
         List<PlacedComponent> clocks = new ArrayList<>();
         List<PlacedComponent> constants = new ArrayList<>();
         List<PlacedComponent> outputs = new ArrayList<>();
+        List<PlacedComponent> displays = new ArrayList<>();
         List<PlacedComponent> gates = new ArrayList<>();
 
         for (PlacedComponent component : components) {
@@ -146,6 +151,7 @@ public final class FeedbackCircuitExtractor {
                 case "clock" -> clocks.add(component);
                 case "constant", "vcc", "gnd" -> constants.add(component);
                 case "output" -> outputs.add(component);
+                case "seg7", "hexdigit" -> displays.add(component);
                 default -> {
                     GateOperator operator;
                     try {
@@ -175,11 +181,8 @@ public final class FeedbackCircuitExtractor {
         inputs.sort(visualOrder);
         clocks.sort(visualOrder);
         outputs.sort(visualOrder);
+        displays.sort(visualOrder);
         gates.sort(visualOrder);
-        if (outputs.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Tidy circuit requires at least one Output component.");
-        }
 
         Set<String> reservedSignals = new HashSet<>();
         Map<String, String> inputNames = assignNames(
@@ -192,6 +195,32 @@ public final class FeedbackCircuitExtractor {
         Map<String, String> inputIds = reverseNames(inputNames);
         Map<String, String> clockIds = reverseNames(clockNames);
         Map<String, String> outputIds = reverseNames(outputNames);
+        List<OutputSink> outputSinks = new ArrayList<>();
+        Set<String> usedOutputNames = new HashSet<>(outputNames.values());
+        for (PlacedComponent output : outputs) {
+            outputSinks.add(new OutputSink(output, "in0", outputNames.get(output.id())));
+        }
+        for (DisplayComponent.SinkPin sink : DisplayComponent.sinkPins(schematic)) {
+            String name = sink.portName();
+            if (!name.matches("[A-Za-z][A-Za-z0-9_]*")) {
+                throw new IllegalArgumentException(
+                        "Display output name '" + name + "' must be a valid signal name.");
+            }
+            if (!usedOutputNames.add(name)) {
+                throw new IllegalArgumentException("Duplicate component output name: " + name);
+            }
+            outputSinks.add(new OutputSink(byId.get(sink.componentId()), sink.pinId(), name));
+            outputIds.put(name, sink.componentId());
+        }
+        outputSinks.sort(Comparator
+                .comparingInt((OutputSink sink) -> sink.component().y())
+                .thenComparingInt(sink -> sink.component().x())
+                .thenComparing(sink -> sink.component().id())
+                .thenComparing(OutputSink::pinId));
+        if (outputSinks.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Tidy circuit requires at least one Output component or display.");
+        }
         Map<String, String> constantSignals = new LinkedHashMap<>();
         Map<String, String> constantIds = new LinkedHashMap<>();
         for (PlacedComponent constant : constants) {
@@ -278,12 +307,12 @@ public final class FeedbackCircuitExtractor {
         }
 
         List<Netlist.Output> netlistOutputs = new ArrayList<>();
-        for (PlacedComponent output : outputs) {
+        for (OutputSink sink : outputSinks) {
             String source = requireDrivenSignal(
-                    netByPin.get(new PinKey(output.id(), "in0")),
+                    netByPin.get(new PinKey(sink.component().id(), sink.pinId())),
                     signalByNet,
-                    "Output " + output.id());
-            netlistOutputs.add(new Netlist.Output(outputNames.get(output.id()), source));
+                    "Display/Output " + sink.component().id() + "." + sink.pinId());
+            netlistOutputs.add(new Netlist.Output(sink.signalName(), source));
         }
 
         Map<String, String> componentIdByGateSignal = new HashMap<>();

@@ -1,42 +1,55 @@
-# feature-chip-power progress
+# feature-displays progress
 
-## Implementation choice
+## Implementation
 
-Selected the internal X-valued source plus ordinary engine gates during
-`SchematicCompiler` flattening. Each chip instance gets a shared
-`powerGood = VCC AND NOT GND` network. Every public output is masked through
-`(powerGood AND value) OR (NOT powerGood AND X)`. The one X-valued `InputPin`
-is internal to the flattened engine graph and is never exposed in the component
-explorer or schematic.
+- Added `seg7` and `hexdigit` as additive `gates.json` component types with
+  input-only geometry and SVG resources. No `ComponentLibrary`, TI-chip
+  definitions, chip resources, or AI implementation was changed.
+- Relaxed `GateDef.origin()` for output-less components with multiple inputs;
+  the first input defines the component's fixed geometry origin.
+- Added Swing-free `DisplayLogic` helpers for three-valued segment state,
+  active-high/active-low decoding, and the complete 0-F hexadecimal glyph map.
+  Unconnected Seg7 segments are dim; connected X segments are marked unknown.
+  Unknown HexDigit data is rendered with the dim dash/X marker; dp remains
+  independent.
+- Added Active level (High/Low), On colour (red/green/yellow/blue), and the
+  existing Name-label mechanism to both display families.
+- The canvas paints displays with `DisplayRenderer`, derives their values
+  from the normal pin-state diagnostics, shows a display-state tooltip, and
+  leaves generic selection, rotation, copy/paste, and pin dots intact.
+- `SchematicCompiler` creates one `OutputProbe` for every display input.
+  Probes have no driver and displays do not add simulation logic.
+- Expression export projects each display pin to a coincident named Output
+  probe, then maps the exported signal IDs back to the original display ID.
+  VHDL export emits each display pin as a top-level `out` port. Since the
+  simulation testbench currently binds one output component per signal, a
+  display-containing VHDL export deliberately omits the generated testbench.
+- Combinational and feedback extraction treat display input pins as independent
+  output sinks. Tidy rebuilds each sink as an Output component; feedback tidy
+  verifies exact pin-to-net connectivity using a pin-level projection map.
+- Displays are excluded from gate counts and from the "has tidyable gate"
+  calculation. The Pins explorer group includes both display families.
 
-This is smaller and safer than adding a new simulator primitive: it reuses the
-engine's existing three-valued `AND`, `NOT`, and `OR` semantics and ordinary
-event scheduling. The simulator, tick/settle limit, oscillation handling, and
-"did not settle" behavior remain unchanged. The generated gate ids are stable
-hierarchical ids, so existing gate-state carry-over also applies to the output
-mask gates.
+## Tests added/changed
 
-Only chip outputs are masked. Internal gates continue to run normally while a
-chip is unpowered; their sequential state is neither erased nor frozen. This is
-an intentional simulation simplification. When valid power returns, the
-internal state is visible at the outputs again.
+- Updated `GateLibraryTest` and `GalleryRenderTest` for the two additional
+  catalogue entries; both SVGs are parsed with JSVG and painted in four facings.
+- Added `DisplayLogicTest`: Seg7 high/low polarity, X versus unconnected,
+  digit tooltip, full 0-F glyph table, weighted data pins, unknown nibble,
+  independent dp, and colour helper functions. No pixel/image-based painting
+  tests are used.
+- Added `DisplayComponentTest`: input-only definition contract, .lbc
+  save/load, unchanged legacy-file loading, clipboard copy/paste of names and
+  attributes, rotation pin coordinates, and compiler read-only probes.
+- Added `DisplayExporterTest`: expression and VHDL port names for both
+  display families, named signal-to-component mapping, testbench capability,
+  and Tidy's conversion of all display pins into named sinks.
 
-## Settings and exports
+## Human checks
 
-`Simulate > Chips need power` is transient, defaults on at application start,
-and is not stored in .lbc files. Turning it off compiles chip instances using
-the previous ideal-logic boundary connections. Expression and structural VHDL
-exports remain ideal-powered logical descriptions; VHDL retains explicit VCC
-and GND entity/instance ports.
-
-## Tests changed
-
-- Updated `MainSimulationOptionsTest` for the renamed default-on checkbox,
-  re-settling on toggle, and unchanged schematic history.
-- Added `ChipPowerSimulationTest` covering powered 7400 behavior, missing and
-  invalid supply states (including VCC=X), ideal mode, X pin-dot diagnostics,
-  sequential state across supply loss/restoration, and a flattened powered
-  7400 SR latch.
-- Existing `Ti74xxChipTest`'s supply diagnostic fixture already places VCC/GND
-  drivers at the corresponding DIP pins; its internal-logic truth-table test
-  exercises the definition itself rather than a placed chip instance.
+- Connect a counter's Q0..Q3 to HexDigit D0..D3 and use **Simulate > Tick Once**
+  to observe the hexadecimal value advance.
+- Select Active level **Low** and confirm the display polarity changes as
+  expected for common-anode wiring.
+- Also inspect Seg7's decimal point, X/unconnected pin rendering, all four
+  On colour options, tooltips, and rotation.
