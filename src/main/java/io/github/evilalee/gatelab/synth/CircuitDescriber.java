@@ -624,9 +624,11 @@ public final class CircuitDescriber {
                 do {
                     id = "display-export-" + generated++;
                 } while (!usedIds.add(id));
-                GateGeometry.Offset origin = outputDefinition.origin();
+                GateGeometry.Offset outputPinOffset =
+                        GateGeometry.inputOffsets(outputDefinition, Facing.EAST).getFirst();
                 projected.add(new PlacedComponent(
-                        id, "output", position.x() - origin.x(), position.y() - origin.y(),
+                        id, "output", position.x() - outputPinOffset.x(),
+                        position.y() - outputPinOffset.y(),
                         Facing.EAST, Map.of(), sink.portName()));
                 originalByOutputId.put(id, display.id());
             }
