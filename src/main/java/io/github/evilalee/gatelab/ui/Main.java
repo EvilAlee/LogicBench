@@ -939,8 +939,7 @@ public final class Main {
                 enterAddModeForPath(canvas, tree.getSelectionPath()));
         tree.addMouseListener(new MouseAdapter() {
             private void showDeleteMenu(MouseEvent event) {
-                if (!event.isPopupTrigger() && !(SwingUtilities.isRightMouseButton(event)
-                        && event.getID() == MouseEvent.MOUSE_PRESSED)) return;
+                if (!event.isPopupTrigger()) return;
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 if (path == null) return;
                 Object node = path.getLastPathComponent();
