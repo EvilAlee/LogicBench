@@ -68,8 +68,10 @@ public final class ComponentDefinition {
             String packageType,
             Schematic internalCircuit) {
         String normalizedPackage = normalizePackage(packageType);
+        // TI 74xx catalogue names include both four-digit (e.g. 7442)
+        // and five-digit (e.g. 74138, 74283) device designators.
         this.name = normalizedPackage != null && name != null
-                && name.trim().matches("74[0-9]{2}")
+                && name.trim().matches("74[0-9]{2,3}")
                 ? name.trim() : requireIdentifier(name, "definition name");
         this.description = requireText(description, "description");
         this.category = requireText(category, "category");
@@ -312,9 +314,11 @@ public final class ComponentDefinition {
 
     private static String requirePortIdentifier(String value, String label) {
         String text = requireText(value, label);
-        if (!text.matches("[A-Za-z0-9][A-Za-z0-9_]*")) {
+        // Some physical IC terminals use paired names such as the TI 74157's A/B.
+        if (!text.matches("[A-Za-z0-9][A-Za-z0-9_]*(/[A-Za-z0-9][A-Za-z0-9_]*)?")) {
             throw new IllegalArgumentException(
-                    label + " must contain only letters, digits and underscores: " + value);
+                    label + " must contain letters, digits, underscores, and at most one slash: "
+                            + value);
         }
         return text;
     }

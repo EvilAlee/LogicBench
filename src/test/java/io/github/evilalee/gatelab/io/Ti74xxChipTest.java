@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -73,6 +74,40 @@ class Ti74xxChipTest {
         expected.put("7430", pins(
                 "A", 1, "B", 2, "C", 3, "D", 4, "E", 5, "F", 6,
                 "GND", 7, "Y", 8, "G", 11, "H", 12, "VCC", 14));
+        expected.put("7442", pins(
+                "0", 1, "1", 2, "2", 3, "3", 4, "4", 5, "5", 6,
+                "6", 7, "GND", 8, "7", 9, "8", 10, "9", 11,
+                "D", 12, "C", 13, "B", 14, "A", 15, "VCC", 16));
+        expected.put("74138", pins(
+                "A", 1, "B", 2, "C", 3, "G2A", 4, "G2B", 5,
+                "G1", 6, "Y7", 7, "GND", 8, "Y6", 9, "Y5", 10,
+                "Y4", 11, "Y3", 12, "Y2", 13, "Y1", 14, "Y0", 15, "VCC", 16));
+
+        expected.put("74139", pins(
+                "1G", 1, "1A", 2, "1B", 3, "1Y0", 4, "1Y1", 5,
+                "1Y2", 6, "1Y3", 7, "GND", 8, "2Y3", 9, "2Y2", 10,
+                "2Y1", 11, "2Y0", 12, "2B", 13, "2A", 14, "2G", 15, "VCC", 16));
+
+        expected.put("74148", pins(
+                "4", 1, "5", 2, "6", 3, "7", 4, "EI", 5, "A2", 6,
+                "A1", 7, "GND", 8, "A0", 9, "0", 10, "1", 11,
+                "2", 12, "3", 13, "GS", 14, "EO", 15, "VCC", 16));
+
+        expected.put("74151", pins(
+                "D3", 1, "D2", 2, "D1", 3, "D0", 4, "Y", 5, "W", 6,
+                "G", 7, "GND", 8, "C", 9, "B", 10, "A", 11,
+                "D7", 12, "D6", 13, "D5", 14, "D4", 15, "VCC", 16));
+
+        expected.put("74153", pins(
+                "1G", 1, "B", 2, "1C3", 3, "1C2", 4, "1C1", 5,
+                "1C0", 6, "1Y", 7, "GND", 8, "2Y", 9, "2C0", 10,
+                "2C1", 11, "2C2", 12, "2C3", 13, "A", 14, "2G", 15, "VCC", 16));
+
+        expected.put("74157", pins(
+                "A/B", 1, "1A", 2, "1B", 3, "1Y", 4,
+                "2A", 5, "2B", 6, "2Y", 7, "GND", 8,
+                "3Y", 9, "3B", 10, "3A", 11, "4Y", 12,
+                "4B", 13, "4A", 14, "G", 15, "VCC", 16));
 
         assertEquals(expected.keySet(), library.builtIns().stream()
                 .filter(definition -> definition.category().equals("TTL 74xx"))
@@ -80,7 +115,9 @@ class Ti74xxChipTest {
                 .collect(java.util.stream.Collectors.toSet()));
         for (Map.Entry<String, Map<String, Integer>> entry : expected.entrySet()) {
             ComponentDefinition definition = library.get(entry.getKey());
-            assertEquals("DIP14", definition.packageType(), entry.getKey());
+            assertEquals(
+                    Set.of("7442", "74138", "74139", "74148", "74151", "74153", "74157").contains(entry.getKey()) ? "DIP16" : "DIP14",
+                    definition.packageType(), entry.getKey());
             assertEquals(entry.getValue(), definition.ports().stream().collect(
                     java.util.stream.Collectors.toMap(
                             ComponentDefinition.Port::name, ComponentDefinition.Port::pin)),

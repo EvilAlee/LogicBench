@@ -4,11 +4,13 @@ import io.github.evilalee.gatelab.model.Circuit;
 import io.github.evilalee.gatelab.model.ComponentDefinition;
 import io.github.evilalee.gatelab.model.Connectivity;
 import io.github.evilalee.gatelab.model.Component;
+import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.Gate;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.InputPin;
 import io.github.evilalee.gatelab.model.OutputProbe;
 import io.github.evilalee.gatelab.model.Pin;
+import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Wire;
@@ -573,6 +575,13 @@ public final class ComponentLibrary {
         }
     }
 
+    private record ChipOutputExpression(String portName, String expression) {
+        private ChipOutputExpression {
+            Objects.requireNonNull(portName, "portName");
+            Objects.requireNonNull(expression, "expression");
+        }
+    }
+
     private static ChipPortSpec in(String name, int pin) {
         return new ChipPortSpec(name, pin, ComponentDefinition.Direction.IN);
     }
@@ -680,7 +689,241 @@ public final class ComponentLibrary {
                 in("H", 12), in("VCC", 14));
         chips.add(chip(gateDefinitions, "7430", "8-input NAND gate", nand8,
                 List.of(fn("Y", GateOperator.NAND, "A", "B", "C", "D", "E", "F", "G", "H"))));
+
+        List<ChipPortSpec> decoder7442 = List.of(
+                out("0", 1), out("1", 2), out("2", 3), out("3", 4),
+                out("4", 5), out("5", 6), out("6", 7), in("GND", 8),
+                out("7", 9), out("8", 10), out("9", 11), in("D", 12),
+                in("C", 13), in("B", 14), in("A", 15), in("VCC", 16));
+        List<ChipOutputExpression> decoderRows = new ArrayList<>();
+        List<String> inputOrder = List.of("D", "C", "B", "A");
+        for (int decimal = 0; decimal < 10; decimal++) {
+            List<String> mismatches = new ArrayList<>(4);
+            for (int bit = 3; bit >= 0; bit--) {
+                String input = inputOrder.get(3 - bit);
+                mismatches.add(((decimal >>> bit) & 1) == 0 ? input : "!" + input);
+            }
+            decoderRows.add(new ChipOutputExpression(
+                    Integer.toString(decimal), String.join(" | ", mismatches)));
+        }
+        chips.add(expressionChip(gateDefinitions, "7442",
+                "BCD-to-decimal decoder with ten active-low outputs", decoder7442,
+                decoderRows));
+
+        List<ChipPortSpec> decoder74138 = List.of(
+                in("A", 1), in("B", 2), in("C", 3), in("G2A", 4),
+                in("G2B", 5), in("G1", 6), out("Y7", 7), in("GND", 8),
+                out("Y6", 9), out("Y5", 10), out("Y4", 11), out("Y3", 12),
+                out("Y2", 13), out("Y1", 14), out("Y0", 15), in("VCC", 16));
+        List<ChipOutputExpression> decoder138Rows = new ArrayList<>();
+        List<String> decoder138Inputs = List.of("A", "B", "C");
+        for (int selected = 0; selected < 8; selected++) {
+            List<String> highConditions = new ArrayList<>(
+                    List.of("!G1", "G2A", "G2B"));
+            for (int bit = 0; bit < decoder138Inputs.size(); bit++) {
+                String input = decoder138Inputs.get(bit);
+                highConditions.add(((selected >>> bit) & 1) == 0
+                        ? input : "!" + input);
+            }
+            decoder138Rows.add(new ChipOutputExpression(
+                    "Y" + selected, String.join(" | ", highConditions)));
+        }
+        chips.add(expressionChip(gateDefinitions, "74138",
+                "3-to-8 decoder/demultiplexer with active-low outputs",
+                decoder74138, decoder138Rows));
+
+        List<ChipPortSpec> decoder74139 = List.of(
+                in("1G", 1), in("1A", 2), in("1B", 3),
+                out("1Y0", 4), out("1Y1", 5), out("1Y2", 6), out("1Y3", 7),
+                in("GND", 8), out("2Y3", 9), out("2Y2", 10),
+                out("2Y1", 11), out("2Y0", 12), in("2B", 13),
+                in("2A", 14), in("2G", 15), in("VCC", 16));
+        List<ChipOutputExpression> decoder139Rows = List.of(
+                new ChipOutputExpression("1Y0", "1G | 1B | 1A"),
+                new ChipOutputExpression("1Y1", "1G | 1B | !1A"),
+                new ChipOutputExpression("1Y2", "1G | !1B | 1A"),
+                new ChipOutputExpression("1Y3", "1G | !1B | !1A"),
+                new ChipOutputExpression("2Y0", "2G | 2B | 2A"),
+                new ChipOutputExpression("2Y1", "2G | 2B | !2A"),
+                new ChipOutputExpression("2Y2", "2G | !2B | 2A"),
+                new ChipOutputExpression("2Y3", "2G | !2B | !2A"));
+        chips.add(expressionChip(gateDefinitions, "74139",
+                "Dual 2-to-4 decoders/demultiplexers with active-low outputs",
+                decoder74139, decoder139Rows));
+
+        List<ChipPortSpec> priority148 = List.of(
+                in("4", 1), in("5", 2), in("6", 3), in("7", 4),
+                in("EI", 5), out("A2", 6), out("A1", 7), in("GND", 8),
+                out("A0", 9), in("0", 10), in("1", 11), in("2", 12),
+                in("3", 13), out("GS", 14), out("EO", 15), in("VCC", 16));
+        List<String> priorityTerms = new ArrayList<>();
+        for (int selected = 0; selected < 8; selected++) {
+            List<String> conditions = new ArrayList<>();
+            conditions.add("!EI");
+            for (int higherPriority = 0; higherPriority < selected; higherPriority++) {
+                conditions.add(Integer.toString(higherPriority));
+            }
+            conditions.add("!" + selected);
+            priorityTerms.add("(" + String.join(" & ", conditions) + ")");
+        }
+        String anyPriorityRequest = "(" + String.join(" | ", priorityTerms) + ")";
+        String a2Request = "(" + String.join(" | ",
+                priorityTerms.subList(4, 8)) + ")";
+        String a1Request = "(" + String.join(" | ", List.of(
+                priorityTerms.get(2), priorityTerms.get(3),
+                priorityTerms.get(6), priorityTerms.get(7))) + ")";
+        String a0Request = "(" + String.join(" | ", List.of(
+                priorityTerms.get(1), priorityTerms.get(3),
+                priorityTerms.get(5), priorityTerms.get(7))) + ")";
+        List<ChipOutputExpression> priority148Rows = List.of(
+                new ChipOutputExpression("A2", "!" + a2Request),
+                new ChipOutputExpression("A1", "!" + a1Request),
+                new ChipOutputExpression("A0", "!" + a0Request),
+                new ChipOutputExpression("GS", "!" + anyPriorityRequest),
+                new ChipOutputExpression("EO", "EI | " + anyPriorityRequest));
+        chips.add(expressionChip(gateDefinitions, "74148",
+                "8-to-3 priority encoder with active-low data inputs and encoded outputs",
+                priority148, priority148Rows));
+
+        List<ChipPortSpec> mux151 = List.of(
+                in("D3", 1), in("D2", 2), in("D1", 3), in("D0", 4),
+                out("Y", 5), out("W", 6), in("G", 7), in("GND", 8),
+                in("C", 9), in("B", 10), in("A", 11), in("D7", 12),
+                in("D6", 13), in("D5", 14), in("D4", 15), in("VCC", 16));
+        List<String> muxTerms = new ArrayList<>();
+        for (int selected = 0; selected < 8; selected++) {
+            List<String> conditions = new ArrayList<>();
+            conditions.add("!G");
+            conditions.add(((selected >>> 2) & 1) == 1 ? "C" : "!C");
+            conditions.add(((selected >>> 1) & 1) == 1 ? "B" : "!B");
+            conditions.add((selected & 1) == 1 ? "A" : "!A");
+            conditions.add("D" + selected);
+            muxTerms.add("(" + String.join(" & ", conditions) + ")");
+        }
+        String mux151Y = "(" + String.join(" | ", muxTerms) + ")";
+        chips.add(expressionChip(gateDefinitions, "74151",
+                "8-to-1 multiplexer with complementary outputs and active-low strobe",
+                mux151, List.of(
+                        new ChipOutputExpression("Y", mux151Y),
+                        new ChipOutputExpression("W", "!(" + mux151Y + ")"))));
+
+        List<ChipPortSpec> mux153 = List.of(
+                in("1G", 1), in("B", 2), in("1C3", 3), in("1C2", 4),
+                in("1C1", 5), in("1C0", 6), out("1Y", 7), in("GND", 8),
+                out("2Y", 9), in("2C0", 10), in("2C1", 11), in("2C2", 12),
+                in("2C3", 13), in("A", 14), in("2G", 15), in("VCC", 16));
+        List<String> mux153FirstTerms = new ArrayList<>();
+        List<String> mux153SecondTerms = new ArrayList<>();
+        for (int selected = 0; selected < 4; selected++) {
+            String selectB = ((selected >>> 1) & 1) == 1 ? "B" : "!B";
+            String selectA = (selected & 1) == 1 ? "A" : "!A";
+            mux153FirstTerms.add("(!1G & " + selectB + " & " + selectA
+                    + " & 1C" + selected + ")");
+            mux153SecondTerms.add("(!2G & " + selectB + " & " + selectA
+                    + " & 2C" + selected + ")");
+        }
+        chips.add(expressionChip(gateDefinitions, "74153",
+                "Dual 4-to-1 multiplexers with shared select inputs and active-low strobes",
+                mux153, List.of(
+                        new ChipOutputExpression("1Y",
+                                "(" + String.join(" | ", mux153FirstTerms) + ")"),
+                        new ChipOutputExpression("2Y",
+                                "(" + String.join(" | ", mux153SecondTerms) + ")"))));
+
+        List<ChipPortSpec> mux157 = List.of(
+                in("A/B", 1), in("1A", 2), in("1B", 3), out("1Y", 4),
+                in("2A", 5), in("2B", 6), out("2Y", 7), in("GND", 8),
+                out("3Y", 9), in("3B", 10), in("3A", 11), out("4Y", 12),
+                in("4B", 13), in("4A", 14), in("G", 15), in("VCC", 16));
+        List<ChipOutputExpression> mux157Outputs = new ArrayList<>();
+        for (int channel = 1; channel <= 4; channel++) {
+            String muxExpression = "!G & ((!A/B & " + channel + "A) | (A/B & "
+                    + channel + "B))";
+            mux157Outputs.add(new ChipOutputExpression(
+                    channel + "Y", "(" + muxExpression + ")"));
+        }
+        chips.add(expressionChip(gateDefinitions, "74157",
+                "Quad 2-to-1 multiplexer with shared A/B select and active-low strobe",
+                mux157, mux157Outputs));
         return List.copyOf(chips);
+    }
+
+    /**
+     * Synthesizes a multi-output combinational chip through the existing expression
+     * compiler and schematic layout path, then adds the two physical supply ports.
+     */
+    private static ComponentDefinition expressionChip(
+            List<GateDef> gateDefinitions,
+            String name,
+            String description,
+            List<ChipPortSpec> chipPorts,
+            List<ChipOutputExpression> outputExpressions) {
+        List<String> functionalInputs = chipPorts.stream()
+                .filter(port -> port.direction() == ComponentDefinition.Direction.IN)
+                .map(ChipPortSpec::name)
+                .filter(port -> !port.equals("VCC") && !port.equals("GND"))
+                .toList();
+        if (functionalInputs.isEmpty() || outputExpressions.isEmpty()) {
+            throw new IllegalArgumentException("chip requires at least one signal input and output");
+        }
+
+        Map<String, String> inputAliases = new LinkedHashMap<>();
+        for (int index = 0; index < functionalInputs.size(); index++) {
+            inputAliases.put(functionalInputs.get(index), "P" + index);
+        }
+
+        Map<String, String> outputAliases = new LinkedHashMap<>();
+        StringBuilder source = new StringBuilder();
+        for (int index = 0; index < outputExpressions.size(); index++) {
+            ChipOutputExpression output = outputExpressions.get(index);
+            String alias = "O" + index;
+            outputAliases.put(alias, output.portName());
+            String safeExpression = output.expression();
+            // Physical port names may begin with digits (e.g. the 74139's 1G).
+            // Translate whole identifiers to expression-safe aliases; the public
+            // ComponentDefinition still exposes the exact datasheet pin names.
+            for (Map.Entry<String, String> inputAlias : inputAliases.entrySet()) {
+                String token = "(?<![A-Za-z0-9_])"
+                        + java.util.regex.Pattern.quote(inputAlias.getKey())
+                        + "(?![A-Za-z0-9_])";
+                safeExpression = safeExpression.replaceAll(token, inputAlias.getValue());
+            }
+            source.append(alias).append(" = ").append(safeExpression).append(";\n");
+        }
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile(source.toString(), false, true);
+        if (compilation.netlist().inputs().size() != inputAliases.size()
+                || !new java.util.LinkedHashSet<>(compilation.netlist().inputs())
+                        .equals(new java.util.LinkedHashSet<>(inputAliases.values()))) {
+            throw new IllegalStateException(
+                    name + " expression inputs do not match the physical signal ports");
+        }
+
+        SchematicLayout.LayoutResult layout =
+                new SchematicLayout(gateDefinitions).layout(compilation.netlist());
+        Schematic internal = layout.schematic();
+        for (String input : functionalInputs) {
+            internal.setLabel(layout.inputComponentIds().get(inputAliases.get(input)), input);
+        }
+        outputAliases.forEach((alias, portName) ->
+                internal.setLabel(layout.outputComponentIds().get(alias), portName));
+
+        int bottom = internal.pinPositions().stream()
+                .mapToInt(Connectivity.PinPosition::y).max().orElse(0);
+        internal.add(new PlacedComponent(
+                "chip-vcc", "input", 0, bottom + 80,
+                Facing.EAST, Map.of(), "VCC"));
+        internal.add(new PlacedComponent(
+                "chip-gnd", "input", 0, bottom + 120,
+                Facing.EAST, Map.of(), "GND"));
+
+        List<ComponentDefinition.Port> ports = new ArrayList<>();
+        for (ChipPortSpec port : chipPorts) {
+            ports.add(new ComponentDefinition.Port(
+                    port.name(), port.direction(), false, port.pin()));
+        }
+        return new ComponentDefinition(
+                name, description, "TTL 74xx", ports, null, "DIP16", internal);
     }
 
     private static ComponentDefinition chip(

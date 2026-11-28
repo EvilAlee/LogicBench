@@ -49,6 +49,24 @@ class ComponentDefinitionJsonTest {
     }
 
     @Test
+    void definitionJsonRoundTripsPhysicalPortNameContainingSlash() {
+        Schematic internal = new Schematic(GATES);
+        internal.add(new PlacedComponent("select", "input", 0, 0,
+                Facing.EAST, java.util.Map.of(), "A/B"));
+        internal.add(new PlacedComponent("result", "output", 200, 0,
+                Facing.EAST, java.util.Map.of(), "Y"));
+
+        ComponentDefinition definition = ComponentDefinition.fromCircuit(
+                "MuxWithSlashPort", "Slash port test", "Test", "Y", internal);
+        String json = ComponentDefinitionJson.toJson(definition);
+        ComponentDefinition restored = ComponentDefinitionJson.fromJson(json, GATES);
+
+        assertEquals("A/B", restored.ports().getFirst().name());
+        assertEquals(definition.ports(), restored.ports());
+        assertEquals(definition.hash(), restored.hash());
+    }
+
+    @Test
     void clockComponentsBecomeClockInputsAndPortOrderFollowsInternalComponentOrder() {
         Schematic internal = new Schematic(GATES);
         internal.add(new PlacedComponent("clk", "clock", 0, 0,
