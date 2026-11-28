@@ -50,3 +50,52 @@ For invalid BCD input rows 1010 through 1111, TI specifies all ten outputs HIGH.
 Each valid row has exactly one LOW output; all other decimal outputs are HIGH.
 
 **Second-source check:** no independent manufacturer pin-and-function sheet was available in this audit. Mark this part **single-source** (TI only); no secondary source was used to invent or fill any row.
+
+## 74138 — audited; implementation pending
+
+**TI source:** [SN74LS138](https://www.ti.com/lit/gpn/SN74LS138), datasheet SDLS014 (December 1972, revised March 1988), package pin assignment page 1 and function table page 2.
+
+**Package:** SN74LS138 is offered in D or N 16-pin package; this library uses **DIP16 (N)**. The package pin assignment is explicitly labelled D or N.
+
+**DIP16 N top-view pin table (TI):**
+
+| Pin | Signal | Direction / polarity |
+|---:|---|---|
+| 1 | A | IN |
+| 2 | B | IN |
+| 3 | C | IN |
+| 4 | G2A | IN, active LOW |
+| 5 | G2B | IN, active LOW |
+| 6 | G1 | IN, active HIGH |
+| 7 | Y7 | OUT, active LOW |
+| 8 | GND | IN |
+| 9 | Y6 | OUT, active LOW |
+| 10 | Y5 | OUT, active LOW |
+| 11 | Y4 | OUT, active LOW |
+| 12 | Y3 | OUT, active LOW |
+| 13 | Y2 | OUT, active LOW |
+| 14 | Y1 | OUT, active LOW |
+| 15 | Y0 | OUT, active LOW |
+| 16 | VCC | IN |
+
+TI defines (G2^* = G2A + G2B). Therefore the enabled condition is exactly G1=H, G2A=L, G2B=L.
+
+**TI function-table rows read (page 2):**
+
+| G1 | G2* | C | B | A | Y0..Y7 |
+|---|---|---|---|---|---|
+| X | H | X | X | X | H H H H H H H H |
+| L | X | X | X | X | H H H H H H H H |
+| H | L | L | L | L | L H H H H H H H |
+| H | L | L | L | H | H L H H H H H H |
+| H | L | L | H | L | H H L H H H H H |
+| H | L | L | H | H | H H H L H H H H |
+| H | L | H | L | L | H H H H L H H H |
+| H | L | H | L | H | H H H H H L H H |
+| H | L | H | H | L | H H H H H H L H |
+| H | L | H | H | H | H H H H H H H L |
+
+Here H=1, L=0, X=don't-care. The selected output is LOW; all others are HIGH. The first two rows disable all outputs.
+
+**Second-source cross-check:** Nexperia [74HC138/74HCT138](https://assets.nexperia.com/documents/data-sheet/74HC_HCT138.pdf), revision 10 (26 February 2024), pages 3–4, confirms the same 16 terminal positions for its SO16 pinout, the two active-LOW enables plus one active-HIGH enable, the same three disable conditions, and the eight active-LOW decoder rows. Its signal names are A0/A1/A2 and E1/E2/E3; these correspond by pin position and polarity to TI A/B/C and G2A/G2B/G1. TI alone is used for SN74LS138's DIP/N package assignment.
+
