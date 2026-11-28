@@ -208,7 +208,7 @@ class Ti74xxTierAChipTest {
      * The same function table applies independently to each mux section.
      */
     private static final List<DualMultiplexerRow> SN74153_FUNCTION_TABLE = List.of(
-            new DualMultiplexerRow(-1, -1, -1, -1, true),
+            new DualMultiplexerRow(-1, -1, 0, 0, true),
             new DualMultiplexerRow(0, 0, 0, 0, false),
             new DualMultiplexerRow(0, 0, 0, 1, false),
             new DualMultiplexerRow(0, 1, 1, 0, false),
