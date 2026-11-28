@@ -709,6 +709,28 @@ public final class ComponentLibrary {
         chips.add(expressionChip(gateDefinitions, "7442",
                 "BCD-to-decimal decoder with ten active-low outputs", decoder7442,
                 decoderRows));
+
+        List<ChipPortSpec> decoder74138 = List.of(
+                in("A", 1), in("B", 2), in("C", 3), in("G2A", 4),
+                in("G2B", 5), in("G1", 6), out("Y7", 7), in("GND", 8),
+                out("Y6", 9), out("Y5", 10), out("Y4", 11), out("Y3", 12),
+                out("Y2", 13), out("Y1", 14), out("Y0", 15), in("VCC", 16));
+        List<ChipOutputExpression> decoder138Rows = new ArrayList<>();
+        List<String> decoder138Inputs = List.of("A", "B", "C");
+        for (int selected = 0; selected < 8; selected++) {
+            List<String> highConditions = new ArrayList<>(
+                    List.of("!G1", "G2A", "G2B"));
+            for (int bit = 0; bit < decoder138Inputs.size(); bit++) {
+                String input = decoder138Inputs.get(bit);
+                highConditions.add(((selected >>> bit) & 1) == 0
+                        ? input : "!" + input);
+            }
+            decoder138Rows.add(new ChipOutputExpression(
+                    "Y" + selected, String.join(" | ", highConditions)));
+        }
+        chips.add(expressionChip(gateDefinitions, "74138",
+                "3-to-8 decoder/demultiplexer with active-low outputs",
+                decoder74138, decoder138Rows));
         return List.copyOf(chips);
     }
 
@@ -741,7 +763,9 @@ public final class ComponentLibrary {
         }
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile(source.toString(), false, true);
-        if (!compilation.netlist().inputs().equals(functionalInputs)) {
+        if (compilation.netlist().inputs().size() != functionalInputs.size()
+                || !new java.util.LinkedHashSet<>(compilation.netlist().inputs())
+                        .equals(new java.util.LinkedHashSet<>(functionalInputs))) {
             throw new IllegalStateException(
                     name + " expression inputs do not match the physical signal ports");
         }
