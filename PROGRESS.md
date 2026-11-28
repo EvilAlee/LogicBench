@@ -32,8 +32,8 @@
 
 ## Tests added/changed
 
-- Updated `GateLibraryTest` for the two additional catalogue entries; it
-  continues parsing every shipped SVG with JSVG.
+- Updated `GateLibraryTest` and `GalleryRenderTest` for the two additional
+  catalogue entries; both SVGs are parsed with JSVG and painted in four facings.
 - Added `DisplayLogicTest`: Seg7 high/low polarity, X versus unconnected,
   digit tooltip, full 0-F glyph table, weighted data pins, unknown nibble,
   independent dp, and colour helper functions. No pixel/image-based painting

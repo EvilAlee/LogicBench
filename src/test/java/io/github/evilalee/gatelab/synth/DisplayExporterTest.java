@@ -77,16 +77,16 @@ class DisplayExporterTest {
         PlacedComponent display = schematic.add("seg7", 600, 300, Facing.EAST);
         Connectivity.PinPosition displayA = pin(schematic, display.id(), "in0");
 
-        GateDef buffer = definition("buffer");
-        GateGeometry.Offset bufferOutput = GateGeometry.outputOffset(buffer, Facing.EAST);
+        GateDef inverter = definition("not");
+        GateGeometry.Offset inverterOutput = GateGeometry.outputOffset(inverter, Facing.EAST);
         PlacedComponent gate = new PlacedComponent(
-                "buffer-display", "buffer", 500, displayA.y() - bufferOutput.y(),
+                "inverter-display", "not", 500, displayA.y() - inverterOutput.y(),
                 Facing.EAST, Map.of(), "");
         schematic.add(gate);
 
         Connectivity.PinPosition gateInput = pin(schematic, gate.id(), "in0");
         PlacedComponent data = addInputAt(
-                schematic, "buffer-data", gateInput.x() - 80, gateInput.y());
+                schematic, "inverter-data", gateInput.x() - 80, gateInput.y());
         Connectivity.PinPosition dataOut = pin(schematic, data.id(), "out");
         schematic.addWire(new WireSegment(
                 dataOut.x(), dataOut.y(), gateInput.x(), gateInput.y()));
@@ -118,7 +118,7 @@ class DisplayExporterTest {
         for (DisplayComponent.SinkPin sink : sinks) {
             Connectivity.PinPosition displayPin = pin(schematic, display.id(), sink.pinId());
             PlacedComponent source = addInputAt(
-                    schematic, "data-" + (index++),
+                    schematic, display.id() + "-data-" + (index++),
                     displayPin.x() - 80, displayPin.y());
             Connectivity.PinPosition sourceOut = pin(schematic, source.id(), "out");
             schematic.addWire(new WireSegment(
