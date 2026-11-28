@@ -271,9 +271,9 @@ public final class ComponentLibrary {
             if (instance.definitionName().equals(name)) {
                 return true;
             }
-        }
-        for (ComponentDefinition embedded : schematic.componentDefinitions().values()) {
-            if (visited.add(embedded.name())
+            ComponentDefinition embedded = schematic.componentDefinitionFor(instance);
+            String identity = embedded.name() + "@" + embedded.hash();
+            if (visited.add(identity)
                     && schematicUses(embedded.internalCircuit(), name, visited)) {
                 return true;
             }
