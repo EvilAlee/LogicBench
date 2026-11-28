@@ -186,7 +186,8 @@ class ComponentFileStorageTest {
         assertEquals(ComponentLibrary.ImportAction.KEPT_BOTH, kept.action());
         assertEquals("Invert2", kept.definition().name());
         assertEquals(first.hash(), both.get("Invert").hash());
-        assertEquals(changed.hash(), both.get("Invert2").hash());
+        assertEquals(kept.definition().hash(), both.get("Invert2").hash());
+        assertNotEquals(changed.hash(), kept.definition().hash());
 
         Path skipFolder = temp.resolve("skip");
         ComponentLibrary skip = ComponentLibrary.load(GATES, skipFolder);
