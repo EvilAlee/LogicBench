@@ -60,14 +60,16 @@ class AutoWireRouterTest {
 
     @Test
     void crossesWireOnlyPerpendicularlyAtAnInteriorNonJunctionPoint() {
-        WireSegment obstacle = new WireSegment(-200, 0, 200, 0);
+        WireSegment obstacle = new WireSegment(-40, 0, 40, 0);
         AutoWireRouter.Route route = AutoWireRouter.route(new AutoWireRouter.Request(
                 endpoint(0, -50, Facing.SOUTH, true),
                 endpoint(0, 50, Facing.SOUTH, false),
                 List.of(), List.of(), List.of(obstacle), Set.of()));
 
         assertFalse(route.usedFallback());
-        assertEquals(List.of(new WireSegment(0, -50, 0, 50)), route.segments());
+        assertEquals(List.of(new WireSegment(0, -50, 0, 50)), route.segments(),
+                "the single +6 crossing penalty should favour this short straight crossing "
+                        + "over detouring around either wire endpoint");
         assertFalse(overlapsCollinearly(route.segments().getFirst(), obstacle));
     }
 

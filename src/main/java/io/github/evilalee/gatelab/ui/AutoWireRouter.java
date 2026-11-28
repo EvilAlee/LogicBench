@@ -305,7 +305,8 @@ public final class AutoWireRouter {
                 if (current.incoming() != StepDirection.NONE && current.incoming() != direction) {
                     stepCost += BEND_COST;
                 }
-                if (nextWireOrientation != 0 && !next.equals(end)) {
+                if (nextWireOrientation != 0 && currentWireOrientation == 0
+                        && !next.equals(end)) {
                     stepCost += CROSSING_COST;
                 }
                 if (!next.equals(end)) {
