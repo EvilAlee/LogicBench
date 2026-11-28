@@ -132,7 +132,7 @@ class DisplayExporterTest {
                 GateGeometry.outputOffset(definition("input"), Facing.EAST);
         PlacedComponent input = new PlacedComponent(
                 id, "input", pinX - offset.x(), pinY - offset.y(),
-                Facing.EAST, Map.of(), id);
+                Facing.EAST, Map.of(), "");
         schematic.add(input);
         return input;
     }
