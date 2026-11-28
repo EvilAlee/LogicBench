@@ -784,6 +784,28 @@ public final class ComponentLibrary {
         chips.add(expressionChip(gateDefinitions, "74148",
                 "8-to-3 priority encoder with active-low data inputs and encoded outputs",
                 priority148, priority148Rows));
+
+        List<ChipPortSpec> mux151 = List.of(
+                in("D3", 1), in("D2", 2), in("D1", 3), in("D0", 4),
+                out("Y", 5), out("W", 6), in("G", 7), in("GND", 8),
+                in("C", 9), in("B", 10), in("A", 11), in("D7", 12),
+                in("D6", 13), in("D5", 14), in("D4", 15), in("VCC", 16));
+        List<String> muxTerms = new ArrayList<>();
+        for (int selected = 0; selected < 8; selected++) {
+            List<String> conditions = new ArrayList<>();
+            conditions.add("!G");
+            conditions.add(((selected >>> 2) & 1) == 1 ? "C" : "!C");
+            conditions.add(((selected >>> 1) & 1) == 1 ? "B" : "!B");
+            conditions.add((selected & 1) == 1 ? "A" : "!A");
+            conditions.add("D" + selected);
+            muxTerms.add("(" + String.join(" & ", conditions) + ")");
+        }
+        String mux151Y = "(" + String.join(" | ", muxTerms) + ")";
+        chips.add(expressionChip(gateDefinitions, "74151",
+                "8-to-1 multiplexer with complementary outputs and active-low strobe",
+                mux151, List.of(
+                        new ChipOutputExpression("Y", mux151Y),
+                        new ChipOutputExpression("W", "!(" + mux151Y + ")"))));
         return List.copyOf(chips);
     }
 

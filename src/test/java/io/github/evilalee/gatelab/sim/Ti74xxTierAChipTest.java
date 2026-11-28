@@ -47,6 +47,9 @@ class Ti74xxTierAChipTest {
             int enable, int selectedInput, int encoded, int gs, int eo) {
     }
 
+    private record MultiplexerRow(int selector, boolean disabled) {
+    }
+
     private static final List<BcdRow> SN7442_FUNCTION_TABLE = List.of(
             new BcdRow(0b0000, 0),
             new BcdRow(0b0001, 1),
@@ -177,6 +180,23 @@ class Ti74xxTierAChipTest {
             new PriorityEncoderRow(0, 2, 0b101, 0, 1),
             new PriorityEncoderRow(0, 1, 0b110, 0, 1),
             new PriorityEncoderRow(0, 0, 0b111, 0, 1));
+
+    /**
+     * Rows transcribed from TI SN74LS151 datasheet SDLS054, page 4:
+     * https://www.ti.com/lit/gpn/SN74LS151
+     * Dn denotes the selected data input; the test evaluates each row with
+     * two distinct data patterns to exercise both values of Dn.
+     */
+    private static final List<MultiplexerRow> SN74151_FUNCTION_TABLE = List.of(
+            new MultiplexerRow(-1, true),
+            new MultiplexerRow(0, false),
+            new MultiplexerRow(1, false),
+            new MultiplexerRow(2, false),
+            new MultiplexerRow(3, false),
+            new MultiplexerRow(4, false),
+            new MultiplexerRow(5, false),
+            new MultiplexerRow(6, false),
+            new MultiplexerRow(7, false));
 
     @Test
     void sn74138PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
@@ -390,6 +410,76 @@ class Ti74xxTierAChipTest {
     }
 
     @Test
+    void sn74151PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
+        ComponentDefinition definition = library().get("74151");
+        assertEquals("DIP16", definition.packageType());
+        Map<String, Integer> expected = Map.ofEntries(
+                Map.entry("D3", 1), Map.entry("D2", 2), Map.entry("D1", 3),
+                Map.entry("D0", 4), Map.entry("Y", 5), Map.entry("W", 6),
+                Map.entry("G", 7), Map.entry("GND", 8), Map.entry("C", 9),
+                Map.entry("B", 10), Map.entry("A", 11), Map.entry("D7", 12),
+                Map.entry("D6", 13), Map.entry("D5", 14), Map.entry("D4", 15),
+                Map.entry("VCC", 16));
+        Map<String, Integer> actual = new HashMap<>();
+        definition.ports().forEach(port -> actual.put(port.name(), port.pin()));
+        assertEquals(expected, actual);
+        assertEquals(ComponentDefinition.Direction.IN,
+                definition.ports().stream().filter(port -> port.name().equals("VCC"))
+                        .findFirst().orElseThrow().direction());
+        assertEquals(ComponentDefinition.Direction.IN,
+                definition.ports().stream().filter(port -> port.name().equals("GND"))
+                        .findFirst().orElseThrow().direction());
+    }
+
+    @Test
+    void sn74151FunctionRowsMatchFlattenedPoweredMultiplexerForBothDataLevels()
+            throws IOException {
+        Schematic schematic = multiplexerFixture();
+        SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
+        Simulator simulator = new Simulator(compiled.circuit());
+        Map<String, String> inputIds = componentIdsByLabel(schematic, "input");
+        Map<String, String> outputIds = componentIdsByLabel(schematic, "output");
+        Map<String, InputPinAccess> inputs = new HashMap<>();
+        for (String name : List.of("G", "A", "B", "C",
+                "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "VCC", "GND")) {
+            inputs.put(name, new InputPinAccess(compiled.inputs().get(inputIds.get(name))));
+        }
+        simulator.setInputValue(inputs.get("VCC").pin(), Value.ONE);
+        simulator.setInputValue(inputs.get("GND").pin(), Value.ZERO);
+
+        for (MultiplexerRow row : SN74151_FUNCTION_TABLE) {
+            for (int dataPattern : new int[]{0b1010_0101, 0b0101_1010}) {
+                for (int data = 0; data < 8; data++) {
+                    simulator.setInputValue(inputs.get("D" + data).pin(),
+                            ((dataPattern >>> data) & 1) == 1 ? Value.ONE : Value.ZERO);
+                }
+                simulator.setInputValue(inputs.get("G").pin(),
+                        row.disabled() ? Value.ONE : Value.ZERO);
+                int selector = row.selector() < 0 ? 0 : row.selector();
+                simulator.setInputValue(inputs.get("A").pin(), bit(selector, 0));
+                simulator.setInputValue(inputs.get("B").pin(), bit(selector, 1));
+                simulator.setInputValue(inputs.get("C").pin(), bit(selector, 2));
+                simulator.settle();
+
+                Value expectedY = row.disabled() ? Value.ZERO
+                        : ((dataPattern >>> row.selector()) & 1) == 1
+                                ? Value.ONE : Value.ZERO;
+                Value expectedW = expectedY == Value.ONE ? Value.ZERO : Value.ONE;
+                assertEquals(expectedY,
+                        simulator.getProbeValue(compiled.outputs().get(
+                                outputIds.get("probeY"))),
+                        "G=" + (row.disabled() ? "H" : "L")
+                                + ", CBA=" + Integer.toBinaryString(selector)
+                                + ", data=0x" + Integer.toHexString(dataPattern));
+                assertEquals(expectedW,
+                        simulator.getProbeValue(compiled.outputs().get(
+                                outputIds.get("probeW"))),
+                        "complement output for CBA=" + selector);
+            }
+        }
+    }
+
+    @Test
     void sn7442OutputIsUnknownWhenItsVccSupplyIsNotConnected() throws IOException {
         Schematic schematic = bcdFixture(false);
         SchematicCompiler.SimulationResult result =
@@ -411,6 +501,23 @@ class Ti74xxTierAChipTest {
         for (int output = 0; output < 8; output++) {
             addOutputAt(schematic, "probeY" + output, pins.get("Y" + output));
         }
+        return schematic;
+    }
+
+    private static Schematic multiplexerFixture() throws IOException {
+        ComponentDefinition definition = library().get("74151");
+        Schematic schematic = new Schematic(GATES);
+        ComponentInstance chip = schematic.addInstance(
+                definition, 350, 250, Facing.EAST);
+        Map<String, ComponentInstance.PinGeometry> pins = pins(chip, definition);
+        for (String signal : List.of("G", "A", "B", "C",
+                "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7")) {
+            addInputAt(schematic, signal, pins.get(signal), false);
+        }
+        addInputAt(schematic, "GND", pins.get("GND"), false);
+        addInputAt(schematic, "VCC", pins.get("VCC"), true);
+        addOutputAt(schematic, "probeY", pins.get("Y"));
+        addOutputAt(schematic, "probeW", pins.get("W"));
         return schematic;
     }
 
