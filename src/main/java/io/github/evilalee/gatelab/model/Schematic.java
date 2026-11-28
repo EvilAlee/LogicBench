@@ -112,10 +112,15 @@ public final class Schematic {
         // Legacy fixed sources stored their value in label. Migrate that metadata
         // into the Value attribute before treating label as the optional Name.
         if (component.typeId().equals("constant")
-                && !suppliedAttributes.containsKey("value")
-                && (label.equals("0") || label.equals("1"))) {
-            suppliedAttributes.put("value", label);
-            label = "";
+                && !suppliedAttributes.containsKey("value")) {
+            if (label.equals("0") || label.equals("1")) {
+                suppliedAttributes.put("value", label);
+                label = "";
+            } else {
+                // Persist even the default so a later Name of "0" or "1"
+                // cannot be confused with the legacy value-in-label encoding.
+                suppliedAttributes.put("value", "0");
+            }
         }
         Map<String, String> normalized = normalizeStoredAttributes(
                 component.typeId(), suppliedAttributes);
@@ -1445,7 +1450,8 @@ public final class Schematic {
                     ComponentAttributeRegistry.require(family, key);
             String value = ComponentAttributeRegistry.normalizeValue(
                     family, key, Objects.requireNonNull(entry.getValue(), "attribute value"));
-            if (!value.equals(spec.defaultValue())) {
+            if (!value.equals(spec.defaultValue())
+                    || (family.equals("constant") && key.equals("value"))) {
                 normalized.put(key, value);
             }
         }
