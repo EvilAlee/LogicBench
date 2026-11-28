@@ -303,7 +303,7 @@ public final class AutoWireRouter {
             Connectivity.Point neighbour = new Connectivity.Point(
                     point.x() + sign * direction.dx * GRID,
                     point.y() + sign * direction.dy * GRID);
-            if (!liesOnAnyWire(netWires, neighbour)) {
+            if (!liesOnAny(netWires, neighbour)) {
                 result.add(direction);
             }
         }
