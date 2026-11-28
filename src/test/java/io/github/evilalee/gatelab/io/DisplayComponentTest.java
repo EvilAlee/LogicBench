@@ -9,7 +9,7 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.WireSegment;
-import io.github. evilalee.gatelab.sim.PinStateHelper;
+import io.github.evilalee.gatelab.sim.PinStateHelper;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.model.OutputProbe;
 import org.junit.jupiter.api.Test;
@@ -123,12 +123,11 @@ class DisplayComponentTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent display = schematic.add("seg7", 500, 300, Facing.EAST);
         Connectivity.PinPosition displayA = pin(schematic, display.id(), "in0");
-        PlacedComponent source = addInputAt(schematic, "segment-a", displayA.x(), displayA.y());
+        PlacedComponent source = addInputAt(
+                schematic, "segment-a", displayA.x() - 80, displayA.y());
         Connectivity.PinPosition sourcePin = pin(schematic, source.id(), "out");
         schematic.addWire(new WireSegment(
-                sourcePin.x() - 60, sourcePin.y(), sourcePin.x(), sourcePin.y()));
-        schematic.addWire(new WireSegment(
-                sourcePin.x() - 60, sourcePin.y(), displayA.x(), displayA.y()));
+                sourcePin.x(), sourcePin.y(), displayA.x(), displayA.y()));
         schematic.setInputValue(source.id(), true);
 
         SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
