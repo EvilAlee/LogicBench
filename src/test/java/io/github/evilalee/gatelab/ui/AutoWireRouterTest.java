@@ -112,7 +112,11 @@ class AutoWireRouterTest {
                 List.of(), Set.of()));
 
         assertTrue(route.usedFallback());
-        assertEquals(3, route.segments().size());
+        assertTrue(route.segments().isEmpty(),
+                "the fallback must not terminate on one of the blocked unrelated pins");
+        assertEquals(3, AutoWireRouter.directFallback(
+                new Connectivity.Point(0, 0), new Connectivity.Point(100, 100)).size(),
+                "the historical two-bend fallback remains available for safe cases");
     }
 
     private static AutoWireRouter.Request request(

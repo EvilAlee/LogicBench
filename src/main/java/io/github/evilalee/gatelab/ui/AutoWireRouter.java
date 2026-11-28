@@ -311,7 +311,7 @@ public final class AutoWireRouter {
     private static Connectivity.Point intersection(WireSegment first, WireSegment second) {
         WireSegment horizontal = first.isHorizontal() ? first : second;
         WireSegment vertical = first.isHorizontal() ? second : first;
-        if (horizontal.isHorizontal() || !vertical.isHorizontal()) {
+        if (!horizontal.isHorizontal() || vertical.isHorizontal()) {
             return null;
         }
         int x = vertical.x1();
