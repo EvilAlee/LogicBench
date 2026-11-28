@@ -138,8 +138,8 @@ public final class AutoWireRouter {
             return new Route(List.of(), false);
         }
 
-        for (int margin : new int[]{INITIAL_MARGIN_CELLS, MAX_MARGIN_CELLS}) {
-            for (Attempt attempt : attempts(request)) {
+        for (Attempt attempt : attempts(request)) {
+            for (int margin : new int[]{INITIAL_MARGIN_CELLS, MAX_MARGIN_CELLS}) {
                 List<Cell> path = search(request, start, end, margin,
                         attempt.first(), attempt.last());
                 if (path != null && path.size() >= 2) {
@@ -286,10 +286,10 @@ public final class AutoWireRouter {
 
                 int nextWireOrientation = wireOrientationAt(request, next);
                 boolean nextIsEndpoint = wireEndpoints.contains(next) || junctions.contains(next);
+                if (nextIsEndpoint || junctions.contains(next)) {
+                    continue;
+                }
                 if (nextWireOrientation != 0) {
-                    if (nextIsEndpoint && !next.equals(end)) {
-                        continue;
-                    }
                     if (!perpendicularToWire(direction, nextWireOrientation)) {
                         continue;
                     }
@@ -336,6 +336,11 @@ public final class AutoWireRouter {
             int top = Math.floorDiv(bounds.y(), GRID);
             int right = Math.floorDiv(bounds.x() + bounds.width(), GRID);
             int bottom = Math.floorDiv(bounds.y() + bounds.height(), GRID);
+            boolean insideBody = cell.x() >= left && cell.x() <= right
+                    && cell.y() >= top && cell.y() <= bottom;
+            if (insideBody) {
+                return true;
+            }
             boolean insideClearance = cell.x() >= left - CLEARANCE_CELLS
                     && cell.x() <= right + CLEARANCE_CELLS
                     && cell.y() >= top - CLEARANCE_CELLS

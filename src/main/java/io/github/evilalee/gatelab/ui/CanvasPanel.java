@@ -1639,10 +1639,12 @@ public final class CanvasPanel extends JPanel {
         AutoWireRouter.Endpoint targetEndpoint = endpointForPin(targetPin);
         Connectivity.Result topology = Connectivity.analyze(
                 schematic.pinPositions(), schematic.wires());
+        Connectivity.PinPosition clickedSourcePin = sourcePin;
+        Connectivity.PinPosition clickedTargetPin = targetPin;
         Connectivity.Net sourceNet = topology.nets().stream()
-                .filter(net -> net.pins().contains(sourcePin)).findFirst().orElse(null);
+                .filter(net -> net.pins().contains(clickedSourcePin)).findFirst().orElse(null);
         Connectivity.Net targetNet = topology.nets().stream()
-                .filter(net -> net.pins().contains(targetPin)).findFirst().orElse(null);
+                .filter(net -> net.pins().contains(clickedTargetPin)).findFirst().orElse(null);
         if (sourceNet == null || targetNet == null) {
             statusMessageListener.accept("Could not identify one of the selected pin nets");
             return;
@@ -1904,6 +1906,9 @@ public final class CanvasPanel extends JPanel {
             return;
         }
         if (gesture == Gesture.PENDING_WIRE_START) {
+            if (gestureStartPin != null) {
+                beginHistoryGesture();
+            }
             gesture = Gesture.DRAW_WIRE;
         }
 
