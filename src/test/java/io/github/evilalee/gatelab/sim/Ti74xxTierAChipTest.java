@@ -51,7 +51,7 @@ class Ti74xxTierAChipTest {
     }
 
     private record DualMultiplexerRow(
-            int b, int a, int selectedData, boolean disabled) {
+            int b, int a, int selectedInput, int selectedValue, boolean disabled) {
     }
 
     private static final List<BcdRow> SN7442_FUNCTION_TABLE = List.of(
@@ -208,15 +208,15 @@ class Ti74xxTierAChipTest {
      * The same function table applies independently to each mux section.
      */
     private static final List<DualMultiplexerRow> SN74153_FUNCTION_TABLE = List.of(
-            new DualMultiplexerRow(-1, -1, -1, true),
-            new DualMultiplexerRow(0, 0, 0, false),
-            new DualMultiplexerRow(0, 0, 1, false),
-            new DualMultiplexerRow(0, 1, 0, false),
-            new DualMultiplexerRow(0, 1, 1, false),
-            new DualMultiplexerRow(1, 0, 0, false),
-            new DualMultiplexerRow(1, 0, 1, false),
-            new DualMultiplexerRow(1, 1, 0, false),
-            new DualMultiplexerRow(1, 1, 1, false));
+            new DualMultiplexerRow(-1, -1, -1, -1, true),
+            new DualMultiplexerRow(0, 0, 0, 0, false),
+            new DualMultiplexerRow(0, 0, 0, 1, false),
+            new DualMultiplexerRow(0, 1, 1, 0, false),
+            new DualMultiplexerRow(0, 1, 1, 1, false),
+            new DualMultiplexerRow(1, 0, 2, 0, false),
+            new DualMultiplexerRow(1, 0, 2, 1, false),
+            new DualMultiplexerRow(1, 1, 3, 0, false),
+            new DualMultiplexerRow(1, 1, 3, 1, false));
 
     @Test
     void sn74138PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
@@ -538,47 +538,43 @@ class Ti74xxTierAChipTest {
         simulator.setInputValue(inputs.get("VCC").pin(), Value.ONE);
         simulator.setInputValue(inputs.get("GND").pin(), Value.ZERO);
 
+        int rowIndex = 0;
         for (DualMultiplexerRow row : SN74153_FUNCTION_TABLE) {
-            for (int dataPattern : new int[]{0b1001, 0b0110}) {
-                for (int data = 0; data < 4; data++) {
-                    boolean firstHigh = ((dataPattern >>> data) & 1) == 1;
-                    boolean secondHigh = !firstHigh;
-                    simulator.setInputValue(inputs.get("1C" + data).pin(),
-                            firstHigh ? Value.ONE : Value.ZERO);
-                    simulator.setInputValue(inputs.get("2C" + data).pin(),
-                            secondHigh ? Value.ONE : Value.ZERO);
-                }
-                // Exercise the independently controlled sections in opposite states.
-                simulator.setInputValue(inputs.get("1G").pin(),
-                        row.disabled() ? Value.ONE : Value.ZERO);
-                simulator.setInputValue(inputs.get("2G").pin(),
-                        row.disabled() ? Value.ZERO : Value.ONE);
-                int selectorA = row.a() < 0 ? 0 : row.a();
-                int selectorB = row.b() < 0 ? 0 : row.b();
-                simulator.setInputValue(inputs.get("A").pin(), bit(selectorA, 0));
-                simulator.setInputValue(inputs.get("B").pin(), bit(selectorB, 0));
-                simulator.settle();
+            int selectorA = row.a() < 0 ? 0 : row.a();
+            int selectorB = row.b() < 0 ? 0 : row.b();
+            simulator.setInputValue(inputs.get("A").pin(), bit(selectorA, 0));
+            simulator.setInputValue(inputs.get("B").pin(), bit(selectorB, 0));
+            simulator.setInputValue(inputs.get("1G").pin(),
+                    row.disabled() ? Value.ONE : Value.ZERO);
+            simulator.setInputValue(inputs.get("2G").pin(),
+                    row.disabled() ? Value.ZERO : Value.ONE);
 
-                int selectedData = row.selectedData() < 0 ? 0 : row.selectedData();
-                boolean firstDataHigh = ((dataPattern >>> selectedData) & 1) == 1;
-                Value firstExpected = !row.disabled() && firstDataHigh
-                        ? Value.ONE : Value.ZERO;
-                // The second strobe is opposite and its data pins carry the
-                // complement of the first section's data pattern.
-                boolean secondDataHigh = !firstDataHigh;
-                Value secondExpected = row.disabled() && secondDataHigh
-                        ? Value.ONE : Value.ZERO;
-                assertEquals(firstExpected,
-                        simulator.getProbeValue(compiled.outputs().get(
-                                outputIds.get("probe1Y"))),
-                        "section 1, B=" + row.b() + ", A=" + row.a()
-                                + ", data=0x" + Integer.toHexString(dataPattern));
-                assertEquals(secondExpected,
-                        simulator.getProbeValue(compiled.outputs().get(
-                                outputIds.get("probe2Y"))),
-                        "section 2, B=" + row.b() + ", A=" + row.a()
-                                + ", data=0x" + Integer.toHexString(dataPattern));
+            for (int data = 0; data < 4; data++) {
+                int firstData = data == row.selectedInput()
+                        ? row.selectedValue() : ((rowIndex + data) & 1);
+                int secondData = 1 - firstData;
+                simulator.setInputValue(inputs.get("1C" + data).pin(),
+                        firstData == 1 ? Value.ONE : Value.ZERO);
+                simulator.setInputValue(inputs.get("2C" + data).pin(),
+                        secondData == 1 ? Value.ONE : Value.ZERO);
             }
+            simulator.settle();
+
+            Value expectedFirst = !row.disabled() && row.selectedValue() == 1
+                    ? Value.ONE : Value.ZERO;
+            Value expectedSecond = row.disabled() && row.selectedValue() == 0
+                    ? Value.ONE : Value.ZERO;
+            assertEquals(expectedFirst,
+                    simulator.getProbeValue(compiled.outputs().get(
+                            outputIds.get("probe1Y"))),
+                    "section 1, B=" + row.b() + ", A=" + row.a()
+                            + ", C" + row.selectedInput() + "=" + row.selectedValue());
+            assertEquals(expectedSecond,
+                    simulator.getProbeValue(compiled.outputs().get(
+                            outputIds.get("probe2Y"))),
+                    "section 2, B=" + row.b() + ", A=" + row.a()
+                            + ", C" + row.selectedInput() + "=" + (1 - row.selectedValue()));
+            rowIndex++;
         }
     }
 
