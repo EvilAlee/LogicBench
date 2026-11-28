@@ -47,7 +47,7 @@ class GateLibraryTest {
     }
 
     @Test
-    void constantSourceUsesTheInputFootprintWithItsOwnInternalFamily() {
+    void constantSourceUsesItsLabelledTieOffFootprint() {
         GateDef constant = GateLibrary.load().get("constant");
         assertEquals("constant", constant.family());
         assertEquals(40, constant.width());
