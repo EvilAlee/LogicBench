@@ -83,7 +83,18 @@ class NetlistTest {
                 () -> new Netlist(List.of("A"),
                         List.of(new Netlist.Output("F", "g1")),
                         List.of(new Netlist.Gate("g1", GateOperator.XOR, List.of("A")))),
-                "requires 2 inputs, got 1");
+                "requires 2..5 inputs, got 1");
+        assertInvalid(
+                () -> new Netlist(List.of(),
+                        List.of(new Netlist.Output("F", "g1")),
+                        List.of(new Netlist.Gate("g1", GateOperator.AND,
+                                List.of("A", "B", "C", "D", "E", "F")))),
+                "requires 2..5 inputs, got 6");
+        Netlist fiveInput = new Netlist(List.of("A", "B", "C", "D", "E"),
+                List.of(new Netlist.Output("F", "g1")),
+                List.of(new Netlist.Gate("g1", GateOperator.XNOR,
+                        List.of("A", "B", "C", "D", "E"))));
+        assertEquals(5, fiveInput.gates().getFirst().inputs().size());
     }
 
     @Test
