@@ -150,7 +150,9 @@ class ExpressionCompilerTest {
                     .filter(candidate -> candidate.id().equals(entry.getValue()))
                     .findFirst().orElseThrow();
             assertEquals("constant", component.typeId());
-            assertEquals(entry.getKey(), component.label());
+            assertEquals(entry.getKey(), layout.schematic().attributeValue(
+                    component.id(), "value"));
+            assertEquals("", component.label());
             assertThrows(IllegalArgumentException.class,
                     () -> layout.schematic().setInputValue(component.id(), true));
         }
