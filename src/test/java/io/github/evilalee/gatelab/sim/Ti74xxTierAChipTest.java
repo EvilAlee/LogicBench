@@ -43,6 +43,10 @@ class Ti74xxTierAChipTest {
             int enable, int b, int a, int lowOutput) {
     }
 
+    private record PriorityEncoderRow(
+            int enable, int selectedInput, int encoded, int gs, int eo) {
+    }
+
     private static final List<BcdRow> SN7442_FUNCTION_TABLE = List.of(
             new BcdRow(0b0000, 0),
             new BcdRow(0b0001, 1),
@@ -155,6 +159,24 @@ class Ti74xxTierAChipTest {
             new DualDecoderRow(0, 0, 1, 1),
             new DualDecoderRow(0, 1, 0, 2),
             new DualDecoderRow(0, 1, 1, 3));
+
+    /**
+     * Rows transcribed from TI SN74LS148 datasheet SDLS053B, page 3:
+     * https://www.ti.com/lit/gpn/SN74LS148
+     * Inputs are 0..7 in ascending order. -2 denotes the disabled EI=H row;
+     * -1 denotes enabled with no active-low data input.
+     */
+    private static final List<PriorityEncoderRow> SN74148_FUNCTION_TABLE = List.of(
+            new PriorityEncoderRow(1, -2, 0b111, 1, 1),
+            new PriorityEncoderRow(0, -1, 0b111, 1, 0),
+            new PriorityEncoderRow(0, 7, 0b000, 0, 1),
+            new PriorityEncoderRow(0, 6, 0b001, 0, 1),
+            new PriorityEncoderRow(0, 5, 0b010, 0, 1),
+            new PriorityEncoderRow(0, 4, 0b011, 0, 1),
+            new PriorityEncoderRow(0, 3, 0b100, 0, 1),
+            new PriorityEncoderRow(0, 2, 0b101, 0, 1),
+            new PriorityEncoderRow(0, 1, 0b110, 0, 1),
+            new PriorityEncoderRow(0, 0, 0b111, 0, 1));
 
     @Test
     void sn74138PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
@@ -296,6 +318,78 @@ class Ti74xxTierAChipTest {
     }
 
     @Test
+    void sn74148PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
+        ComponentDefinition definition = library().get("74148");
+        assertEquals("DIP16", definition.packageType());
+        Map<String, Integer> expected = Map.ofEntries(
+                Map.entry("4", 1), Map.entry("5", 2), Map.entry("6", 3),
+                Map.entry("7", 4), Map.entry("EI", 5), Map.entry("A2", 6),
+                Map.entry("A1", 7), Map.entry("GND", 8), Map.entry("A0", 9),
+                Map.entry("0", 10), Map.entry("1", 11), Map.entry("2", 12),
+                Map.entry("3", 13), Map.entry("GS", 14), Map.entry("EO", 15),
+                Map.entry("VCC", 16));
+        Map<String, Integer> actual = new HashMap<>();
+        definition.ports().forEach(port -> actual.put(port.name(), port.pin()));
+        assertEquals(expected, actual);
+        assertEquals(ComponentDefinition.Direction.IN,
+                definition.ports().stream().filter(port -> port.name().equals("VCC"))
+                        .findFirst().orElseThrow().direction());
+        assertEquals(ComponentDefinition.Direction.IN,
+                definition.ports().stream().filter(port -> port.name().equals("GND"))
+                        .findFirst().orElseThrow().direction());
+    }
+
+    @Test
+    void sn74148DatasheetRowsMatchTheFlattenedPoweredPriorityEncoder() throws IOException {
+        Schematic schematic = priorityEncoderFixture();
+        SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
+        Simulator simulator = new Simulator(compiled.circuit());
+        Map<String, String> inputIds = componentIdsByLabel(schematic, "input");
+        Map<String, String> outputIds = componentIdsByLabel(schematic, "output");
+        Map<String, InputPinAccess> inputs = new HashMap<>();
+        for (String name : List.of("EI", "0", "1", "2", "3", "4", "5", "6", "7",
+                "VCC", "GND")) {
+            inputs.put(name, new InputPinAccess(compiled.inputs().get(inputIds.get(name))));
+        }
+        simulator.setInputValue(inputs.get("VCC").pin(), Value.ONE);
+        simulator.setInputValue(inputs.get("GND").pin(), Value.ZERO);
+
+        for (PriorityEncoderRow row : SN74148_FUNCTION_TABLE) {
+            simulator.setInputValue(inputs.get("EI").pin(),
+                    row.enable() == 1 ? Value.ONE : Value.ZERO);
+            for (int input = 0; input < 8; input++) {
+                boolean high = row.selectedInput() == -2
+                        ? false : row.selectedInput() != input;
+                simulator.setInputValue(inputs.get(Integer.toString(input)).pin(),
+                        high ? Value.ONE : Value.ZERO);
+            }
+            simulator.settle();
+
+            for (int bit = 2; bit >= 0; bit--) {
+                String output = "A" + bit;
+                Value expected = ((row.encoded() >>> bit) & 1) == 1
+                        ? Value.ONE : Value.ZERO;
+                String probeId = outputIds.get("probe" + output);
+                assertNotNull(probeId, "missing output probe " + output);
+                assertEquals(expected,
+                        simulator.getProbeValue(compiled.outputs().get(probeId)),
+                        "EI=" + row.enable() + ", selected=" + row.selectedInput()
+                                + ", " + output);
+            }
+            for (String control : List.of("GS", "EO")) {
+                int expectedBit = control.equals("GS") ? row.gs() : row.eo();
+                Value expected = expectedBit == 1 ? Value.ONE : Value.ZERO;
+                String probeId = outputIds.get("probe" + control);
+                assertNotNull(probeId, "missing output probe " + control);
+                assertEquals(expected,
+                        simulator.getProbeValue(compiled.outputs().get(probeId)),
+                        "EI=" + row.enable() + ", selected=" + row.selectedInput()
+                                + ", " + control);
+            }
+        }
+    }
+
+    @Test
     void sn7442OutputIsUnknownWhenItsVccSupplyIsNotConnected() throws IOException {
         Schematic schematic = bcdFixture(false);
         SchematicCompiler.SimulationResult result =
@@ -316,6 +410,23 @@ class Ti74xxTierAChipTest {
         addInputAt(schematic, "VCC", pins.get("VCC"), true);
         for (int output = 0; output < 8; output++) {
             addOutputAt(schematic, "probeY" + output, pins.get("Y" + output));
+        }
+        return schematic;
+    }
+
+    private static Schematic priorityEncoderFixture() throws IOException {
+        ComponentDefinition definition = library().get("74148");
+        Schematic schematic = new Schematic(GATES);
+        ComponentInstance chip = schematic.addInstance(
+                definition, 300, 200, Facing.EAST);
+        Map<String, ComponentInstance.PinGeometry> pins = pins(chip, definition);
+        for (String name : List.of("EI", "0", "1", "2", "3", "4", "5", "6", "7")) {
+            addInputAt(schematic, name, pins.get(name), false);
+        }
+        addInputAt(schematic, "GND", pins.get("GND"), false);
+        addInputAt(schematic, "VCC", pins.get("VCC"), true);
+        for (String name : List.of("A2", "A1", "A0", "GS", "EO")) {
+            addOutputAt(schematic, "probe" + name, pins.get(name));
         }
         return schematic;
     }
