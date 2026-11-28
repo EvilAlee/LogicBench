@@ -5,12 +5,12 @@ import java.util.Objects;
 
 /** Supported combinational Boolean operators with three-valued semantics. */
 public enum GateType {
-    AND(2, 8),
-    OR(2, 8),
-    NAND(2, 8),
-    NOR(2, 8),
-    XOR(2, 8),
-    XNOR(2, 8),
+    AND(2, 5),
+    OR(2, 5),
+    NAND(2, 5),
+    NOR(2, 5),
+    XOR(2, 5),
+    XNOR(2, 5),
     NOT(1, 1),
     BUFFER(1, 1);
 

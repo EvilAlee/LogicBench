@@ -116,9 +116,10 @@ public record Netlist(
                 throw new IllegalArgumentException(
                         "duplicate signal name or gate id: " + gate.id());
             }
-            if (gate.inputs().size() != gate.type().inputCount()) {
+            if (!gate.type().acceptsInputCount(gate.inputs().size())) {
                 throw new IllegalArgumentException("gate " + gate.id() + " of type "
-                        + gate.type() + " requires " + gate.type().inputCount()
+                        + gate.type() + " requires " + gate.type().minimumInputCount()
+                        + ".." + gate.type().maximumInputCount()
                         + " inputs, got " + gate.inputs().size());
             }
             gatesById.put(gate.id(), gate);

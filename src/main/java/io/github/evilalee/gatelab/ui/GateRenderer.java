@@ -2,6 +2,7 @@ package io.github.evilalee.gatelab.ui;
 
 import com.github.weisj.jsvg.SVGDocument;
 import com.github.weisj.jsvg.parser.SVGLoader;
+import com.github.weisj.jsvg.view.ViewBox;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
@@ -65,8 +66,11 @@ public final class GateRenderer {
             g2.translate(worldX, worldY);
             g2.rotate(facing.rotationRadians());
             GateGeometry.Offset origin = definition.origin();
+            ViewBox viewBox = document.viewBox();
+            g2.scale(definition.width() / viewBox.width,
+                    definition.height() / viewBox.height);
             g2.translate(-origin.x(), -origin.y());
-            document.render(null, g2, document.viewBox());
+            document.render(null, g2, viewBox);
         } finally {
             g2.dispose();
         }

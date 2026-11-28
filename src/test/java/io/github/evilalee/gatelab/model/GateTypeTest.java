@@ -61,7 +61,7 @@ class GateTypeTest {
 
     @Test
     void variableInputGatesSupportThreeFourAndEightInputs() {
-        for (int count : new int[]{3, 4, 8}) {
+        for (int count : new int[]{3, 4, 5}) {
             Value[] allOnes = new Value[count];
             Arrays.fill(allOnes, Value.ONE);
             assertEquals(Value.ONE, GateType.AND.evaluate(allOnes));
@@ -89,10 +89,28 @@ class GateTypeTest {
     }
 
     @Test
+    void fiveInputUnknownAndControllingValuesFollowThreeValuedRules() {
+        assertEquals(Value.ZERO,
+                GateType.AND.evaluate(Value.ZERO, Value.X, Value.ONE, Value.ONE, Value.ONE));
+        assertEquals(Value.ONE,
+                GateType.OR.evaluate(Value.ONE, Value.X, Value.ZERO, Value.ZERO, Value.ZERO));
+        assertEquals(Value.ONE,
+                GateType.NAND.evaluate(Value.ZERO, Value.X, Value.ONE, Value.ONE, Value.ONE));
+        assertEquals(Value.ZERO,
+                GateType.NOR.evaluate(Value.ONE, Value.X, Value.ZERO, Value.ZERO, Value.ZERO));
+        assertEquals(Value.X,
+                GateType.XOR.evaluate(Value.ONE, Value.ZERO, Value.X, Value.ONE, Value.ZERO));
+        assertEquals(Value.X,
+                GateType.XNOR.evaluate(Value.ONE, Value.ZERO, Value.X, Value.ONE, Value.ZERO));
+    }
+
+    @Test
     void invalidInputCountsAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> new Gate("bad", GateType.AND, 1));
         assertThrows(IllegalArgumentException.class, () -> new Gate("bad", GateType.NOT, 2));
         assertThrows(IllegalArgumentException.class, () -> GateType.XOR.evaluate(Value.ONE));
+        assertThrows(IllegalArgumentException.class, () -> GateType.AND.evaluate(
+                Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE, Value.ONE));
         assertThrows(IllegalArgumentException.class, () -> GateType.BUFFER.evaluate(Value.ZERO, Value.ONE));
     }
 }

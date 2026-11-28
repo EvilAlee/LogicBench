@@ -404,7 +404,9 @@ public final class Main {
                 !component.typeId().equals("input")
                         && !component.typeId().equals("output")
                         && !component.typeId().equals("clock")
-                        && !component.typeId().equals("constant"));
+                        && !component.typeId().equals("constant")
+                        && !component.typeId().equals("vcc")
+                        && !component.typeId().equals("gnd"));
         boolean hasClock = schematic.components().stream()
                 .anyMatch(component -> component.typeId().equals("clock"));
         return hasGate && (!hasClock || FeedbackCircuitExtractor.hasFeedback(schematic));
@@ -881,9 +883,9 @@ public final class Main {
         DefaultMutableTreeNode myComponents = new DefaultMutableTreeNode("My components");
 
         for (String family : GateLibrary.load().families()) {
-            if (family.equals("constant")) continue;
             ComponentTreeItem item = new ComponentTreeItem(family, treeLabel(family));
-            if (family.equals("input") || family.equals("output") || family.equals("clock")) {
+            if (family.equals("input") || family.equals("output") || family.equals("clock")
+                    || family.equals("constant") || family.equals("vcc") || family.equals("gnd")) {
                 pins.add(new DefaultMutableTreeNode(item));
             } else {
                 gates.add(new DefaultMutableTreeNode(item));
@@ -1013,6 +1015,9 @@ public final class Main {
             case "input" -> "Input";
             case "output" -> "Output";
             case "clock" -> "Clock";
+            case "constant" -> "Constant";
+            case "vcc" -> "VCC";
+            case "gnd" -> "GND";
             default -> id;
         };
     }

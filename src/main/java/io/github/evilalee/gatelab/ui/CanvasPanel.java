@@ -976,7 +976,8 @@ public final class CanvasPanel extends JPanel {
     }
 
     private static boolean isNameEditableType(String typeId) {
-        return typeId.equals("input") || typeId.equals("output") || typeId.equals("clock");
+        return typeId.equals("input") || typeId.equals("output")
+                || typeId.equals("clock") || typeId.equals("constant");
     }
 
     private void notifyAttributeStateChanged() {
@@ -2520,11 +2521,13 @@ public final class CanvasPanel extends JPanel {
                     return;
                 }
             } else {
-                double labelX = component.typeId().equals("input")
+                boolean labelOnLeft = component.typeId().equals("input")
+                        || component.typeId().equals("constant");
+                double labelX = labelOnLeft
                         ? originX + bounds.x() : originX + bounds.x() + bounds.width();
                 double labelY = originY + bounds.y() + bounds.height() / 2.0;
                 Point2D.Double screen = transform.worldToScreen(labelX, labelY);
-                x = (float) (component.typeId().equals("input")
+                x = (float) (labelOnLeft
                         ? screen.x - textWidth - 6.0 : screen.x + 6.0);
                 baseline = (float) (screen.y
                         + (metrics.getAscent() - metrics.getDescent()) / 2.0);
@@ -2632,7 +2635,7 @@ public final class CanvasPanel extends JPanel {
         return switch (component.typeId()) {
             case "input", "clock" ->
                     simulationResult.inputValues().getOrDefault(component.id(), Value.ZERO);
-            case "constant" -> component.label().equals("1") ? Value.ONE : Value.ZERO;
+            case "constant" -> component.fixedSourceValue();
             case "output" -> simulationResult.outputValues().getOrDefault(component.id(), Value.X);
             default -> null;
         };

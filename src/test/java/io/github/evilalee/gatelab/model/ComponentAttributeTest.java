@@ -57,6 +57,21 @@ class ComponentAttributeTest {
     }
 
     @Test
+    void shippedCatalogueExposesInputsTwoThroughFiveForAllVariableGateFamilies() {
+        Schematic schematic = new Schematic(GateLibrary.load().all());
+        for (String family : List.of("and", "or", "nand", "nor", "xor", "xnor")) {
+            assertEquals(List.of("2", "3", "4", "5"),
+                    schematic.attributeOptions(family, "inputs"), family);
+        }
+        assertEquals("Inputs", ComponentAttributeRegistry.forFamily("and").stream()
+                .filter(spec -> spec.key().equals("inputs"))
+                .map(ComponentAttributeRegistry.AttributeSpec::label)
+                .findFirst().orElseThrow());
+        assertThrows(IllegalArgumentException.class,
+                () -> schematic.attributeValue("not", "inputs"));
+    }
+
+    @Test
     void unavailableSizeAndInputCombinationIsRejectedWithoutMutation() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent gate = schematic.add("and", 100, 100, Facing.EAST);

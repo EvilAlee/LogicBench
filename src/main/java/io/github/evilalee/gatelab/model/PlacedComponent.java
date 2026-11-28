@@ -45,6 +45,27 @@ public record PlacedComponent(
         // Labels are presentation metadata; gates may carry optional user names too.
     }
 
+    /** True for non-pokeable sources that always drive a fixed logic level. */
+    public boolean isFixedSource() {
+        return typeId.equals("constant") || typeId.equals("vcc") || typeId.equals("gnd");
+    }
+
+    /** Logic value driven by a fixed source; ordinary inputs and clocks are not fixed. */
+    public Value fixedSourceValue() {
+        return switch (typeId) {
+            case "vcc" -> Value.ONE;
+            case "gnd" -> Value.ZERO;
+            case "constant" -> switch (attributes.getOrDefault("value", "0")) {
+                case "0" -> Value.ZERO;
+                case "1" -> Value.ONE;
+                default -> throw new IllegalArgumentException(
+                        "constant source " + id + " must have Value 0 or 1");
+            };
+            default -> throw new IllegalStateException(
+                    "component is not a fixed source: " + typeId);
+        };
+    }
+
     private static String requireText(String value, String name) {
         Objects.requireNonNull(value, name);
         String trimmed = value.trim();
