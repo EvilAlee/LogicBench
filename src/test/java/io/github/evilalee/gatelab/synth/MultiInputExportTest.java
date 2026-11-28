@@ -60,6 +60,15 @@ class MultiInputExportTest {
                     actual.rows().get(row).outputValues(), "truth-table row " + row);
         }
 
+        Schematic laidOut = new io.github.evilalee.gatelab.synth.layout.SchematicLayout(
+                DEFINITIONS).layout(rebuilt.netlist()).schematic();
+        PlacedComponent laidOutNand = laidOut.components().stream()
+                .filter(component -> component.typeId().equals("nand"))
+                .findFirst().orElseThrow();
+        assertEquals(5, laidOut.definitionFor(laidOutNand).inputCount());
+        assertEquals(5, SchematicNetlistExtractor.extract(laidOut)
+                .netlist().gates().getFirst().inputs().size());
+
         String vhdl = VhdlExporter.export(schematic, "five-input-nand.lbc").text();
         assertTrue(vhdl.contains("(not ("), vhdl);
         assertTrue(vhdl.contains(" and "), vhdl);
