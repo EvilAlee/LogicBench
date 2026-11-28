@@ -490,6 +490,19 @@ public final class Schematic {
 
         GateDef previousDefinition = definitionFor(current);
         GateDef nextDefinition = definitionFor(replacement);
+        if (key.equals("inputs") && previousDefinition.output() != null
+                && nextDefinition.output() != null) {
+            // Catalogue variants keep the existing input-row coordinates stable.
+            // Move the output origin by the SVG centre delta so in0..inN retain
+            // their world positions while the body grows below its original top edge.
+            int outputShift = nextDefinition.output().y() - previousDefinition.output().y();
+            if (outputShift != 0) {
+                replacement = new PlacedComponent(
+                        replacement.id(), replacement.typeId(), replacement.x(),
+                        Math.addExact(replacement.y(), outputShift),
+                        replacement.facing(), replacement.attributes(), replacement.label());
+            }
+        }
         Set<PinKey> deletedPins = new HashSet<>();
         for (int index = nextDefinition.inputs().size();
                 index < previousDefinition.inputs().size(); index++) {
