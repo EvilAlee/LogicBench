@@ -2,7 +2,7 @@ package io.github.evilalee.gatelab.ai;
 
 /** Single source of truth for AI circuit response and user-check limits. */
 public final class AiCircuitLimits {
-    public static final int MAX_INPUTS = 10;
+    public static final int MAX_INPUTS = 16;
     public static final int MAX_OUTPUTS = 16;
     public static final int MAX_GATES = 400;
     public static final int MAX_SIGNALS = 160;

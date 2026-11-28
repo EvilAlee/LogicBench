@@ -9,11 +9,15 @@ import java.util.Objects;
 public record TruthTable(
         List<String> inputNames,
         List<String> outputNames,
-        List<Row> rows) {
+        List<Row> rows,
+        int totalRowCount) {
     public TruthTable {
         inputNames = List.copyOf(Objects.requireNonNull(inputNames, "inputNames"));
         outputNames = List.copyOf(Objects.requireNonNull(outputNames, "outputNames"));
         rows = List.copyOf(Objects.requireNonNull(rows, "rows"));
+        if (totalRowCount < rows.size() || totalRowCount < 0) {
+            throw new IllegalArgumentException("totalRowCount must cover every displayed row");
+        }
         for (Row row : rows) {
             if (row.inputBits().length() != inputNames.size()) {
                 throw new IllegalArgumentException(
@@ -24,6 +28,11 @@ public record TruthTable(
                         "truth-table row output width does not match its output names");
             }
         }
+    }
+
+    /** Compatibility constructor for complete tables and legacy callers. */
+    public TruthTable(List<String> inputNames, List<String> outputNames, List<Row> rows) {
+        this(inputNames, outputNames, rows, rows.size());
     }
 
     public record Row(

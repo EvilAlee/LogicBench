@@ -155,12 +155,20 @@ can also use combinational library boxes when **Use library components** is
 enabled. Its request-scoped catalog exposes ordered ports and component
 descriptions. When a request explicitly names a library component, AI generation
 requires boxed instances and does not substitute a gate-level template.
+The combinational AI expressions/template path supports up to 16 declared primary
+inputs, 16 outputs and 400 flattened gates. For 11..16 inputs, a headless bit-parallel
+evaluator processes every input row after SchematicCompiler flattens the schematic,
+including nested combinational boxes and fixed constant sources. The packed result
+is cross-checked against the real engine on a deterministic sample, while executable
+specs and user-supplied expected rows are checked across all assignments. This
+combinational limit does not change the sequential AI path.
 Stateful natural-language requests use a separate sequential response schema and
 verification service. It permits DFF and DLATCH boxes (and combinational boxes such
 as FA), requires a single named Clock and a reset-to-known-state sequence, rejects
 raw combinational feedback as well as TFF/JKFF, and verifies the returned steps
-through SequenceRunner after SchematicCompiler flattening. The combinational
-expressions/template schema and validation path remain separate and unchanged.
+through SequenceRunner after SchematicCompiler flattening. Its non-clock input
+limit remains 8. The combinational expressions/template schema and validation
+path remain separate from the sequential schema.
 Ordinary typed-expression calls retain their separate instance-aware compiler
 behavior described above.
 

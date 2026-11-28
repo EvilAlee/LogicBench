@@ -361,7 +361,7 @@ class AiCircuitServiceTest {
     @Test
     void invalidTemplateRangeProducesNamedRetryFeedbackThenVerifies() throws Exception {
         ScriptedProvider provider = new ScriptedProvider(
-                templateResponse("ripple_adder", Map.of("n", "5", "carryIn", "no")),
+                templateResponse("ripple_adder", Map.of("n", "8", "carryIn", "no")),
                 templateResponse("ripple_adder", Map.of("n", "2", "carryIn", "no")));
 
         AiCircuitService.Result result = service(provider).generate(
@@ -373,7 +373,7 @@ class AiCircuitServiceTest {
         String retry = provider.conversations.get(1).stream()
                 .map(Turn::text).reduce("", (left, right) -> left + "\n" + right);
         assertTrue(retry.contains("parameter 'n' for ripple_adder"), retry);
-        assertTrue(retry.contains("got 5"), retry);
+        assertTrue(retry.contains("got 8"), retry);
     }
 
     @Test
@@ -891,9 +891,10 @@ class AiCircuitServiceTest {
 
     @Test
     void inputAndOutputSchemaLimitsAreRejected() throws Exception {
-        List<String> elevenInputs = List.of(
-                "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K");
-        String tooManyInputs = answer(elevenInputs,
+        List<String> seventeenInputs = List.of(
+                "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K",
+                "L", "M", "N", "O", "P", "Q");
+        String tooManyInputs = answer(seventeenInputs,
                 List.of(new Output("Fout", "A&B&C&D&E&F&G&H&I&J&K")), "");
         ScriptedProvider inputProvider = new ScriptedProvider(tooManyInputs);
         AiCircuitService.Result inputResult = service(inputProvider).generate("Please build a circuit.");
@@ -953,14 +954,14 @@ class AiCircuitServiceTest {
 
     @Test
     void parsableExpressionBeyondCompilerInputLimitStillSkipsTheProvider() throws Exception {
-        String description = "Result = A & B & C & D & E & F & G & H & I & J & K";
+        String description = "Result = A & B & C & D & E & F & G & H & I & J & K & L & M & N & O & P & Q";
         ScriptedProvider provider = new ScriptedProvider(andAnswer("0001"));
         AiCircuitService.Result result = service(provider).generate(description);
 
         assertEquals(AiCircuitService.Status.UNVERIFIED, result.status());
         assertEquals(0, result.attemptCount());
         assertEquals(0, provider.calls);
-        assertTrue(result.attemptLog().getFirst().contains("exceeds AI circuit limits"));
+        assertTrue(result.attemptLog().getFirst().contains("17 inputs; maximum is 16"));
     }
 
     @Test

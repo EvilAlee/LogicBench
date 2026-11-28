@@ -11,12 +11,14 @@ import io.github.evilalee.gatelab.model.InputPin;
 import io.github.evilalee.gatelab.model.OutputProbe;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.BitParallelEvaluator;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.sim.Simulator;
 import io.github.evilalee.gatelab.synth.ComponentExpressionCompiler;
 import io.github.evilalee.gatelab.synth.Expression;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.ExpressionParser;
+import io.github.evilalee.gatelab.synth.ExpressionEvaluator;
 import io.github.evilalee.gatelab.synth.NamedExpression;
 import io.github.evilalee.gatelab.synth.Netlist;
 import io.github.evilalee.gatelab.synth.TruthTable;
@@ -35,6 +37,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SplittableRandom;
+import java.util.concurrent.CancellationException;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -213,7 +217,8 @@ public final class AiCircuitService {
             List<String> errors,
             List<String> warnings,
             boolean independentCheck,
-            ComponentBuild componentBuild) {
+            ComponentBuild componentBuild,
+            int engineCrossCheckRows) {
         private Attempt {
             mismatchRows = List.copyOf(mismatchRows);
             errors = List.copyOf(errors);
@@ -225,7 +230,16 @@ public final class AiCircuitService {
                         List<String> mismatchRows, List<String> errors,
                         List<String> warnings, boolean independentCheck) {
             this(answer, compilation, layout, truthTable, mismatchRows, errors,
-                    warnings, independentCheck, null);
+                    warnings, independentCheck, null, 0);
+        }
+
+        private Attempt(Answer answer, ExpressionCompiler.Compilation compilation,
+                        SchematicLayout.LayoutResult layout, TruthTable truthTable,
+                        List<String> mismatchRows, List<String> errors,
+                        List<String> warnings, boolean independentCheck,
+                        ComponentBuild componentBuild) {
+            this(answer, compilation, layout, truthTable, mismatchRows, errors,
+                    warnings, independentCheck, componentBuild, 0);
         }
 
         private int score() {
@@ -247,7 +261,16 @@ public final class AiCircuitService {
     private final List<GateDef> gateDefinitions;
     private final List<ComponentDefinition> componentDefinitions;
     private final AiDebugLog debugLog;
+    private final ParallelEvaluator parallelEvaluator;
     private volatile String lastRawAnswer = "";
+
+    @FunctionalInterface
+    interface ParallelEvaluator {
+        BitParallelEvaluator.Result evaluate(
+                SchematicCompiler.CompiledCircuit compiled,
+                Map<String, String> inputComponentIds,
+                Map<String, String> outputComponentIds);
+    }
 
     public AiCircuitService(AiProvider provider, Collection<GateDef> definitions) {
         this(provider, definitions, null);
@@ -259,7 +282,8 @@ public final class AiCircuitService {
 
     AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
                      AiCache cache, Sleeper sleeper) {
-        this(provider, definitions, List.of(), cache, sleeper, null);
+        this(provider, definitions, List.of(), cache, sleeper, null,
+                BitParallelEvaluator::evaluate);
     }
 
     public AiCircuitService(
@@ -272,6 +296,14 @@ public final class AiCircuitService {
     AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
                      Collection<ComponentDefinition> componentDefinitions,
                      AiCache cache, Sleeper sleeper, AiDebugLog debugLog) {
+        this(provider, definitions, componentDefinitions, cache, sleeper, debugLog,
+                BitParallelEvaluator::evaluate);
+    }
+
+    AiCircuitService(AiProvider provider, Collection<GateDef> definitions,
+                     Collection<ComponentDefinition> componentDefinitions,
+                     AiCache cache, Sleeper sleeper, AiDebugLog debugLog,
+                     ParallelEvaluator parallelEvaluator) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.gateDefinitions = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
         this.layoutBuilder = new SchematicLayout(this.gateDefinitions);
@@ -279,6 +311,7 @@ public final class AiCircuitService {
         this.cache = cache;
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
         this.debugLog = debugLog;
+        this.parallelEvaluator = Objects.requireNonNull(parallelEvaluator, "parallelEvaluator");
     }
 
     public String lastRawAnswer() { return lastRawAnswer; }
@@ -341,12 +374,14 @@ public final class AiCircuitService {
         JsonObject inputs = new JsonObject();
         inputs.addProperty("type", "ARRAY");
         inputs.add("items", inputItems);
+        inputs.addProperty("maxItems", AiCircuitLimits.MAX_INPUTS);
         properties.add("inputs", inputs);
 
         JsonObject outputItem = namedExpressionSchema();
         JsonObject outputs = new JsonObject();
         outputs.addProperty("type", "ARRAY");
         outputs.add("items", outputItem);
+        outputs.addProperty("maxItems", AiCircuitLimits.MAX_OUTPUTS);
         properties.add("outputs", outputs);
 
         JsonObject signals = new JsonObject();
@@ -450,17 +485,17 @@ public final class AiCircuitService {
 
                 Template catalogue (A0/B0/D0/S0/G0 are least-significant bits):
                 generator        parameters                      input pins                         output pins
-                ripple_adder     n=1..4, carryIn=yes|no          A0..A(n-1), B0..B(n-1), CIN?       S0..S(n-1), COUT
+                ripple_adder     n=1..7, carryIn=yes|no          A0..A(n-1), B0..B(n-1), CIN?       S0..S(n-1), COUT
                 subtractor       n=1..4                          A0..A(n-1), B0..B(n-1)             D0..D(n-1), BOUT
                 comparator       n=1..4                          A0..A(n-1), B0..B(n-1)             LT, EQ, GT
                 array_multiplier n=1..4, m=1..4                  A0..A(n-1), B0..B(m-1)             P0..P(n+m-1)
-                mux              k=1..2                          D0..D(2^k-1), S0..S(k-1)            Y
+                mux              k=1..3                          D0..D(2^k-1), S0..S(k-1)            Y
                 decoder          n=1..3, enable=yes|no            A0..A(n-1), EN?                    Y0..Y(2^n-1)
                 parity           n=2..8, mode=even|odd            A0..A(n-1)                         PARITY
                 majority         n=3 or 5                       A0..A(n-1)                         Y
                 gray_to_binary   n=2..4                          G0..G(n-1)                         B0..B(n-1)
                 binary_to_gray   n=2..4                          B0..B(n-1)                         G0..G(n-1)
-                A conventional 8:1 mux requires 11 independent inputs and is not available under the 10-input limit.
+                An 8:1 mux uses 11 independent inputs and is supported; the combinational limit is 16 inputs.
                 For a template answer, params must include every parameter listed for that generator and no others.
                 Examples of template parameters: {"n":"4","carryIn":"yes"} for ripple_adder; {"n":"4","m":"4"} for array_multiplier.
                 Free-form answers keep the existing shape after the kind field:
@@ -474,7 +509,7 @@ public final class AiCircuitService {
                 If the user explicitly asks for carry lookahead, write each carry directly from P, G and CIN using named product signals.
                 spec: {buses: {A: [A3,A2,A1,A0]}, rules: [{out, expression}]} using integer arithmetic over bus names, for example S = A + B + CIN, and it must cover every output.
 
-                Additional response limits: at most 10 inputs, 16 outputs, 160 signals, 400 gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
+                Additional response limits: at most 16 combinational inputs, 16 outputs, 160 signals, 400 gates, 3000 total expression characters, 16 spec rules, and 64 user-supplied expected rows. Never return a truth table. Include a spec for arithmetic, comparison, selection, parity, counting and decoders; omit it for irregular logic without a compact integer description. Bus pins are MSB first, and undeclared pin groupings are one-bit buses.
 
                 Example 1 — 4-bit ripple-carry adder:
                 {"kind":"expressions","summary":"4-bit ripple adder","inputs":["A3","A2","A1","A0","B3","B2","B1","B0","CIN"],
@@ -663,6 +698,37 @@ public final class AiCircuitService {
             }
             try {
                 SchematicLayout.LayoutResult placed = layoutBuilder.layout(local.netlist());
+                if (local.netlist().inputs().size() > 10) {
+                    SchematicCompiler.CompiledCircuit flattened =
+                            SchematicCompiler.compileCircuit(placed.schematic());
+                    WideVerification wide = verifyWideCombinational(
+                            flattened, placed.inputComponentIds(), placed.outputComponentIds(),
+                            local.netlist().inputs(),
+                            local.netlist().outputs().stream().map(Netlist.Output::name).toList(),
+                            local.netlist(), local.expressions(), null, expectedRowsText);
+                    List<String> failures = new ArrayList<>(wide.errors());
+                    failures.addAll(wide.mismatchRows());
+                    wide.warnings().forEach(warning -> log.add("Warning: " + warning));
+                    boolean independent = !expectedRowsText.isBlank();
+                    if (failures.isEmpty()) {
+                        Status status = independent ? Status.VERIFIED : Status.BUILT;
+                        Attempt localAttempt = new Attempt(null, local, placed, wide.table(),
+                                wide.mismatchRows(), wide.errors(), wide.warnings(),
+                                independent, null, wide.engineCrossCheckRows());
+                        String statusLine = verificationStatusLine(
+                                localAttempt, expectedRowsText, status);
+                        log.add(statusLine);
+                        log.add("Description parsed as expression text; skipped AI.");
+                        return new Result(0, status, statusLine,
+                                local.expressions(), local.netlist(), placed, wide.table(),
+                                List.of(), log, false);
+                    }
+                    log.addAll(failures.stream().limit(12).toList());
+                    return new Result(0, Status.UNVERIFIED,
+                            "Local expression failed wide verification.",
+                            local.expressions(), local.netlist(), placed, wide.table(),
+                            failures.stream().limit(12).toList(), log, false);
+                }
                 SchematicExpressionVerifier.VerificationResult placedCheck =
                         SchematicExpressionVerifier.verify(local, placed);
                 if (!placedCheck.verified()) {
@@ -696,6 +762,8 @@ public final class AiCircuitService {
                 log.addAll(failures);
                 return new Result(0, Status.UNVERIFIED, "Local expression failed verification.",
                         local.expressions(), local.netlist(), placed, table, failures, log, false);
+            } catch (CancellationException exception) {
+                throw exception;
             } catch (RuntimeException exception) {
                 log.add("Local expression build failed: " + safeParseMessage(exception));
                 return new Result(0, Status.UNVERIFIED, "Local expression could not be built.",
@@ -718,8 +786,14 @@ public final class AiCircuitService {
                         invertingGates, expectedRowsText, useLibraryComponents, true, List.of());
                 log.add("Matched deterministic " + template.generator() + " template.");
                 if (generated.passed() && generated.independentCheck()) {
+                    String statusLine = verificationStatusLine(
+                            generated, expectedRowsText, Status.VERIFIED);
+                    log.add(statusLine);
                     log.add("Verified the template against its integer specification.");
-                    return result(0, Status.VERIFIED, generated, log, false);
+                    Result verified = result(0, Status.VERIFIED, generated, log, false);
+                    return generated.engineCrossCheckRows() > 0
+                            ? withSummary(verified, statusLine + " — " + verified.summary())
+                            : verified;
                 }
                 log.add("Generated template did not pass the common compilation/verification pipeline.");
                 return result(0, Status.UNVERIFIED, generated, log, false);
@@ -795,10 +869,15 @@ public final class AiCircuitService {
             current.warnings().forEach(warning -> log.add("Warning: " + warning));
             if (current.passed()) {
                 Status status = current.independentCheck() ? Status.VERIFIED : Status.BUILT;
-                int rows = current.truthTable().rows().size();
+                int rows = current.truthTable().totalRowCount();
                 if (status == Status.VERIFIED) {
-                    log.add("Verified " + rows + " engine rows against independent checks via "
-                            + response.model());
+                    if (current.engineCrossCheckRows() > 0) {
+                        log.add("All wide-input checks passed; the real engine cross-check covered "
+                                + current.engineCrossCheckRows() + " rows via " + response.model());
+                    } else {
+                        log.add("Verified " + rows + " engine rows against independent checks via "
+                                + response.model());
+                    }
                     if (cache != null) {
                         try {
                             cache.storeVerified(safeDescription, serializeAnswer(current.answer()),
@@ -808,12 +887,20 @@ public final class AiCircuitService {
                             log.add("Verified answer, but could not save the user cache.");
                         }
                     }
+                } else if (current.engineCrossCheckRows() > 0) {
+                    log.add("BUILT: " + rows
+                            + " truth rows evaluated; no independent spec or expected rows supplied.");
                 } else {
                     log.add("BUILT: " + rows
                             + " engine rows generated; no independent check, read the truth table.");
                 }
-                return result(attemptNumber, status, current, log, false,
+                String statusLine = verificationStatusLine(current, expectedRowsText, status);
+                log.add(statusLine);
+                Result verified = result(attemptNumber, status, current, log, false,
                         response.model(), allModelAttempts);
+                return current.engineCrossCheckRows() > 0
+                        ? withSummary(verified, statusLine + " — " + verified.summary())
+                        : verified;
             }
 
             List<String> feedbackLines = new ArrayList<>(current.errors());
@@ -1266,17 +1353,23 @@ public final class AiCircuitService {
             String source = hit.source().name().toLowerCase(java.util.Locale.ROOT);
             if (cachedAttempt.passed()) {
                 Status status = cachedAttempt.independentCheck() ? Status.VERIFIED : Status.BUILT;
-                int rows = cachedAttempt.truthTable().rows().size();
                 if (prefix.startsWith("AI unavailable")) {
                     log.add(prefix);
                     log.add("Using " + source + " cache.");
                 } else {
                     log.add(prefix + " " + source + " cache.");
                 }
-                log.add("FROM CACHE: Revalidated " + rows + " engine rows"
+                log.add("FROM CACHE: Revalidated " + cachedAttempt.truthTable().totalRowCount()
+                        + (cachedAttempt.engineCrossCheckRows() > 0 ? " truth rows" : " engine rows")
                         + (status == Status.BUILT ? "; no independent check, read the truth table." : "."));
-                return result(attemptCount, status, cachedAttempt, log, true,
+                String statusLine = verificationStatusLine(
+                        cachedAttempt, expectedRowsText, status);
+                log.add(statusLine);
+                Result cached = result(attemptCount, status, cachedAttempt, log, true,
                         provider.redact(hit.model()), List.of());
+                return cachedAttempt.engineCrossCheckRows() > 0
+                        ? withSummary(cached, statusLine + " — " + cached.summary())
+                        : cached;
             }
             List<String> failures = new ArrayList<>(cachedAttempt.errors());
             failures.addAll(cachedAttempt.mismatchRows());
@@ -1421,7 +1514,7 @@ public final class AiCircuitService {
         if (compilation.netlist().inputs().size() > AiCircuitLimits.MAX_INPUTS) {
             return new Attempt(answer, compilation, null, null, List.of(),
                     List.of("Circuit has " + compilation.netlist().inputs().size()
-                            + " inputs; maximum is " + AiCircuitLimits.MAX_INPUTS),
+                            + " inputs; the combinational maximum is " + AiCircuitLimits.MAX_INPUTS),
                     List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
         if (compilation.netlist().outputs().size() > AiCircuitLimits.MAX_OUTPUTS) {
@@ -1444,6 +1537,31 @@ public final class AiCircuitService {
             return new Attempt(answer, compilation, null, null, List.of(),
                     List.of("Schematic layout failed: " + safeParseMessage(exception)),
                     List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+
+        if (compilation.netlist().inputs().size() > 10) {
+            try {
+                SchematicCompiler.CompiledCircuit flattened =
+                        SchematicCompiler.compileCircuit(placed.schematic());
+                WideVerification wide = verifyWideCombinational(
+                        flattened, placed.inputComponentIds(), placed.outputComponentIds(),
+                        compilation.netlist().inputs(),
+                        compilation.netlist().outputs().stream().map(Netlist.Output::name).toList(),
+                        compilation.netlist(), compilation.expressions(),
+                        answer.specification(), expectedRowsText);
+                List<String> warnings = new ArrayList<>(wide.warnings());
+                warnings.addAll(unusedSignalWarnings(answer));
+                boolean independent = answer.specification() != null || !expectedRowsText.isBlank();
+                return new Attempt(answer, compilation, placed, wide.table(),
+                        wide.mismatchRows(), wide.errors(), warnings, independent,
+                        null, wide.engineCrossCheckRows());
+            } catch (CancellationException exception) {
+                throw exception;
+            } catch (RuntimeException exception) {
+                return new Attempt(answer, compilation, placed, null, List.of(),
+                        List.of("Bit-parallel verification failed: " + safeParseMessage(exception)),
+                        List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+            }
         }
 
         SchematicExpressionVerifier.VerificationResult placedVerification;
@@ -1558,7 +1676,8 @@ public final class AiCircuitService {
         if (answer.inputs().size() > AiCircuitLimits.MAX_INPUTS) {
             return new Attempt(answer, null, null, null, List.of(),
                     List.of("Circuit has " + answer.inputs().size()
-                            + " inputs; maximum is " + AiCircuitLimits.MAX_INPUTS),
+                            + " inputs; the combinational maximum is " + AiCircuitLimits.MAX_INPUTS
+                            + "; a 17th input is not supported."),
                     List.of(), answer.specification() != null || !expectedRowsText.isBlank());
         }
         if (answer.outputNames().size() > AiCircuitLimits.MAX_OUTPUTS) {
@@ -1582,6 +1701,36 @@ public final class AiCircuitService {
                     List.of("Flattened component circuit has " + gates
                             + " gates; maximum is " + AiCircuitLimits.MAX_GATES),
                     List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+        }
+
+        if (answer.inputs().size() > 10) {
+            Map<String, String> inputIds = new LinkedHashMap<>();
+            for (String name : answer.inputs()) {
+                inputIds.put(name, compilation.inputComponentIds().get(name));
+            }
+            Map<String, String> outputIds = new LinkedHashMap<>();
+            for (String name : answer.outputNames()) {
+                outputIds.put(name, compilation.outputComponentIds().get(name));
+            }
+            try {
+                WideVerification wide = verifyWideCombinational(
+                        flattened, inputIds, outputIds, answer.inputs(), answer.outputNames(),
+                        null, List.of(), answer.specification(), expectedRowsText);
+                ComponentBuild built = new ComponentBuild(compilation, source.toString(), uses);
+                List<String> warnings = new ArrayList<>(wide.warnings());
+                warnings.addAll(unusedSignalWarnings(answer));
+                boolean independent = answer.specification() != null || !expectedRowsText.isBlank();
+                return new Attempt(answer, null, null, wide.table(), wide.mismatchRows(),
+                        wide.errors(), warnings, independent, built,
+                        wide.engineCrossCheckRows());
+            } catch (CancellationException exception) {
+                throw exception;
+            } catch (RuntimeException exception) {
+                return new Attempt(answer, null, null, null, List.of(),
+                        List.of("Component bit-parallel verification failed: "
+                                + safeParseMessage(exception)),
+                        List.of(), answer.specification() != null || !expectedRowsText.isBlank());
+            }
         }
 
         TruthTable table;
@@ -2249,6 +2398,338 @@ public final class AiCircuitService {
         return List.copyOf(mismatches);
     }
 
+    private record EngineCrossCheck(
+            List<String> errors, java.util.Set<Integer> failingRows,
+            java.util.Set<Integer> oscillatingRows, int rowCount) {
+        private EngineCrossCheck {
+            errors = List.copyOf(errors);
+            failingRows = java.util.Set.copyOf(failingRows);
+            oscillatingRows = java.util.Set.copyOf(oscillatingRows);
+        }
+    }
+
+    private record WideVerification(
+            TruthTable table,
+            List<String> mismatchRows,
+            List<String> errors,
+            List<String> warnings,
+            int engineCrossCheckRows,
+            BitParallelEvaluator.Result parallel) {
+        private WideVerification {
+            mismatchRows = List.copyOf(mismatchRows);
+            errors = List.copyOf(errors);
+            warnings = List.copyOf(warnings);
+        }
+    }
+
+    /**
+     * Full-space validation for 11..16 input combinational circuits. Boolean
+     * rows come from the packed evaluator; the engine independently checks a
+     * deterministic sample before any spec/expected-row result can be VERIFIED.
+     */
+    private WideVerification verifyWideCombinational(
+            SchematicCompiler.CompiledCircuit compiled,
+            Map<String, String> inputIds,
+            Map<String, String> outputIds,
+            List<String> inputNames,
+            List<String> outputNames,
+            Netlist netlist,
+            List<NamedExpression> expressions,
+            JsonObject specification,
+            String expectedRowsText) {
+        BitParallelEvaluator.Result parallel =
+                parallelEvaluator.evaluate(compiled, inputIds, outputIds);
+        EngineCrossCheck engine = crossCheckEngine(
+                compiled, inputIds, outputIds, parallel);
+        List<String> errors = new ArrayList<>(engine.errors());
+        List<String> expectedMismatches = new ArrayList<>();
+        java.util.Set<Integer> failingRows = new java.util.TreeSet<>(engine.failingRows());
+        failingRows.addAll(engine.oscillatingRows());
+
+        // Structural checks are exhaustive even though only a bounded sample is
+        // submitted to the production engine.
+        Value[] firstValues = new Value[outputNames.size()];
+        boolean[] constantOutputs = new boolean[outputNames.size()];
+        java.util.Arrays.fill(constantOutputs, true);
+        for (int row = 0; row < parallel.rowCount(); row++) {
+            checkValidationCancellation(row);
+            for (int output = 0; output < outputNames.size(); output++) {
+                String name = outputNames.get(output);
+                Value value = parallel.outputValue(name, row);
+                if (value == Value.X) {
+                    failingRows.add(row);
+                    if (errors.size() < 8) {
+                        errors.add("Bit-parallel output " + name + " is X for row "
+                                + row + " (" + parallel.inputBits(row) + ").");
+                    }
+                }
+                if (row == 0) firstValues[output] = value;
+                else if (value != firstValues[output]) constantOutputs[output] = false;
+            }
+
+            if (!expressions.isEmpty()) {
+                Map<String, Boolean> assignment = assignmentForRow(inputNames, row);
+                for (NamedExpression expression : expressions) {
+                    boolean expected = ExpressionEvaluator.evaluate(
+                            expression.expression(), assignment);
+                    Value actual = parallel.outputValue(expression.name(), row);
+                    if (actual == Value.X || (actual == Value.ONE) != expected) {
+                        failingRows.add(row);
+                        if (errors.size() < 8) {
+                            errors.add("Placed geometry differs from the compiled expression at row "
+                                    + row + " (" + parallel.inputBits(row) + "): "
+                                    + expression.name() + " expected " + (expected ? "1" : "0")
+                                    + ", bit-parallel circuit " + valueText(actual) + ".");
+                        }
+                    }
+                }
+            }
+        }
+        for (int output = 0; output < outputNames.size(); output++) {
+            if (constantOutputs[output] && firstValues[output] != Value.X) {
+                // Constant outputs are warnings, not validation failures.
+            }
+        }
+
+        List<String> warnings = new ArrayList<>();
+        if (netlist != null) {
+            java.util.Set<String> referenced = new LinkedHashSet<>();
+            for (Netlist.Gate gate : netlist.gates()) referenced.addAll(gate.inputs());
+            for (Netlist.Output output : netlist.outputs()) referenced.add(output.source());
+            for (String input : netlist.inputs()) {
+                if (!referenced.contains(input)) {
+                    warnings.add("Declared input '" + input + "' is not connected to an output path.");
+                }
+            }
+        }
+        for (int index = 0; index < outputNames.size(); index++) {
+            if (constantOutputs[index] && firstValues[index] != Value.X) {
+                warnings.add("Output '" + outputNames.get(index)
+                        + "' is constant at " + firstValues[index] + ".");
+            }
+        }
+
+        ExpectedParse expected = parseExpectedRows(expectedRowsText, inputNames, outputNames);
+        errors.addAll(expected.errors());
+        for (ExpectedRow expectedRow : expected.rows()) {
+            int row = 0;
+            for (String name : inputNames) {
+                row = (row << 1) | (expectedRow.inputs().get(name) ? 1 : 0);
+            }
+            for (String output : outputNames) {
+                boolean wanted = expectedRow.outputs().get(output);
+                Value actual = parallel.outputValue(output, row);
+                if (actual == Value.X || (actual == Value.ONE) != wanted) {
+                    failingRows.add(row);
+                    expectedMismatches.add("Expected row line " + expectedRow.lineNumber()
+                            + " (row " + row + ", " + formatAssignments(expectedRow.inputs())
+                            + "): " + output + " expected " + (wanted ? "1" : "0")
+                            + ", circuit " + valueText(actual) + ".");
+                    break;
+                }
+            }
+        }
+
+        if (specification != null) {
+            try {
+                SpecEvaluator evaluator = SpecEvaluator.parse(
+                        specification, inputNames, outputNames);
+                for (int row = 0; row < parallel.rowCount(); row++) {
+                    checkValidationCancellation(row);
+                    Map<String, Boolean> assignment = assignmentForRow(inputNames, row);
+                    SpecEvaluator.Evaluation expectedSpec = evaluator.evaluate(assignment);
+                    for (SpecEvaluator.Bus bus : evaluator.outputBuses()) {
+                        long actual = 0L;
+                        boolean allKnown = true;
+                        for (String pin : bus.pins()) {
+                            Value value = parallel.outputValue(pin, row);
+                            if (value == Value.X) allKnown = false;
+                            actual = (actual << 1) | (value == Value.ONE ? 1L : 0L);
+                        }
+                        long specValue = expectedSpec.outputBusValues().get(bus.name());
+                        if (!allKnown || actual != specValue) {
+                            failingRows.add(row);
+                            if (errors.size() < 16) {
+                                errors.add("Spec mismatch at row " + row + " ("
+                                        + evaluator.formatInputContext(assignment) + "): "
+                                        + bus.name() + " expected " + specValue
+                                        + ", circuit " + actual + ".");
+                            }
+                            break;
+                        }
+                    }
+                }
+            } catch (SpecEvaluator.SpecException exception) {
+                String position = exception.position() >= 0
+                        ? " at position " + exception.position() : "";
+                errors.add("Spec error" + position + ": " + safeParseMessage(exception));
+            } catch (CancellationException exception) {
+                throw exception;
+            } catch (RuntimeException exception) {
+                errors.add("Spec error: " + safeParseMessage(exception));
+            }
+        }
+
+        // The pane carries the first 256 rows and every failing row, retaining
+        // the full logical row count as metadata rather than pretending this is
+        // a 256-row truth table.
+        java.util.LinkedHashSet<Integer> visibleRows = new java.util.LinkedHashSet<>();
+        for (int row = 0; row < Math.min(256, parallel.rowCount()); row++) {
+            visibleRows.add(row);
+        }
+        visibleRows.addAll(failingRows);
+        List<TruthTable.Row> tableRows = new ArrayList<>(visibleRows.size());
+        for (int row : visibleRows) {
+            List<Value> values = new ArrayList<>(outputNames.size());
+            for (String output : outputNames) values.add(parallel.outputValue(output, row));
+            tableRows.add(new TruthTable.Row(row, parallel.inputBits(row), values,
+                    engine.oscillatingRows().contains(row)));
+        }
+        TruthTable table = new TruthTable(inputNames, outputNames,
+                tableRows, parallel.rowCount());
+        return new WideVerification(
+                table, expectedMismatches, errors, warnings,
+                engine.rowCount(), parallel);
+    }
+
+    private EngineCrossCheck crossCheckEngine(
+            SchematicCompiler.CompiledCircuit compiled,
+            Map<String, String> inputIds,
+            Map<String, String> outputIds,
+            BitParallelEvaluator.Result parallel) {
+        java.util.LinkedHashSet<Integer> rows = new java.util.LinkedHashSet<>();
+        int inputCount = inputIds.size();
+        int allOnes = parallel.rowCount() - 1;
+        rows.add(0);
+        rows.add(allOnes);
+        for (int index = 0; index < inputCount; index++) {
+            int bit = 1 << (inputCount - index - 1);
+            rows.add(bit);
+            rows.add(allOnes ^ bit);
+        }
+        SplittableRandom random = new SplittableRandom(0x16A1_2026_5EEDL);
+        while (rows.size() < 2 + inputCount * 2 + 512) {
+            rows.add(random.nextInt(parallel.rowCount()));
+        }
+
+        Map<String, InputPin> flattenedInputs = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : inputIds.entrySet()) {
+            InputPin input = compiled.inputs().get(entry.getValue());
+            if (input == null) {
+                throw new IllegalArgumentException("missing flattened engine input " + entry.getKey());
+            }
+            flattenedInputs.put(entry.getKey(), input);
+        }
+        Map<String, OutputProbe> flattenedOutputs = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : outputIds.entrySet()) {
+            OutputProbe output = compiled.outputs().get(entry.getValue());
+            if (output == null) {
+                throw new IllegalArgumentException("missing flattened engine output " + entry.getKey());
+            }
+            flattenedOutputs.put(entry.getKey(), output);
+        }
+
+        Simulator simulator = new Simulator(compiled.circuit());
+        List<String> errors = new ArrayList<>();
+        java.util.Set<Integer> failing = new java.util.LinkedHashSet<>();
+        java.util.Set<Integer> oscillating = new java.util.LinkedHashSet<>();
+        for (int row : rows) {
+            checkValidationCancellation(row);
+            for (int index = 0; index < inputIds.size(); index++) {
+                String name = inputIds.keySet().stream().skip(index).findFirst().orElseThrow();
+                boolean high = ((row >>> (inputIds.size() - index - 1)) & 1) != 0;
+                simulator.setInputValue(flattenedInputs.get(name), high ? Value.ONE : Value.ZERO);
+            }
+            simulator.settle();
+            if (simulator.isOscillating()) {
+                oscillating.add(row);
+                failing.add(row);
+                if (errors.size() < 8) {
+                    errors.add("Real engine oscillation for sample row "
+                            + row + " (" + parallel.inputBits(row) + ").");
+                }
+            }
+            for (Map.Entry<String, OutputProbe> output : flattenedOutputs.entrySet()) {
+                Value engineValue = simulator.getProbeValue(output.getValue());
+                Value parallelValue = parallel.outputValue(output.getKey(), row);
+                if (engineValue != parallelValue) {
+                    failing.add(row);
+                    if (errors.size() < 8) {
+                        errors.add("Bit-parallel/engine disagreement at sample row "
+                                + row + " (" + parallel.inputBits(row) + ") for "
+                                + output.getKey() + ": parallel " + valueText(parallelValue)
+                                + ", engine " + valueText(engineValue) + ".");
+                    }
+                }
+            }
+        }
+        return new EngineCrossCheck(errors, failing, oscillating, rows.size());
+    }
+
+    private static Map<String, Boolean> assignmentForRow(List<String> inputNames, int row) {
+        Map<String, Boolean> values = new LinkedHashMap<>();
+        for (int index = 0; index < inputNames.size(); index++) {
+            values.put(inputNames.get(index),
+                    ((row >>> (inputNames.size() - index - 1)) & 1) != 0);
+        }
+        return values;
+    }
+
+    private static String verificationStatusLine(
+            Attempt attempt, String expectedRowsText, Status status) {
+        return verificationStatusLine(
+                attempt.answer() != null && attempt.answer().specification() != null,
+                attempt.truthTable() == null ? 0 : attempt.truthTable().totalRowCount(),
+                expectedRowsText, attempt.engineCrossCheckRows(),
+                attempt.compilation() != null && attempt.engineCrossCheckRows() > 0,
+                status);
+    }
+
+    private static String verificationStatusLine(
+            boolean hasSpec, int totalRows, String expectedRowsText,
+            int engineCrossCheckRows, boolean allRowsMatchedExpressions, Status status) {
+        int expectedCount = expectedRowsText == null || expectedRowsText.isBlank() ? 0
+                : (int) java.util.Arrays.stream(expectedRowsText.split("\\R"))
+                        .filter(line -> !line.isBlank()).count();
+        List<String> checks = new ArrayList<>();
+        if (hasSpec) {
+            checks.add("all " + String.format(java.util.Locale.ROOT, "%,d", totalRows)
+                    + " rows against the executable spec");
+        }
+        if (expectedCount > 0) checks.add(expectedCount + " user-supplied expected rows");
+        if (allRowsMatchedExpressions) {
+            checks.add("bit-parallel result matched the compiled expressions on all "
+                    + String.format(java.util.Locale.ROOT, "%,d", totalRows) + " rows");
+        }
+        if (checks.isEmpty()) checks.add("no independent spec or expected rows supplied");
+        if (engineCrossCheckRows > 0) {
+            checks.add("real-engine cross-check on " + engineCrossCheckRows + " rows");
+        } else if (totalRows > 0) {
+            checks.add("real engine and placed schematic checked on all "
+                    + String.format(java.util.Locale.ROOT, "%,d", totalRows) + " rows");
+        }
+        return (status == Status.VERIFIED ? "VERIFIED: " : "BUILT: ")
+                + String.join("; ", checks);
+    }
+
+    private static Result withSummary(Result result, String summary) {
+        return new Result(result.attemptCount(), result.status(), summary,
+                result.expressions(), result.netlist(), result.layout(), result.truthTable(),
+                result.mismatchingRows(), result.attemptLog(), result.fromCache(),
+                result.answeredBy(), result.modelAttempts(), result.signals(), result.schematic(),
+                result.expressionSource(), result.componentUseCounts(), result.sequenceData());
+    }
+
+    private static String valueText(Value value) {
+        return value == Value.ONE ? "1" : value == Value.ZERO ? "0" : "X";
+    }
+
+    private static void checkValidationCancellation(int index) {
+        if ((index & 255) == 0 && Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("AI verification cancelled");
+        }
+    }
+
     private static String serializeAnswer(Answer answer) {
         JsonObject root = new JsonObject();
         root.addProperty("kind", "expressions");
@@ -2321,7 +2802,8 @@ public final class AiCircuitService {
         JsonArray inputArray = requireArray(root, "inputs");
         if (inputArray.size() > AiCircuitLimits.MAX_INPUTS) {
             throw new IllegalArgumentException("inputs has " + inputArray.size()
-                    + " entries; maximum is " + AiCircuitLimits.MAX_INPUTS);
+                    + " entries; the maximum is " + AiCircuitLimits.MAX_INPUTS
+                            + "; a 17th input is not supported.");
         }
         List<String> inputs = new ArrayList<>();
         Set<String> seenInputs = new LinkedHashSet<>();

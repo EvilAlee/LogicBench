@@ -6,12 +6,15 @@ import io.github.evilalee.gatelab.ai.AiCircuitLimits;
 import io.github.evilalee.gatelab.ai.SpecEvaluator;
 import io.github.evilalee.gatelab.io.GateLibrary;
 import io.github.evilalee.gatelab.model.Value;
+import io.github.evilalee.gatelab.sim.BitParallelEvaluator;
+import io.github.evilalee.gatelab.sim.SchematicCompiler;
 import io.github.evilalee.gatelab.synth.ExpressionCompiler;
 import io.github.evilalee.gatelab.synth.TruthTable;
 import io.github.evilalee.gatelab.synth.TruthTableGenerator;
 import io.github.evilalee.gatelab.synth.layout.SchematicExpressionVerifier;
 import io.github.evilalee.gatelab.synth.layout.SchematicLayout;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,10 +27,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Exhaustive engine/spec checks for every supported deterministic template parameter set. */
+/** Exhaustive spec checks for every supported deterministic template parameter set. */
 class StandardCircuitGeneratorsTest {
     @Test
-    void everySupportedParameterCombinationMatchesItsIntegerSpecOnEveryEngineRow() {
+    @Tag("slow")
+    void everySupportedParameterCombinationMatchesItsIntegerSpecOnEveryRow() {
         int combinations = 0;
         for (TemplateGenerator generator : StandardCircuitGenerators.all()) {
             for (Map<String, String> params : parameterCombinations(generator)) {
@@ -53,21 +57,39 @@ class StandardCircuitGeneratorsTest {
                 assertTrue(answer.signals().stream().allMatch(e ->
                         e.expression().length() <= AiCircuitLimits.MAX_EXPRESSION_LENGTH));
 
-                TruthTable table = TruthTableGenerator.generate(plain.netlist());
-                assertEquals(1 << answer.inputs().size(), table.rows().size(),
-                        context(generator, params));
                 SpecEvaluator spec = SpecEvaluator.parse(
-                        evaluatorSpec(answer.spec()), table.inputNames(), table.outputNames());
-                assertRowsMatchSpec(table, spec, context(generator, params));
-
-                ExpressionCompiler.Compilation mapped =
-                        ExpressionCompiler.compile(answer.expressionSource(), false, true);
-                TruthTable mappedTable = TruthTableGenerator.generate(mapped.netlist());
-                assertEquals(table.rows(), mappedTable.rows(),
-                        "mapping changed behavior for " + context(generator, params));
+                        evaluatorSpec(answer.spec()), answer.inputs(), answer.outputs().stream()
+                                .map(GeneratedCircuit.PinExpression::name).toList());
+                if (plain.netlist().inputs().size() <= 10) {
+                    TruthTable table = TruthTableGenerator.generate(plain.netlist());
+                    assertEquals(1 << answer.inputs().size(), table.rows().size(),
+                            context(generator, params));
+                    assertRowsMatchSpec(table, spec, context(generator, params));
+                    ExpressionCompiler.Compilation mapped =
+                            ExpressionCompiler.compile(answer.expressionSource(), false, true);
+                    TruthTable mappedTable = TruthTableGenerator.generate(mapped.netlist());
+                    assertEquals(table.rows(), mappedTable.rows(),
+                            "mapping changed behavior for " + context(generator, params));
+                } else {
+                    BitParallelEvaluator.Result table = evaluateParallel(plain.netlist());
+                    assertEquals(1 << answer.inputs().size(), table.rowCount(),
+                            context(generator, params));
+                    assertParallelRowsMatchSpec(table, spec, context(generator, params));
+                    ExpressionCompiler.Compilation mapped =
+                            ExpressionCompiler.compile(answer.expressionSource(), false, true);
+                    BitParallelEvaluator.Result mappedTable = evaluateParallel(mapped.netlist());
+                    for (int row = 0; row < table.rowCount(); row++) {
+                        for (String output : table.outputNames()) {
+                            assertEquals(table.outputValue(output, row),
+                                    mappedTable.outputValue(output, row),
+                                    "mapping changed behavior at row " + row + " for "
+                                            + context(generator, params));
+                        }
+                    }
+                }
             }
         }
-        assertEquals(62, combinations, "the supported template domain changed unexpectedly");
+        assertEquals(69, combinations, "the supported template domain changed unexpectedly");
     }
 
     @Test
@@ -93,11 +115,26 @@ class StandardCircuitGeneratorsTest {
     }
 
     @Test
-    void unsupportedEightToOneMuxIsRejectedRatherThanClamped() {
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> StandardCircuitGenerators.require("mux").build(Map.of("k", "3")));
-        assertTrue(exception.getMessage().contains("[1, 2]"));
-        assertTrue(exception.getMessage().contains("k"));
+    void eightToOneMuxIsAcceptedWithinTheSixteenInputLimit() {
+        GeneratedCircuit mux = StandardCircuitGenerators.require("mux")
+                .build(Map.of("k", "3"));
+        assertEquals(11, mux.inputs().size());
+        assertEquals(1, mux.outputs().size());
+        assertTrue(mux.inputs().size() <= AiCircuitLimits.MAX_INPUTS);
+        BitParallelEvaluator.Result table = evaluateParallel(
+                ExpressionCompiler.compile(mux.expressionSource(), false, false).netlist());
+        assertEquals(1 << 11, table.rowCount());
+    }
+
+    @Test
+    void sevenBitRippleAdderWithCarryInUsesFifteenInputs() {
+        GeneratedCircuit adder = StandardCircuitGenerators.require("ripple_adder")
+                .build(Map.of("n", "7", "carryIn", "yes"));
+        assertEquals(15, adder.inputs().size());
+        assertTrue(adder.inputs().size() <= AiCircuitLimits.MAX_INPUTS);
+        BitParallelEvaluator.Result table = evaluateParallel(
+                ExpressionCompiler.compile(adder.expressionSource(), false, false).netlist());
+        assertEquals(1 << 15, table.rowCount());
     }
 
     @Test
@@ -127,6 +164,37 @@ class StandardCircuitGeneratorsTest {
             combinations = expanded;
         }
         return List.copyOf(combinations);
+    }
+
+    private static BitParallelEvaluator.Result evaluateParallel(
+            io.github.evilalee.gatelab.synth.Netlist netlist) {
+        SchematicLayout.LayoutResult layout =
+                new SchematicLayout(GateLibrary.load().all()).layout(netlist);
+        SchematicCompiler.CompiledCircuit flattened =
+                SchematicCompiler.compileCircuit(layout.schematic());
+        return BitParallelEvaluator.evaluate(
+                flattened, layout.inputComponentIds(), layout.outputComponentIds());
+    }
+
+    private static void assertParallelRowsMatchSpec(
+            BitParallelEvaluator.Result table, SpecEvaluator spec, String context) {
+        for (int row = 0; row < table.rowCount(); row++) {
+            Map<String, Boolean> assignment = new LinkedHashMap<>();
+            for (int index = 0; index < table.inputNames().size(); index++) {
+                assignment.put(table.inputNames().get(index),
+                        table.inputBits(row).charAt(index) == '1');
+            }
+            Map<String, Boolean> expected = spec.evaluate(assignment).outputPins();
+            for (String output : table.outputNames()) {
+                Value actual = table.outputValue(output, row);
+                assertTrue(actual == Value.ZERO || actual == Value.ONE,
+                        context + " produced X at " + table.inputBits(row) + " for " + output);
+                Value expectedValue = Boolean.TRUE.equals(expected.get(output))
+                        ? Value.ONE : Value.ZERO;
+                assertEquals(expectedValue, actual,
+                        context + " mismatch at " + table.inputBits(row) + " for " + output);
+            }
+        }
     }
 
     private static JsonObject evaluatorSpec(JsonObject answerSpec) {

@@ -34,6 +34,7 @@
 - feature-constant-folding: extend constant simplification to sequential expressions and replace generated literal inputs with fixed, non-pokeable constant sources.
 - feature-circuit-exporter: add deterministic, Swing-free schematic/netlist expression export; headless tests first, Circuit menu action last.
 - feature-copy-paste: mixed-selection clipboard codec, transactional collision-safe paste, Cut/Copy/Paste/Duplicate actions and headless regression coverage.
+- feature-ai-16-inputs: 16-input combinational AI validation with all-row bit-parallel spec checks and deterministic real-engine cross-checks; sequential limits unchanged.
 
 ## Next
 1. M9a attribute table with editable labels

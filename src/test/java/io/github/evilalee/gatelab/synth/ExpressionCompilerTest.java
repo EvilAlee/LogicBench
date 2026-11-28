@@ -177,9 +177,9 @@ class ExpressionCompilerTest {
     void rejectsDuplicateDefaultOutputNamesAndTooManyVariables() {
         assertThrows(IllegalArgumentException.class,
                 () -> ExpressionCompiler.compile("A & B\nA | B"));
-        String manyInputs = "Result = A & B & C & D & E & F & G & H & I & J & K & L & M";
+        String manyInputs = "Result = A & B & C & D & E & F & G & H & I & J & K & L & M & N & O & P & Q";
         assertTrue(assertThrows(IllegalArgumentException.class,
-                () -> ExpressionCompiler.compile(manyInputs)).getMessage().contains("maximum is 12"));
+                () -> ExpressionCompiler.compile(manyInputs)).getMessage().contains("maximum is 16"));
     }
 
     @Test
