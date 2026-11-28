@@ -326,3 +326,48 @@ H=HIGH, L=LOW, X=irrelevant. G high disables the selector and forces Y low/W hig
 
 **Second-source cross-check:** Nexperia [74HC151/74HCT151](https://assets.nexperia.com/documents/data-sheet/74HC_HCT151.pdf), Rev.11 (11 March 2024), pages 2–4, confirms corresponding pin positions, active-LOW enable, complementary outputs, and the same selection rows. Its package options include SO16/TSSOP16/DHVQFN16, so TI remains the authority for the N-package DIP16 assignment. **Not single-source.**
 
+## 74153 — audited; implementation pending
+
+**TI source:** [SN74LS153](https://www.ti.com/lit/ds/symlink/sn74ls153.pdf), datasheet SDLS055A (December 1972, revised May 2007), DIP/N pin configuration and function table on page 1.
+
+**Package:** TI specifies SN74LS153 in D or N package; use **DIP16 (N)**.
+
+**DIP16 N top-view pin table (TI page 1):**
+
+| Pin | Signal | Direction / behavior |
+|---:|---|---|
+| 1 | 1G | IN, active-LOW strobe |
+| 2 | B | IN, shared select bit B |
+| 3 | 1C3 | IN, channel 1 data 3 |
+| 4 | 1C2 | IN, channel 1 data 2 |
+| 5 | 1C1 | IN, channel 1 data 1 |
+| 6 | 1C0 | IN, channel 1 data 0 |
+| 7 | 1Y | OUT, channel 1 selected data |
+| 8 | GND | IN |
+| 9 | 2Y | OUT, channel 2 selected data |
+| 10 | 2C0 | IN, channel 2 data 0 |
+| 11 | 2C1 | IN, channel 2 data 1 |
+| 12 | 2C2 | IN, channel 2 data 2 |
+| 13 | 2C3 | IN, channel 2 data 3 |
+| 14 | A | IN, shared select bit A |
+| 15 | 2G | IN, active-LOW strobe |
+| 16 | VCC | IN |
+
+**TI function table (page 1), same for channel 1 and channel 2:**
+
+| B | A | C0 | C1 | C2 | C3 | G̅ | Y |
+|---|---|---|---|---|---|---|---|
+| X | X | X | X | X | X | H | L |
+| L | L | L | X | X | X | L | L |
+| L | L | H | X | X | X | L | H |
+| L | H | X | L | X | X | L | L |
+| L | H | X | H | X | X | L | H |
+| H | L | X | X | L | X | L | L |
+| H | L | X | X | H | X | L | H |
+| H | H | X | X | X | L | L | L |
+| H | H | X | X | X | H | L | H |
+
+H=HIGH, L=LOW, X=irrelevant. A and B are common select inputs shared by both four-line sections. Each section has a separate active-LOW strobe; strobe HIGH forces that channel output LOW, and with strobe LOW, BA selects C0/C1/C2/C3.
+
+**Second-source cross-check:** Nexperia [74HC153/74HCT153](https://assets.nexperia.com/documents/data-sheet/74HC_HCT153.pdf), Rev.11 (11 March 2024), pages 3–4, independently confirms the corresponding pin positions, both active-LOW enables, shared select lines, and all nine mux rows. Nexperia package drawings are SO16/TSSOP16; TI remains authoritative for DIP16 N. **Not single-source.**
+
