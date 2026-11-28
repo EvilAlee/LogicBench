@@ -40,6 +40,28 @@ class DisplayComponentTest {
     }
 
     @Test
+    void unnamedDisplaysGetDocumentOrderedFallbackNamesWithoutNamedPartsConsumingNumbers() {
+        Schematic schematic = new Schematic(DEFINITIONS);
+        PlacedComponent namedSeg = schematic.add("seg7", 100, 100, Facing.EAST);
+        schematic.setLabel(namedSeg.id(), "Status");
+        PlacedComponent firstSeg = schematic.add("seg7", 300, 100, Facing.EAST);
+        PlacedComponent secondSeg = schematic.add("seg7", 500, 100, Facing.EAST);
+        PlacedComponent namedHex = schematic.add("hexdigit", 700, 100, Facing.EAST);
+        schematic.setLabel(namedHex.id(), "Counter");
+        PlacedComponent firstHex = schematic.add("hexdigit", 900, 100, Facing.EAST);
+
+        Map<String, String> outputNamesByPin = new HashMap<>();
+        for (DisplayComponent.SinkPin sink : DisplayComponent.sinkPins(schematic)) {
+            outputNamesByPin.put(sink.componentId() + "." + sink.pinId(), sink.portName());
+        }
+        assertEquals("Status_a", outputNamesByPin.get(namedSeg.id() + ".in0"));
+        assertEquals("Seg1_a", outputNamesByPin.get(firstSeg.id() + ".in0"));
+        assertEquals("Seg2_a", outputNamesByPin.get(secondSeg.id() + ".in0"));
+        assertEquals("Counter_d0", outputNamesByPin.get(namedHex.id() + ".in0"));
+        assertEquals("Hex1_d0", outputNamesByPin.get(firstHex.id() + ".in0"));
+    }
+
+    @Test
     void displaysRoundTripWithNameAndAttributesAndLegacyFilesRemainReadable() {
         Schematic original = new Schematic(DEFINITIONS);
         PlacedComponent seg7 = original.add("seg7", 200, 200, Facing.SOUTH);

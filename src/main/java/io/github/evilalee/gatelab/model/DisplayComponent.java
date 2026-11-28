@@ -1,7 +1,6 @@
 package io.github.evilalee.gatelab.model;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
@@ -42,22 +41,21 @@ public final class DisplayComponent {
     /** Output-port names for each input sink; unnamed displays get stable Seg1/Hex1 bases. */
     public static List<SinkPin> sinkPins(Schematic schematic) {
         Objects.requireNonNull(schematic, "schematic");
-        List<PlacedComponent> displays = schematic.components().stream()
-                .filter(component -> isDisplay(component.typeId()))
-                .sorted(Comparator.comparing(PlacedComponent::typeId)
-                        .thenComparing(PlacedComponent::id))
-                .toList();
         int segNumber = 0;
         int hexNumber = 0;
         List<SinkPin> result = new ArrayList<>();
-        for (PlacedComponent display : displays) {
-            String fallback;
-            if (display.typeId().equals("seg7")) {
-                fallback = "Seg" + (++segNumber);
-            } else {
-                fallback = "Hex" + (++hexNumber);
+        for (PlacedComponent display : schematic.components()) {
+            if (!isDisplay(display.typeId())) {
+                continue;
             }
-            String base = display.label().isBlank() ? fallback : display.label().trim();
+            String base;
+            if (!display.label().isBlank()) {
+                base = display.label().trim();
+            } else if (display.typeId().equals("seg7")) {
+                base = "Seg" + (++segNumber);
+            } else {
+                base = "Hex" + (++hexNumber);
+            }
             List<String> names = inputNames(display.typeId());
             List<String> suffixes = outputSuffixes(display.typeId());
             for (int index = 0; index < names.size(); index++) {
