@@ -76,17 +76,6 @@ class Ti74xxTierAChipTest {
             new DecoderRow(1, 0, 0b111, 7));
 
     @Test
-    void diagnosticReportsBuiltInChipInitializationFailure() throws IOException {
-        try {
-            library();
-        } catch (RuntimeException exception) {
-            System.err.println("TI74XX_LIBRARY_INIT_DIAGNOSTIC: "
-                    + exception.getClass().getName() + ": " + exception.getMessage());
-            throw exception;
-        }
-    }
-
-    @Test
     void sn7442PackageAndPinAssignmentsMatchTheTiDip16Table() throws IOException {
         ComponentDefinition definition = library().get("7442");
         assertEquals("DIP16", definition.packageType());

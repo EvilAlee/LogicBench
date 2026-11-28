@@ -68,8 +68,10 @@ public final class ComponentDefinition {
             String packageType,
             Schematic internalCircuit) {
         String normalizedPackage = normalizePackage(packageType);
+        // TI 74xx catalogue names include both four-digit (e.g. 7442)
+        // and five-digit (e.g. 74138, 74283) device designators.
         this.name = normalizedPackage != null && name != null
-                && name.trim().matches("74[0-9]{2}")
+                && name.trim().matches("74[0-9]{2,3}")
                 ? name.trim() : requireIdentifier(name, "definition name");
         this.description = requireText(description, "description");
         this.category = requireText(category, "category");
