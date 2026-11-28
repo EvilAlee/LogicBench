@@ -1532,20 +1532,33 @@ public final class CanvasPanel extends JPanel {
                 repaintUnion(oldAutoWireBounds, autoWirePreviewScreenBounds());
                 return;
             }
-            if (wireHit != null) {
+            if (wireHit != null && additive) {
+                // Shift/Ctrl-click remains a selection gesture, not an auto-wire endpoint.
+                clearAutoWirePending();
+                repaintIfPresent(oldAutoWireBounds);
+            } else if (wireHit != null) {
                 Connectivity.Point point = wireGridPoint(wireHit, world.x, world.y);
-                if (!point.equals(pendingAutoWireStart.position())) {
+                boolean regrabSelectedStart = pendingAutoWireStartWire != null
+                        && pendingAutoWireStartWire.equals(wireHit)
+                        && point.equals(pendingAutoWireStart.position())
+                        && selectedWires.contains(wireHit);
+                if (regrabSelectedStart) {
+                    // Re-pressing the same selected source point begins the existing drag-move.
+                    clearAutoWirePending();
+                    repaintIfPresent(oldAutoWireBounds);
+                } else {
                     pendingAutoWireTarget = AutoWireRouter.Attachment.wire(point);
                     pendingAutoWireTargetPin = null;
                     pendingAutoWireTargetWire = wireHit;
                     pendingAutoWireHoverPoint = point;
                     gesture = Gesture.PENDING_AUTO_WIRE_TARGET;
+                    repaintUnion(oldAutoWireBounds, autoWirePreviewScreenBounds());
+                    return;
                 }
-                repaintUnion(oldAutoWireBounds, autoWirePreviewScreenBounds());
-                return;
+            } else {
+                clearAutoWirePending();
+                repaintIfPresent(oldAutoWireBounds);
             }
-            clearAutoWirePending();
-            repaintIfPresent(oldAutoWireBounds);
         }
 
         if (wireHit != null && selectedWires.contains(wireHit) && !additive) {
