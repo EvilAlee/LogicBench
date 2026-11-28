@@ -326,6 +326,7 @@ class Ti74xxChipTest {
             assertEquals(rotation == Facing.EAST || rotation == Facing.WEST
                     ? packageHeight : packageWidth, geometry.height());
             for (int number = 1; number <= pinCount; number++) {
+                int physicalNumber = number;
                 boolean left = number <= half;
                 int localX = left ? 0 : packageWidth;
                 int localY = 20 + (left ? number - 1 : pinCount - number) * 20;
@@ -352,7 +353,7 @@ class Ti74xxChipTest {
                 }
                 ComponentInstance.PinGeometry pin = geometry.pins().stream()
                         .filter(candidate -> candidate.pinNumber() != null
-                                && candidate.pinNumber() == number)
+                                && candidate.pinNumber() == physicalNumber)
                         .findFirst().orElseThrow();
                 assertEquals(expectedX, pin.x(), definition.name() + " pin " + number + " " + rotation);
                 assertEquals(expectedY, pin.y(), definition.name() + " pin " + number + " " + rotation);
