@@ -1,6 +1,7 @@
 package io.github.evilalee.gatelab.synth.layout;
 
 import io.github.evilalee.gatelab.model.Connectivity;
+import io.github.evilalee.gatelab.model.ComponentAttributeRegistry;
 import io.github.evilalee.gatelab.model.Facing;
 import io.github.evilalee.gatelab.model.GateDef;
 import io.github.evilalee.gatelab.model.GateGeometry;
@@ -436,7 +437,7 @@ final class LegacySchematicLayout {
                         : node.kind == NodeKind.OUTPUT ? outputLabelFor(node, netlist) : "";
                 schematic.add(new PlacedComponent(
                         node.componentId, node.definition.family(), node.x, node.y,
-                        Facing.EAST, Map.of(), label));
+                        Facing.EAST, attributesFor(node), label));
             }
         }
 
@@ -527,6 +528,14 @@ final class LegacySchematicLayout {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "gates.json has no narrow " + family
                                 + " component with " + inputCount + " inputs"));
+    }
+
+    private static Map<String, String> attributesFor(Node node) {
+        if (ComponentAttributeRegistry.supports(node.definition.family(), "inputs")
+                && node.definition.inputCount() != 2) {
+            return Map.of("inputs", Integer.toString(node.definition.inputCount()));
+        }
+        return Map.of();
     }
 
     private Node componentNode(
