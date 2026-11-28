@@ -100,8 +100,11 @@ class AutoWireBranchDiagnosticTest {
                 schematic.pinPositions(), schematic.wires());
         assertFalse(canvas.hasPendingAutoWireStart());
         assertTrue(topology.junctions().contains(attachment));
-        assertEquals(Set.of(freeInput, pinOnExistingDriverNet(schematic)),
-                netFor(topology, freeInput).pins());
+        Connectivity.Net connected = netFor(topology, freeInput);
+        assertEquals(3, connected.pins().size(),
+                "the clicked wire's existing two pins and the new sink share one net");
+        assertTrue(connected.pins().contains(freeInput));
+        assertTrue(connected.pins().contains(pinOnExistingDriverNet(schematic)));
     }
 
     @Test
