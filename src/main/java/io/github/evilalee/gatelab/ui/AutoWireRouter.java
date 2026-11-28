@@ -186,10 +186,15 @@ public final class AutoWireRouter {
             return new Route(List.of(), false);
         }
 
+        Set<WireSegment> attachmentWires = new LinkedHashSet<>(request.sourceNetWires());
+        attachmentWires.addAll(request.targetNetWires());
+        List<WireSegment> unrelatedWires = request.existingWires().stream()
+                .filter(wire -> !attachmentWires.contains(wire))
+                .toList();
         List<Anchor> starts = anchors(
-                request.source(), request.sourceNetWires(), true);
+                request.source(), request.sourceNetWires(), true, unrelatedWires);
         List<Anchor> targets = anchors(
-                request.target(), request.targetNetWires(), false);
+                request.target(), request.targetNetWires(), false, unrelatedWires);
         for (Attempt attempt : attempts()) {
             for (int margin : new int[]{INITIAL_MARGIN_CELLS, MAX_MARGIN_CELLS}) {
                 List<Cell> path = search(request, starts, targets, margin, attempt);
@@ -241,12 +246,17 @@ public final class AutoWireRouter {
     }
 
     private static List<Anchor> anchors(
-            Attachment attachment, List<WireSegment> netWires, boolean source) {
+            Attachment attachment,
+            List<WireSegment> netWires,
+            boolean source,
+            List<WireSegment> unrelatedWires) {
         LinkedHashMap<Cell, Anchor> result = new LinkedHashMap<>();
         Endpoint pin = attachment.pinEndpoint();
         Cell direct = cell(attachment.position());
-        result.put(direct, new Anchor(direct, pin,
-                openDirections(attachment.position(), netWires, source)));
+        if (!liesOnAny(unrelatedWires, attachment.position())) {
+            result.put(direct, new Anchor(direct, pin,
+                    openDirections(attachment.position(), netWires, source)));
+        }
         if (attachment.fixedWirePoint()) {
             return List.copyOf(result.values());
         }
@@ -254,11 +264,13 @@ public final class AutoWireRouter {
         for (WireSegment wire : netWires) {
             if (wire.isHorizontal()) {
                 for (int x = wire.x1(); x <= wire.x2(); x += GRID) {
-                    addAnchor(result, new Connectivity.Point(x, wire.y1()), netWires, source);
+                    addAnchor(result, new Connectivity.Point(x, wire.y1()),
+                            netWires, source, unrelatedWires);
                 }
             } else {
                 for (int y = wire.y1(); y <= wire.y2(); y += GRID) {
-                    addAnchor(result, new Connectivity.Point(wire.x1(), y), netWires, source);
+                    addAnchor(result, new Connectivity.Point(wire.x1(), y),
+                            netWires, source, unrelatedWires);
                 }
             }
         }
@@ -269,7 +281,11 @@ public final class AutoWireRouter {
             Map<Cell, Anchor> anchors,
             Connectivity.Point point,
             List<WireSegment> netWires,
-            boolean source) {
+            boolean source,
+            List<WireSegment> unrelatedWires) {
+        if (liesOnAny(unrelatedWires, point)) {
+            return;
+        }
         Cell cell = cell(point);
         anchors.putIfAbsent(cell, new Anchor(
                 cell, null, openDirections(point, netWires, source)));
@@ -490,7 +506,14 @@ public final class AutoWireRouter {
     }
 
     private static StepDirection departure(Endpoint endpoint) {
-        return StepDirection.of(endpoint.facing());
+        StepDirection facing = StepDirection.of(endpoint.facing());
+        return endpoint.output() ? facing : switch (facing) {
+            case NORTH -> StepDirection.SOUTH;
+            case EAST -> StepDirection.WEST;
+            case SOUTH -> StepDirection.NORTH;
+            case WEST -> StepDirection.EAST;
+            case NONE -> StepDirection.NONE;
+        };
     }
 
     private static StepDirection arrival(Endpoint endpoint) {
