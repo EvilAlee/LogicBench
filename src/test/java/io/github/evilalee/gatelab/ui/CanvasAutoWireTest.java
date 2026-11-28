@@ -143,6 +143,62 @@ class CanvasAutoWireTest {
     }
 
     @Test
+    void alreadyDrivenInputCannotBeJoinedToAnotherOutputDriver() {
+        CanvasPanel canvas = new CanvasPanel();
+        canvas.setSize(900, 700);
+        Schematic schematic = canvas.schematic();
+        var firstDriver = schematic.add("input", 100, 100, Facing.EAST);
+        var sink = schematic.add("output", 260, 100, Facing.EAST);
+        var secondDriver = schematic.add("input", 100, 280, Facing.EAST);
+        Connectivity.PinPosition firstOutput = pin(schematic, firstDriver.id(), "out");
+        Connectivity.PinPosition drivenInput = pin(schematic, sink.id(), "in0");
+        Connectivity.PinPosition secondOutput = pin(schematic, secondDriver.id(), "out");
+        WireSegment existing = new WireSegment(
+                firstOutput.x(), firstOutput.y(), drivenInput.x(), drivenInput.y());
+        schematic.addWire(existing);
+        AtomicReference<String> status = new AtomicReference<>("");
+        canvas.setStatusMessageListener(status::set);
+
+        click(canvas, screen(canvas, drivenInput));
+        click(canvas, screen(canvas, secondOutput));
+
+        assertEquals(List.of(existing), schematic.wires());
+        assertEquals("Cannot connect nets with multiple output drivers", status.get());
+    }
+
+    @Test
+    void rotatedDlatchOutputCanBranchToTwoFullAdderInputs() {
+        CanvasPanel canvas = new CanvasPanel();
+        canvas.setSize(1100, 900);
+        Schematic schematic = canvas.schematic();
+        ComponentDefinition latchDefinition = canvas.componentLibrary().get("DLATCH");
+        ComponentDefinition faDefinition = canvas.componentLibrary().get("FA");
+        ComponentInstance latch = schematic.addInstance(
+                latchDefinition, 400, 300, Facing.NORTH);
+        ComponentInstance firstAdder = schematic.addInstance(
+                faDefinition, 100, 500, Facing.EAST);
+        ComponentInstance secondAdder = schematic.addInstance(
+                faDefinition, 700, 500, Facing.EAST);
+        Connectivity.PinPosition q = pin(schematic, latch.id(), "Q");
+        Connectivity.PinPosition firstA = pin(schematic, firstAdder.id(), "A");
+        Connectivity.PinPosition secondA = pin(schematic, secondAdder.id(), "A");
+
+        assertEquals(Facing.NORTH, canvas.endpointForPin(q).facing());
+        assertTrue(canvas.endpointForPin(q).output());
+        click(canvas, screen(canvas, q));
+        click(canvas, screen(canvas, firstA));
+        click(canvas, screen(canvas, q));
+        click(canvas, screen(canvas, secondA));
+
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        assertEquals(Set.of(q, firstA, secondA), netFor(topology, q).pins());
+        assertEquals(1, topology.nets().stream()
+                .filter(net -> net.pins().contains(q))
+                .count());
+    }
+
+    @Test
     void rotatedBoxPinMetadataUsesPortDirectionAndInstanceFacing() {
         CanvasPanel canvas = new CanvasPanel();
         Schematic schematic = canvas.schematic();
