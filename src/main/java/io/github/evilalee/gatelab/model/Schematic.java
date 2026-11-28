@@ -497,9 +497,12 @@ public final class Schematic {
             // their world positions while the body grows below its original top edge.
             int outputShift = nextDefinition.output().y() - previousDefinition.output().y();
             if (outputShift != 0) {
+                GateGeometry.Offset worldShift = GateGeometry.rotate(
+                        new GateGeometry.Offset(0, outputShift), current.facing());
                 replacement = new PlacedComponent(
-                        replacement.id(), replacement.typeId(), replacement.x(),
-                        Math.addExact(replacement.y(), outputShift),
+                        replacement.id(), replacement.typeId(),
+                        Math.addExact(replacement.x(), worldShift.x()),
+                        Math.addExact(replacement.y(), worldShift.y()),
                         replacement.facing(), replacement.attributes(), replacement.label());
             }
         }
