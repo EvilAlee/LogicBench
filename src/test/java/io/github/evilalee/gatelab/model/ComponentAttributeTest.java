@@ -183,7 +183,7 @@ class ComponentAttributeTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent first = schematic.add("input", 20, -10, Facing.EAST);
         PlacedComponent second = schematic.add("input", 20, 10, Facing.EAST);
-        PlacedComponent third = schematic.add("input", 20, 20, Facing.EAST);
+        PlacedComponent third = schematic.add("input", 20, 30, Facing.EAST);
         PlacedComponent gate = schematic.add("and", 100, 0, Facing.EAST);
         PlacedComponent output = schematic.add("output", 160, 0, Facing.EAST);
         schematic.addWire(20, -10, 70, -10);
@@ -197,7 +197,7 @@ class ComponentAttributeTest {
                 schematic.components().stream()
                         .filter(component -> component.id().equals(gate.id()))
                         .findFirst().orElseThrow()).inputCount());
-        schematic.addWire(20, 20, 70, 20);
+        schematic.addWire(20, 30, 70, 30);
         schematic.setInputValue(first.id(), true);
         schematic.setInputValue(second.id(), true);
         schematic.setInputValue(third.id(), true);
