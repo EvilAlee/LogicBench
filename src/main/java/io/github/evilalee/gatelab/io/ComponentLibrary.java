@@ -772,19 +772,34 @@ public final class ComponentLibrary {
             throw new IllegalArgumentException("chip requires at least one signal input and output");
         }
 
+        Map<String, String> inputAliases = new LinkedHashMap<>();
+        for (int index = 0; index < functionalInputs.size(); index++) {
+            inputAliases.put(functionalInputs.get(index), "P" + index);
+        }
+
         Map<String, String> outputAliases = new LinkedHashMap<>();
         StringBuilder source = new StringBuilder();
         for (int index = 0; index < outputExpressions.size(); index++) {
             ChipOutputExpression output = outputExpressions.get(index);
             String alias = "O" + index;
             outputAliases.put(alias, output.portName());
-            source.append(alias).append(" = ").append(output.expression()).append(";\n");
+            String safeExpression = output.expression();
+            // Physical port names may begin with digits (e.g. the 74139's 1G).
+            // Translate whole identifiers to expression-safe aliases; the public
+            // ComponentDefinition still exposes the exact datasheet pin names.
+            for (Map.Entry<String, String> inputAlias : inputAliases.entrySet()) {
+                String token = "(?<![A-Za-z0-9_])"
+                        + java.util.regex.Pattern.quote(inputAlias.getKey())
+                        + "(?![A-Za-z0-9_])";
+                safeExpression = safeExpression.replaceAll(token, inputAlias.getValue());
+            }
+            source.append(alias).append(" = ").append(safeExpression).append(";\n");
         }
         ExpressionCompiler.Compilation compilation =
                 ExpressionCompiler.compile(source.toString(), false, true);
-        if (compilation.netlist().inputs().size() != functionalInputs.size()
+        if (compilation.netlist().inputs().size() != inputAliases.size()
                 || !new java.util.LinkedHashSet<>(compilation.netlist().inputs())
-                        .equals(new java.util.LinkedHashSet<>(functionalInputs))) {
+                        .equals(new java.util.LinkedHashSet<>(inputAliases.values()))) {
             throw new IllegalStateException(
                     name + " expression inputs do not match the physical signal ports");
         }
@@ -793,7 +808,7 @@ public final class ComponentLibrary {
                 new SchematicLayout(gateDefinitions).layout(compilation.netlist());
         Schematic internal = layout.schematic();
         for (String input : functionalInputs) {
-            internal.setLabel(layout.inputComponentIds().get(input), input);
+            internal.setLabel(layout.inputComponentIds().get(inputAliases.get(input)), input);
         }
         outputAliases.forEach((alias, portName) ->
                 internal.setLabel(layout.outputComponentIds().get(alias), portName));
