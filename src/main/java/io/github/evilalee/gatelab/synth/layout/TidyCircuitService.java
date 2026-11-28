@@ -138,6 +138,7 @@ public final class TidyCircuitService {
         extraction.constantComponentIds().forEach((signal, oldId) -> {
             String newId = layout.constantComponentIds().get(signal);
             newToOldIds.put(newId, oldId);
+            labelsByNewId.put(newId, oldById.get(oldId).label());
         });
 
         List<PlacedComponent> components = new ArrayList<>();
@@ -181,6 +182,10 @@ public final class TidyCircuitService {
         });
         extraction.outputComponentIds().forEach((name, oldId) -> {
             String newId = layout.outputComponentIds().get(name);
+            labelsByNewId.put(newId, oldById.get(oldId).label());
+        });
+        extraction.constantComponentIds().forEach((literal, oldId) -> {
+            String newId = layout.constantComponentIds().get(literal);
             labelsByNewId.put(newId, oldById.get(oldId).label());
         });
 
