@@ -314,9 +314,11 @@ public final class ComponentDefinition {
 
     private static String requirePortIdentifier(String value, String label) {
         String text = requireText(value, label);
-        if (!text.matches("[A-Za-z0-9][A-Za-z0-9_]*")) {
+        // Some physical IC terminals use paired names such as the TI 74157's A/B.
+        if (!text.matches("[A-Za-z0-9][A-Za-z0-9_]*(/[A-Za-z0-9][A-Za-z0-9_]*)?")) {
             throw new IllegalArgumentException(
-                    label + " must contain only letters, digits and underscores: " + value);
+                    label + " must contain letters, digits, underscores, and at most one slash: "
+                            + value);
         }
         return text;
     }

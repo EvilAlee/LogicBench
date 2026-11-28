@@ -54,6 +54,10 @@ class Ti74xxTierAChipTest {
             int b, int a, int selectedInput, int selectedValue, boolean disabled) {
     }
 
+    private record QuadMultiplexerRow(
+            int select, int selectedValue, boolean disabled) {
+    }
+
     private static final List<BcdRow> SN7442_FUNCTION_TABLE = List.of(
             new BcdRow(0b0000, 0),
             new BcdRow(0b0001, 1),
@@ -217,6 +221,18 @@ class Ti74xxTierAChipTest {
             new DualMultiplexerRow(1, 0, 2, 1, false),
             new DualMultiplexerRow(1, 1, 3, 0, false),
             new DualMultiplexerRow(1, 1, 3, 1, false));
+
+    /**
+     * Rows transcribed from TI SN74157/SN74LS157 datasheet SDLS058, page 1:
+     * https://www.ti.com/lit/ds/symlink/sn74ls157.pdf
+     * The same table applies to each of the four true-output channels.
+     */
+    private static final List<QuadMultiplexerRow> SN74157_FUNCTION_TABLE = List.of(
+            new QuadMultiplexerRow(-1, 0, true),
+            new QuadMultiplexerRow(0, 0, false),
+            new QuadMultiplexerRow(0, 1, false),
+            new QuadMultiplexerRow(1, 0, false),
+            new QuadMultiplexerRow(1, 1, false));
 
     @Test
     void sn74138PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
@@ -579,6 +595,77 @@ class Ti74xxTierAChipTest {
     }
 
     @Test
+    void sn74157PackageAndPinAssignmentsMatchTheTiDip16NTable() throws IOException {
+        ComponentDefinition definition = library().get("74157");
+        assertEquals("DIP16", definition.packageType());
+        Map<String, Integer> expected = Map.ofEntries(
+                Map.entry("A/B", 1), Map.entry("1A", 2), Map.entry("1B", 3),
+                Map.entry("1Y", 4), Map.entry("2A", 5), Map.entry("2B", 6),
+                Map.entry("2Y", 7), Map.entry("GND", 8), Map.entry("3Y", 9),
+                Map.entry("3B", 10), Map.entry("3A", 11), Map.entry("4Y", 12),
+                Map.entry("4B", 13), Map.entry("4A", 14), Map.entry("G", 15),
+                Map.entry("VCC", 16));
+        Map<String, Integer> actual = new HashMap<>();
+        definition.ports().forEach(port -> actual.put(port.name(), port.pin()));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void sn74157AllFourChannelsMatchTheTiFunctionRowsWhenPowered() throws IOException {
+        Schematic schematic = quadMultiplexerFixture();
+        SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic);
+        Simulator simulator = new Simulator(compiled.circuit());
+        Map<String, String> inputIds = componentIdsByLabel(schematic, "input");
+        Map<String, String> outputIds = componentIdsByLabel(schematic, "output");
+        Map<String, InputPinAccess> inputs = new HashMap<>();
+        for (String name : List.of("A/B", "G", "VCC", "GND",
+                "1A", "1B", "2A", "2B", "3A", "3B", "4A", "4B")) {
+            inputs.put(name, new InputPinAccess(compiled.inputs().get(inputIds.get(name))));
+        }
+        simulator.setInputValue(inputs.get("VCC").pin(), Value.ONE);
+        simulator.setInputValue(inputs.get("GND").pin(), Value.ZERO);
+
+        for (QuadMultiplexerRow row : SN74157_FUNCTION_TABLE) {
+            simulator.setInputValue(inputs.get("G").pin(),
+                    row.disabled() ? Value.ONE : Value.ZERO);
+            simulator.setInputValue(inputs.get("A/B").pin(),
+                    row.select() == 1 ? Value.ONE : Value.ZERO);
+            for (int channel = 1; channel <= 4; channel++) {
+                int dataA = row.select() == 0 && !row.disabled()
+                        ? row.selectedValue() : ((channel + (row.select() < 0 ? 0 : row.select())) & 1);
+                int dataB = row.select() == 1 && !row.disabled()
+                        ? row.selectedValue() : 1 - dataA;
+                simulator.setInputValue(inputs.get(channel + "A").pin(),
+                        dataA == 1 ? Value.ONE : Value.ZERO);
+                simulator.setInputValue(inputs.get(channel + "B").pin(),
+                        dataB == 1 ? Value.ONE : Value.ZERO);
+            }
+            simulator.settle();
+
+            for (int channel = 1; channel <= 4; channel++) {
+                int selectedData = row.select() == 0
+                        ? componentData(row, channel, true) : componentData(row, channel, false);
+                Value expected = row.disabled() ? Value.ZERO
+                        : selectedData == 1 ? Value.ONE : Value.ZERO;
+                String output = channel + "Y";
+                assertEquals(expected,
+                        simulator.getProbeValue(compiled.outputs().get(
+                                outputIds.get("probe" + output))),
+                        "G=" + (row.disabled() ? "H" : "L")
+                                + ", A/B=" + row.select() + ", channel=" + channel);
+            }
+        }
+    }
+
+    private static int componentData(QuadMultiplexerRow row, int channel, boolean inputA) {
+        int alternate = (channel + (row.select() < 0 ? 0 : row.select())) & 1;
+        if (row.disabled()) {
+            return alternate;
+        }
+        return row.selectedValue();
+    }
+
+    @Test
     void sn7442OutputIsUnknownWhenItsVccSupplyIsNotConnected() throws IOException {
         Schematic schematic = bcdFixture(false);
         SchematicCompiler.SimulationResult result =
@@ -599,6 +686,25 @@ class Ti74xxTierAChipTest {
         addInputAt(schematic, "VCC", pins.get("VCC"), true);
         for (int output = 0; output < 8; output++) {
             addOutputAt(schematic, "probeY" + output, pins.get("Y" + output));
+        }
+        return schematic;
+    }
+
+    private static Schematic quadMultiplexerFixture() throws IOException {
+        ComponentDefinition definition = library().get("74157");
+        Schematic schematic = new Schematic(GATES);
+        ComponentInstance chip = schematic.addInstance(
+                definition, 350, 250, Facing.EAST);
+        Map<String, ComponentInstance.PinGeometry> pins = pins(chip, definition);
+        for (String name : List.of("A/B", "G",
+                "1A", "1B", "2A", "2B", "3A", "3B", "4A", "4B")) {
+            addInputAt(schematic, name, pins.get(name), false);
+        }
+        addInputAt(schematic, "GND", pins.get("GND"), false);
+        addInputAt(schematic, "VCC", pins.get("VCC"), true);
+        for (int channel = 1; channel <= 4; channel++) {
+            String output = channel + "Y";
+            addOutputAt(schematic, "probe" + output, pins.get(output));
         }
         return schematic;
     }

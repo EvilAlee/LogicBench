@@ -829,6 +829,22 @@ public final class ComponentLibrary {
                                 "(" + String.join(" | ", mux153FirstTerms) + ")"),
                         new ChipOutputExpression("2Y",
                                 "(" + String.join(" | ", mux153SecondTerms) + ")"))));
+
+        List<ChipPortSpec> mux157 = List.of(
+                in("A/B", 1), in("1A", 2), in("1B", 3), out("1Y", 4),
+                in("2A", 5), in("2B", 6), out("2Y", 7), in("GND", 8),
+                out("3Y", 9), in("3B", 10), in("3A", 11), out("4Y", 12),
+                in("4B", 13), in("4A", 14), in("G", 15), in("VCC", 16));
+        List<ChipOutputExpression> mux157Outputs = new ArrayList<>();
+        for (int channel = 1; channel <= 4; channel++) {
+            String muxExpression = "!G & ((!A/B & " + channel + "A) | (A/B & "
+                    + channel + "B))";
+            mux157Outputs.add(new ChipOutputExpression(
+                    channel + "Y", "(" + muxExpression + ")"));
+        }
+        chips.add(expressionChip(gateDefinitions, "74157",
+                "Quad 2-to-1 multiplexer with shared A/B select and active-low strobe",
+                mux157, mux157Outputs));
         return List.copyOf(chips);
     }
 
