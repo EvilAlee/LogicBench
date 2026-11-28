@@ -61,7 +61,7 @@ class MultiInputExportTest {
         }
 
         Schematic laidOut = new io.github.evilalee.gatelab.synth.layout.SchematicLayout(
-                DEFINITIONS).layout(rebuilt.netlist()).schematic();
+                DEFINITIONS).layout(extracted.netlist()).schematic();
         PlacedComponent laidOutNand = laidOut.components().stream()
                 .filter(component -> component.typeId().equals("nand"))
                 .findFirst().orElseThrow();
