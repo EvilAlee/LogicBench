@@ -117,7 +117,7 @@ class CanvasAutoWireTest {
     }
 
     @Test
-    void inputToInputIsRefusedWhenEitherExistingNetHasADriver() {
+    void inputToInputCanExtendAnAlreadyDrivenNetToAnotherSink() {
         CanvasPanel canvas = new CanvasPanel();
         canvas.setSize(900, 700);
         var driver = canvas.schematic().add("input", 100, 100, Facing.EAST);
@@ -134,9 +134,12 @@ class CanvasAutoWireTest {
         click(canvas, screen(canvas, drivenPin));
         click(canvas, screen(canvas, freePin));
 
-        assertEquals(1, canvas.schematic().wires().size());
-        assertEquals(
-                "Cannot connect two input pins when either net is already driven", status.get());
+        assertTrue(canvas.schematic().wires().size() > 1);
+        Connectivity.Result topology = Connectivity.analyze(
+                canvas.schematic().pinPositions(), canvas.schematic().wires());
+        assertEquals(Set.of(driverPin, drivenPin, freePin),
+                netFor(topology, driverPin).pins());
+        assertEquals("", status.get());
     }
 
     @Test

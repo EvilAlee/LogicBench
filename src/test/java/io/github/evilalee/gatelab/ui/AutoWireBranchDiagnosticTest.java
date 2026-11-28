@@ -18,91 +18,152 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * Baseline reproduction for the follow-up branch-attachment work.
- *
- * These tests intentionally describe the current failure modes; they do not
- * change production routing or click handling.
- */
+/** Regression coverage for pin and existing-net auto-route attachments. */
 class AutoWireBranchDiagnosticTest {
     @Test
-    void drivenOutputFanOutPassesDriveCheckButFallsBackBecauseItsOwnNetBlocksTheFirstCell() {
+    void oneOutputCanFanOutToThreeInputsInThreeRoutesAndUndoRestoresExactGeometry() {
         CanvasPanel canvas = new CanvasPanel();
         canvas.setSize(900, 700);
         Schematic schematic = canvas.schematic();
         var source = schematic.add("input", 100, 100, Facing.EAST);
-        var firstSink = schematic.add("output", 240, 100, Facing.EAST);
-        var secondSink = schematic.add("output", 100, 250, Facing.EAST);
+        var sink1 = schematic.add("output", 300, 100, Facing.EAST);
+        var sink2 = schematic.add("output", 200, 260, Facing.EAST);
+        var sink3 = schematic.add("output", 430, 260, Facing.EAST);
+        var unrelatedSource = schematic.add("input", 650, 450, Facing.EAST);
+        var unrelatedSink = schematic.add("output", 850, 450, Facing.EAST);
+
         Connectivity.PinPosition output = pin(schematic, source.id(), "out");
-        Connectivity.PinPosition firstInput = pin(schematic, firstSink.id(), "in0");
-        Connectivity.PinPosition secondInput = pin(schematic, secondSink.id(), "in0");
-        WireSegment existing = new WireSegment(
-                output.x(), output.y(), firstInput.x(), firstInput.y());
-        schematic.addWire(existing);
+        Connectivity.PinPosition input1 = pin(schematic, sink1.id(), "in0");
+        Connectivity.PinPosition input2 = pin(schematic, sink2.id(), "in0");
+        Connectivity.PinPosition input3 = pin(schematic, sink3.id(), "in0");
+        Connectivity.PinPosition unrelatedOut = pin(schematic, unrelatedSource.id(), "out");
+        Connectivity.PinPosition unrelatedIn = pin(schematic, unrelatedSink.id(), "in0");
 
-        Connectivity.Result before = Connectivity.analyze(
-                schematic.pinPositions(), schematic.wires());
-        Connectivity.Net sourceNet = netFor(before, output);
-        Connectivity.Net targetNet = netFor(before, secondInput);
-        assertEquals(1, driverCount(canvas, sourceNet));
-        assertEquals(0, driverCount(canvas, targetNet));
-
-        AutoWireRouter.Route route = AutoWireRouter.route(requestFor(
-                canvas, output, secondInput, before));
-        assertTrue(route.usedFallback(),
-                "the preferred eastward first cell is on the source's own horizontal net; "
-                        + "the source body's clearance blocks the perpendicular escape cells");
+        schematic.addWire(new WireSegment(output.x(), output.y(), input1.x(), input1.y()));
+        schematic.addWire(new WireSegment(
+                unrelatedOut.x(), unrelatedOut.y(), unrelatedIn.x(), unrelatedIn.y()));
 
         AtomicReference<String> status = new AtomicReference<>("");
         canvas.setStatusMessageListener(status::set);
-        click(canvas, screen(canvas, output));
-        click(canvas, screen(canvas, secondInput));
 
-        assertEquals(2, schematic.wires().size());
-        assertEquals("Could not find a clean route; drew a direct wire", status.get(),
-                "the net-based drive check accepts one driver feeding another input; "
-                        + "the route falls back instead of reporting a driver refusal");
-        Connectivity.Result after = Connectivity.analyze(
+        click(canvas, screen(canvas, output));
+        click(canvas, screen(canvas, input2));
+        assertEquals("", status.get());
+        Connectivity.Result afterSecond = Connectivity.analyze(
                 schematic.pinPositions(), schematic.wires());
-        assertEquals(Set.of(output, firstInput, secondInput),
-                netFor(after, output).pins());
+        assertEquals(Set.of(output, input1, input2),
+                netFor(afterSecond, output).pins());
+        assertEquals(Set.of(unrelatedOut, unrelatedIn),
+                netFor(afterSecond, unrelatedOut).pins());
+
+        List<WireSegment> beforeThirdRoute = schematic.wires();
+        click(canvas, screen(canvas, output));
+        click(canvas, screen(canvas, input3));
+        assertEquals("", status.get());
+
+        Connectivity.Result afterThird = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        assertEquals(Set.of(output, input1, input2, input3),
+                netFor(afterThird, output).pins());
+        assertEquals(Set.of(unrelatedOut, unrelatedIn),
+                netFor(afterThird, unrelatedOut).pins());
+        assertNotEquals(netFor(afterThird, output), netFor(afterThird, unrelatedOut));
+
+        assertTrue(canvas.undo());
+        assertEquals(beforeThirdRoute, schematic.wires(),
+                "one undo removes the final branch and restores the exact previous geometry");
+        assertTrue(canvas.redo());
+        assertEquals(afterThird.wires().stream().collect(java.util.stream.Collectors.toSet()),
+                Connectivity.analyze(schematic.pinPositions(), schematic.wires()).nets().stream()
+                        .flatMap(net -> net.segments().stream())
+                        .collect(java.util.stream.Collectors.toSet()));
     }
 
     @Test
-    void clickingAWireAsTheSecondEndpointCancelsThePendingPinRoute() {
+    void pinThenWireClickCreatesInteriorTJunctionAtNearestGridPoint() {
         CanvasPanel canvas = wiredScene();
-        Connectivity.PinPosition freeInput = freeInput(canvas.schematic());
-        WireSegment targetWire = canvas.schematic().wires().getFirst();
-        int wireCount = canvas.schematic().wires().size();
+        Schematic schematic = canvas.schematic();
+        Connectivity.PinPosition freeInput = freeInput(schematic);
+        WireSegment targetWire = schematic.wires().getFirst();
+        int clickX = (targetWire.x1() + targetWire.x2()) / 2 + 3;
+        int clickY = targetWire.y1();
+        Connectivity.Point attachment = new Connectivity.Point(
+                Math.round(clickX / 10.0f) * 10, clickY);
 
         click(canvas, screen(canvas, freeInput));
         assertTrue(canvas.hasPendingAutoWireStart());
-        click(canvas, screen(canvas, midpoint(targetWire)));
+        move(canvas, screen(canvas, clickX, clickY));
+        click(canvas, screen(canvas, clickX, clickY));
 
-        assertFalse(canvas.hasPendingAutoWireStart(),
-                "beginEditGesture clears the pin start when the second hit is a wire, not a pin");
-        assertEquals(wireCount, canvas.schematic().wires().size());
-        assertEquals(List.of(targetWire), canvas.selectedWires());
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        assertFalse(canvas.hasPendingAutoWireStart());
+        assertTrue(topology.junctions().contains(attachment));
+        assertEquals(Set.of(freeInput, pinOnExistingDriverNet(schematic)),
+                netFor(topology, freeInput).pins());
     }
 
     @Test
-    void clickingAWireFirstSelectsItInsteadOfArmingAWireAttachment() {
+    void wireThenPinClickCreatesInteriorTJunction() {
         CanvasPanel canvas = wiredScene();
-        Connectivity.PinPosition freeInput = freeInput(canvas.schematic());
-        WireSegment targetWire = canvas.schematic().wires().getFirst();
-        int wireCount = canvas.schematic().wires().size();
+        Schematic schematic = canvas.schematic();
+        Connectivity.PinPosition freeInput = freeInput(schematic);
+        WireSegment sourceWire = schematic.wires().getFirst();
+        Connectivity.Point attachment = new Connectivity.Point(
+                (sourceWire.x1() + sourceWire.x2()) / 2, sourceWire.y1());
 
-        click(canvas, screen(canvas, midpoint(targetWire)));
-        assertFalse(canvas.hasPendingAutoWireStart(),
-                "a wire-first click follows the ordinary wire selection gesture");
-        assertEquals(List.of(targetWire), canvas.selectedWires());
-
+        click(canvas, screen(canvas, attachment));
+        assertTrue(canvas.hasPendingAutoWireStart());
         click(canvas, screen(canvas, freeInput));
-        assertTrue(canvas.hasPendingAutoWireStart(),
-                "the following pin click arms a new pin start, rather than completing wire-to-pin");
-        assertEquals(wireCount, canvas.schematic().wires().size());
+
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        assertFalse(canvas.hasPendingAutoWireStart());
+        assertTrue(topology.junctions().contains(attachment));
+        assertTrue(netFor(topology, freeInput).pins().contains(freeInput));
+        assertTrue(netFor(topology, freeInput).pins().contains(pinOnExistingDriverNet(schematic)));
+    }
+
+    @Test
+    void branchAtExistingWireEndpointAndExistingJunctionAddsSegmentsToThoseNodes() {
+        CanvasPanel endpointCanvas = new CanvasPanel();
+        endpointCanvas.setSize(900, 700);
+        Schematic endpointSchematic = endpointCanvas.schematic();
+        var target = endpointSchematic.add("output", 400, 250, Facing.EAST);
+        Connectivity.PinPosition targetPin = pin(endpointSchematic, target.id(), "in0");
+        WireSegment endpointNet = new WireSegment(100, 100, 200, 100);
+        endpointSchematic.addWire(endpointNet);
+
+        click(endpointCanvas, screen(endpointCanvas, 100, 100));
+        assertTrue(endpointCanvas.hasPendingAutoWireStart());
+        click(endpointCanvas, screen(endpointCanvas, targetPin));
+        Connectivity.Result endpointTopology = Connectivity.analyze(
+                endpointSchematic.pinPositions(), endpointSchematic.wires());
+        assertTrue(netFor(endpointTopology, targetPin).segments().contains(endpointNet));
+        assertEquals(2, endpointTopology.nets().size(),
+                "the branch joins the endpoint's wire-only net without merging another net");
+
+        CanvasPanel junctionCanvas = new CanvasPanel();
+        junctionCanvas.setSize(900, 700);
+        Schematic junctionSchematic = junctionCanvas.schematic();
+        var junctionTarget = junctionSchematic.add("output", 400, 300, Facing.EAST);
+        Connectivity.PinPosition junctionTargetPin =
+                pin(junctionSchematic, junctionTarget.id(), "in0");
+        Connectivity.Point junction = new Connectivity.Point(200, 100);
+        junctionSchematic.addWire(new WireSegment(100, 100, 300, 100));
+        junctionSchematic.addWire(new WireSegment(200, 100, 200, 200));
+
+        click(junctionCanvas, screen(junctionCanvas, junction));
+        assertTrue(junctionCanvas.hasPendingAutoWireStart());
+        click(junctionCanvas, screen(junctionCanvas, junctionTargetPin));
+        Connectivity.Result junctionTopology = Connectivity.analyze(
+                junctionSchematic.pinPositions(), junctionSchematic.wires());
+        assertTrue(junctionTopology.junctions().contains(junction));
+        assertTrue(netFor(junctionTopology, junctionTargetPin).pins().contains(junctionTargetPin));
+        assertEquals(1, junctionTopology.nets().size());
     }
 
     private static CanvasPanel wiredScene() {
@@ -118,6 +179,16 @@ class AutoWireBranchDiagnosticTest {
         return canvas;
     }
 
+    private static Connectivity.PinPosition pinOnExistingDriverNet(Schematic schematic) {
+        Connectivity.Result topology = Connectivity.analyze(
+                schematic.pinPositions(), schematic.wires());
+        return topology.nets().stream()
+                .filter(net -> net.segments().size() > 0)
+                .flatMap(net -> net.pins().stream())
+                .filter(pin -> pin.pinId().equals("out"))
+                .findFirst().orElseThrow();
+    }
+
     private static Connectivity.PinPosition freeInput(Schematic schematic) {
         return schematic.pinPositions().stream()
                 .filter(pin -> schematic.components().stream()
@@ -127,35 +198,6 @@ class AutoWireBranchDiagnosticTest {
                         contains(wire, new Connectivity.Point(pin.x(), pin.y()))))
                 .max(java.util.Comparator.comparingInt(Connectivity.PinPosition::y))
                 .orElseThrow();
-    }
-
-    private static AutoWireRouter.Request requestFor(
-            CanvasPanel canvas,
-            Connectivity.PinPosition source,
-            Connectivity.PinPosition target,
-            Connectivity.Result topology) {
-        Schematic schematic = canvas.schematic();
-        List<GateGeometry.Bounds> bounds = new ArrayList<>();
-        for (PlacedComponent component : schematic.components()) {
-            GateGeometry.Bounds relative = GateGeometry.bounds(
-                    schematic.definitionFor(component), component.facing());
-            bounds.add(new GateGeometry.Bounds(
-                    component.x() + relative.x(), component.y() + relative.y(),
-                    relative.width(), relative.height()));
-        }
-        List<Connectivity.Point> otherPins = schematic.pinPositions().stream()
-                .filter(pin -> !pin.equals(source) && !pin.equals(target))
-                .map(pin -> new Connectivity.Point(pin.x(), pin.y()))
-                .toList();
-        return new AutoWireRouter.Request(
-                canvas.endpointForPin(source), canvas.endpointForPin(target), bounds,
-                otherPins, schematic.wires(), topology.junctions());
-    }
-
-    private static long driverCount(CanvasPanel canvas, Connectivity.Net net) {
-        return net.pins().stream()
-                .filter(pin -> canvas.endpointForPin(pin).output())
-                .count();
     }
 
     private static Connectivity.Net netFor(
@@ -173,11 +215,6 @@ class AutoWireBranchDiagnosticTest {
                 .findFirst().orElseThrow();
     }
 
-    private static Connectivity.Point midpoint(WireSegment wire) {
-        return new Connectivity.Point(
-                (wire.x1() + wire.x2()) / 2, (wire.y1() + wire.y2()) / 2);
-    }
-
     private static boolean contains(WireSegment wire, Connectivity.Point point) {
         return wire.isHorizontal()
                 ? point.y() == wire.y1() && point.x() >= wire.x1() && point.x() <= wire.x2()
@@ -185,12 +222,15 @@ class AutoWireBranchDiagnosticTest {
     }
 
     private static Point screen(CanvasPanel canvas, Connectivity.PinPosition pin) {
-        var point = canvas.viewTransform().worldToScreen(pin.x(), pin.y());
-        return new Point((int) Math.round(point.x), (int) Math.round(point.y));
+        return screen(canvas, pin.x(), pin.y());
     }
 
-    private static Point screen(CanvasPanel canvas, Connectivity.Point world) {
-        var point = canvas.viewTransform().worldToScreen(world.x(), world.y());
+    private static Point screen(CanvasPanel canvas, Connectivity.Point point) {
+        return screen(canvas, point.x(), point.y());
+    }
+
+    private static Point screen(CanvasPanel canvas, int worldX, int worldY) {
+        var point = canvas.viewTransform().worldToScreen(worldX, worldY);
         return new Point((int) Math.round(point.x), (int) Math.round(point.y));
     }
 
@@ -206,6 +246,15 @@ class AutoWireBranchDiagnosticTest {
                 point.x, point.y, 1, false, MouseEvent.BUTTON1);
         for (var listener : canvas.getMouseListeners()) {
             listener.mouseReleased(release);
+        }
+    }
+
+    private static void move(CanvasPanel canvas, Point point) {
+        MouseEvent event = new MouseEvent(canvas, MouseEvent.MOUSE_MOVED,
+                System.currentTimeMillis(), 0,
+                point.x, point.y, 0, false, MouseEvent.NOBUTTON);
+        for (var listener : canvas.getMouseMotionListeners()) {
+            listener.mouseMoved(event);
         }
     }
 }
