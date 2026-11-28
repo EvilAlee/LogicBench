@@ -23,6 +23,9 @@ class SchematicJsonTest {
         Schematic original = new Schematic(DEFINITIONS);
         int x = 100;
         for (GateDef definition : DEFINITIONS) {
+            if (!definition.id().equals(definition.family())) {
+                continue; // Variants are attributes of a family, not placeable type ids.
+            }
             for (Facing facing : Facing.values()) {
                 PlacedComponent placed = original.add(
                         definition.id(), x, 100 + facing.ordinal() * 60, facing);
