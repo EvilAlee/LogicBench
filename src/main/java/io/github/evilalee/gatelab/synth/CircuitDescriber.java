@@ -597,16 +597,19 @@ public final class CircuitDescriber {
             pinByKey.put(pin.componentId() + "|" + pin.pinId(), pin);
         }
         GateDef outputDefinition = source.gateDefinitions().stream()
-                .filter(definition -> definition.family().equals("output")
-                        && definition.size().equals("narrow"))
+                .filter(definition -> definition.family().equals("output"))
                 .findFirst().orElseThrow(() ->
                         new IllegalStateException("Output probe geometry is missing."));
+        Set<String> usedIds = new HashSet<>();
+        source.components().forEach(component -> usedIds.add(component.id()));
+        source.componentInstances().forEach(instance -> usedIds.add(instance.id()));
+        List<DisplayComponent.SinkPin> displaySinks = DisplayComponent.sinkPins(source);
         int generated = 1;
         for (PlacedComponent display : source.components()) {
             if (!DisplayComponent.isDisplay(display.typeId())) {
                 continue;
             }
-            List<DisplayComponent.SinkPin> sinks = DisplayComponent.sinkPins(source).stream()
+            List<DisplayComponent.SinkPin> sinks = displaySinks.stream()
                     .filter(sink -> sink.componentId().equals(display.id()))
                     .toList();
             projected.remove(display.id());
@@ -617,7 +620,10 @@ public final class CircuitDescriber {
                     throw new IllegalStateException(
                             "Missing display pin " + sink.componentId() + "." + sink.pinId());
                 }
-                String id = "display-export-" + generated++;
+                String id;
+                do {
+                    id = "display-export-" + generated++;
+                } while (!usedIds.add(id));
                 GateGeometry.Offset origin = outputDefinition.origin();
                 projected.add(new PlacedComponent(
                         id, "output", position.x() - origin.x(), position.y() - origin.y(),
