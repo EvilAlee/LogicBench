@@ -27,6 +27,14 @@ name and hash so a document can retain the exact definition it was built
 against. The hash includes the definition metadata, ordered port contract,
 and internal schematic topology.
 
+Chip definitions may additionally declare a package (`DIP14` or `DIP16`)
+and a 1-based physical pin number on each port. A chip package reserves all
+physical package positions: unassigned positions are rendered as NC and do
+not become electrical terminals. Chip signal names such as `1A` and `1Y`
+are valid port names. The ordinary definition constructor and ordinary boxes
+remain package-free and keep their existing pin layout and hash.
+
+
 ## Instances and pin geometry
 
 A `ComponentInstance` is a placed black box in a `Schematic`. It stores the
@@ -48,6 +56,14 @@ right. Clock pins retain their clock marker, and an optional instance label is
 shown beneath the definition name. Rendering uses the geometry above without
 moving or changing any electrical terminal. Rotation transforms the body and
 all pins together.
+
+Chip-style definitions use their physical DIP pin map instead of the ordinary
+input/output edge ordering. Pins 1 through N/2 appear down the left side;
+pins N/2+1 through N appear up the right side. The pin-number values and
+signal names remain attached to their physical terminals in all four
+orientations. Chip package positions without a signal are shown as NC and are
+not connected to the flattened circuit. The DIP outline has a top notch,
+signal names inside the body, and physical pin numbers outside it.
 
 ## Compiler flattening
 
@@ -97,6 +113,13 @@ from gate netlists and use the same layout engine.
 | `JKFF` | `J, K, CLK` | `Q, QN` | `Q` |
 | `HA` | `A, B` | `S, C` | none |
 | `FA` | `A, B, CIN` | `S, COUT` | none |
+
+The **TTL 74xx** Built-in explorer group includes `7400`, `7402`, `7404`,
+`7408`, `7410`, `7411`, `7420`, `7427`, `7430`, `7432`, and
+`7486`. Each is a chip-style DIP14 definition synthesized from LogicBench's
+own gates. Their declared VCC and GND ports are ordinary inputs, but they are
+not needed for logic evaluation: the parts simulate as ideal logic even when
+the supply terminals are left unconnected.
 
 User definitions are stored as one portable `.lbcomp` file per component in
 `~/.config/logicbench/components/` (or
@@ -189,6 +212,13 @@ tooltips. Selecting a component enters placement mode and shows its preview on
 the canvas. Dragging a tree item onto the canvas places it at the drop point.
 Each placement is one undoable operation.
 
+The **Simulate > Require power on chips** checkbox is a transient display
+diagnostic (default off and not stored in circuit files). It reads the current
+simulated net values at each chip's VCC and GND pins. A chip is marked with a
+red outline and listed in the status line as `U3 (7400): no power` unless
+VCC is 1 and GND is 0. This option does not drive the power pins or change
+simulation behavior.
+
 The **Circuit > Components** submenu provides **Import component file(s)...**
 (multiple selection), **Export component...**, **Load library file...**,
 **Reveal library folder**, and **Refresh**. Load library file accepts a
@@ -263,6 +293,28 @@ A standalone `.lbcomp` file has this version-1 shape:
 The `internalCircuit` object uses the ordinary versioned `.lbc` circuit
 format. The example abbreviates the component and wire arrays. Older version-1
 definition JSON files remain importable for compatibility.
+
+For a chip-style definition, the standalone `.lbcomp` JSON adds a package
+field and one optional pin number on each port, for example:
+
+```json
+{
+  "formatVersion": 1,
+  "name": "7400",
+  "description": "Quad 2-input NAND gates",
+  "category": "TTL 74xx",
+  "package": "DIP14",
+  "ports": [
+    {"name": "1A", "direction": "IN", "isClock": false, "pin": 1},
+    {"name": "1B", "direction": "IN", "isClock": false, "pin": 2},
+    {"name": "1Y", "direction": "OUT", "isClock": false, "pin": 3}
+  ]
+}
+```
+
+The example omits the remaining ports, hash, primaryOutput and internal
+circuit for brevity. The embedded `componentDefinitions` entries use the same
+additive `package` and port `pin` properties.
 
 
 

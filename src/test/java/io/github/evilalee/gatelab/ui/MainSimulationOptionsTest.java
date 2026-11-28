@@ -3,6 +3,7 @@ package io.github.evilalee.gatelab.ui;
 import io.github.evilalee.gatelab.model.UndefinedInputMode;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 import javax.swing.JRadioButtonMenuItem;
 
@@ -30,6 +31,35 @@ class MainSimulationOptionsTest {
         assertEquals(revision + 1, canvas.schematic().modificationCount());
         assertEquals(recomputes + 1, canvas.simulationRecomputeCount());
         assertFalse(canvas.canUndo());
+    }
+
+    @Test
+    void requirePowerOnChipsCheckboxStartsOffAndDoesNotRecomputeOrChangeHistory() {
+        CanvasPanel canvas = new CanvasPanel();
+        assertFalse(canvas.requirePowerOnChips());
+        JMenu simulate = Main.createSimulateMenu(canvas);
+        JCheckBoxMenuItem requirePower = null;
+        for (java.awt.Component component : simulate.getMenuComponents()) {
+            if (component instanceof JCheckBoxMenuItem item
+                    && "Require power on chips".equals(item.getText())) {
+                requirePower = item;
+                break;
+            }
+        }
+        assertNotNull(requirePower);
+        assertFalse(requirePower.isSelected());
+
+        long revision = canvas.schematic().modificationCount();
+        long recomputes = canvas.simulationRecomputeCount();
+        requirePower.doClick();
+        assertTrue(canvas.requirePowerOnChips());
+        assertEquals(revision, canvas.schematic().modificationCount());
+        assertEquals(recomputes, canvas.simulationRecomputeCount());
+
+        requirePower.doClick();
+        assertFalse(canvas.requirePowerOnChips());
+        assertEquals(revision, canvas.schematic().modificationCount());
+        assertEquals(recomputes, canvas.simulationRecomputeCount());
     }
 
     private static JRadioButtonMenuItem modeItem(JMenu menu, String label) {

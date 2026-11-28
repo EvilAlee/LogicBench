@@ -31,6 +31,9 @@ public final class ComponentDefinitionJson {
         root.addProperty("name", definition.name());
         root.addProperty("description", definition.description());
         root.addProperty("category", definition.category());
+        if (definition.packageType() != null) {
+            root.addProperty("package", definition.packageType());
+        }
 
         JsonArray ports = new JsonArray();
         for (ComponentDefinition.Port port : definition.ports()) {
@@ -38,6 +41,9 @@ public final class ComponentDefinitionJson {
             item.addProperty("name", port.name());
             item.addProperty("direction", port.direction().name());
             item.addProperty("isClock", port.isClock());
+            if (port.pin() != null) {
+                item.addProperty("pin", port.pin());
+            }
             ports.add(item);
         }
         root.add("ports", ports);
@@ -101,8 +107,9 @@ public final class ComponentDefinitionJson {
                         context + ".direction must be IN or OUT", exception);
             }
             boolean clock = booleanValue(item, "isClock", context);
+            Integer pin = optionalInteger(item, "pin", context);
             try {
-                ports.add(new ComponentDefinition.Port(portName, direction, clock));
+                ports.add(new ComponentDefinition.Port(portName, direction, clock, pin));
             } catch (IllegalArgumentException exception) {
                 throw new IllegalArgumentException(context + ": " + exception.getMessage(), exception);
             }
@@ -115,8 +122,9 @@ public final class ComponentDefinitionJson {
         }
         Schematic internal = SchematicJson.fromJson(
                 circuitElement.toString(), gateDefinitions);
+        String packageType = optionalString(root, "package");
         ComponentDefinition definition = new ComponentDefinition(
-                name, description, category, ports, primaryOutput, internal);
+                name, description, category, ports, primaryOutput, packageType, internal);
         if (!definition.hash().equalsIgnoreCase(storedHash)) {
             throw new IllegalArgumentException(
                     "component definition hash mismatch for " + name
@@ -136,6 +144,22 @@ public final class ComponentDefinitionJson {
         } catch (NumberFormatException | ArithmeticException exception) {
             throw new IllegalArgumentException(
                     "component definition." + field + " must be a 32-bit integer", exception);
+        }
+    }
+
+    private static Integer optionalInteger(JsonObject object, String field, String context) {
+        JsonElement value = object.get(field);
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
+            throw new IllegalArgumentException(context + "." + field + " must be an integer");
+        }
+        try {
+            return new java.math.BigDecimal(value.getAsString()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException exception) {
+            throw new IllegalArgumentException(context + "." + field + " must be a 32-bit integer",
+                    exception);
         }
     }
 

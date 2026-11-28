@@ -37,6 +37,8 @@
 - feature-circuit-exporter: add deterministic, Swing-free schematic/netlist expression export; headless tests first, Circuit menu action last.
 - feature-copy-paste: mixed-selection clipboard codec, transactional collision-safe paste, Cut/Copy/Paste/Duplicate actions and headless regression coverage.
 - feature-ai-16-inputs: 16-input combinational AI validation with all-row bit-parallel spec checks and deterministic real-engine cross-checks; sequential limits unchanged.
+- feature-ti-chips-1: optional DIP14/DIP16 chip-style definitions, real pin-number geometry and rendering, transient simulated VCC/GND warnings, and the first TI 74xx built-in parts.
+- TI 74xx pinout note: implemented verbatim from the owner's supplied mapping; no discrepancy was identified or changed. Datasheet confirmation remains a human check, especially the listed NC positions on 7420 (3, 11) and 7430 (9, 10, 13).
 - feature-component-files: portable one-file-per-component user library, atomic writes, single-file migration, collision-aware import/export, refresh, and explorer delete/tooltip actions.
 
 ## Next
