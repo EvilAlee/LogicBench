@@ -186,6 +186,11 @@ class ChipPowerSimulationTest {
         SchematicCompiler.SimulationResult result =
                 SchematicCompiler.compileAndSettle(fixture.schematic());
         assertEquals(Value.X, result.outputValues().get("probe"), supply.name());
+        PinStateHelper.Result pinStates = PinStateHelper.analyze(fixture.schematic(), result);
+        for (String output : List.of("1Y", "2Y", "3Y", "4Y")) {
+            assertEquals(Value.X, pinStates.requirePin(fixture.chip().id(), output).value(),
+                    supply + " output " + output);
+        }
         assertEquals("U1 (7400): no power",
                 ChipPowerChecker.statusText(fixture.schematic(), result, true));
         assertFalse(result.oscillating());
