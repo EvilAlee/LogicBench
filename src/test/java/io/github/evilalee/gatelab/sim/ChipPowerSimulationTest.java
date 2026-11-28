@@ -12,7 +12,6 @@ import io.github.evilalee.gatelab.model.PlacedComponent;
 import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.model.WireSegment;
-import io.github.evilalee.gatelab.synth.GateOperator;
 import io.github.evilalee.gatelab.ui.PinDotStyle;
 import org.junit.jupiter.api.Test;
 
@@ -100,7 +99,9 @@ class ChipPowerSimulationTest {
         java.util.concurrent.atomic.AtomicReference<String> status =
                 new java.util.concurrent.atomic.AtomicReference<>("");
         canvas.setStatusMessageListener(status::set);
-        canvas.schematic().addInstance(library().get("7400"), "U3", 200, 200, Facing.EAST);
+        ComponentDefinition chip = library().get("7400");
+        canvas.schematic().addInstance(new ComponentInstance(
+                chip.name(), chip.hash(), "U3", "", 200, 200, Facing.EAST), chip);
 
         assertTrue(status.get().contains("U3 (7400): no power"));
         assertTrue(status.get().contains("chip outputs are X"));
@@ -259,13 +260,16 @@ class ChipPowerSimulationTest {
         schematic.add(new PlacedComponent(
                 id, type, pinX - output.x(), pinY - output.y(),
                 Facing.EAST, Map.of(), label));
-        schematic.setInputValue(id, high);
+        if (type.equals("clock")) {
+            schematic.setClockValue(id, high);
+        } else {
+            schematic.setInputValue(id, high);
+        }
     }
 
     private static void addClockAt(
             Schematic schematic, String id, ComponentInstance.PinGeometry pin, boolean high) {
         addInputAt(schematic, id, pin.x(), pin.y(), high, id, "clock");
-        schematic.setClockValue(id, high);
     }
 
     private static void addOutputAt(
