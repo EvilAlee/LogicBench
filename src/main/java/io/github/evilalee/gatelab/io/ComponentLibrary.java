@@ -573,6 +573,13 @@ public final class ComponentLibrary {
         }
     }
 
+    private record ChipOutputExpression(String portName, String expression) {
+        private ChipOutputExpression {
+            Objects.requireNonNull(portName, "portName");
+            Objects.requireNonNull(expression, "expression");
+        }
+    }
+
     private static ChipPortSpec in(String name, int pin) {
         return new ChipPortSpec(name, pin, ComponentDefinition.Direction.IN);
     }
@@ -680,7 +687,88 @@ public final class ComponentLibrary {
                 in("H", 12), in("VCC", 14));
         chips.add(chip(gateDefinitions, "7430", "8-input NAND gate", nand8,
                 List.of(fn("Y", GateOperator.NAND, "A", "B", "C", "D", "E", "F", "G", "H"))));
+
+        List<ChipPortSpec> decoder7442 = List.of(
+                out("0", 1), out("1", 2), out("2", 3), out("3", 4),
+                out("4", 5), out("5", 6), out("6", 7), in("GND", 8),
+                out("7", 9), out("8", 10), out("9", 11), in("D", 12),
+                in("C", 13), in("B", 14), in("A", 15), in("VCC", 16));
+        List<ChipOutputExpression> decoderRows = new ArrayList<>();
+        List<String> inputOrder = List.of("D", "C", "B", "A");
+        for (int decimal = 0; decimal < 10; decimal++) {
+            List<String> mismatches = new ArrayList<>(4);
+            for (int bit = 3; bit >= 0; bit--) {
+                String input = inputOrder.get(3 - bit);
+                mismatches.add(((decimal >>> bit) & 1) == 0 ? input : "!" + input);
+            }
+            decoderRows.add(new ChipOutputExpression(
+                    Integer.toString(decimal), String.join(" | ", mismatches)));
+        }
+        chips.add(expressionChip(gateDefinitions, "7442",
+                "BCD-to-decimal decoder with ten active-low outputs", decoder7442,
+                decoderRows));
         return List.copyOf(chips);
+    }
+
+    /**
+     * Synthesizes a multi-output combinational chip through the existing expression
+     * compiler and schematic layout path, then adds the two physical supply ports.
+     */
+    private static ComponentDefinition expressionChip(
+            List<GateDef> gateDefinitions,
+            String name,
+            String description,
+            List<ChipPortSpec> chipPorts,
+            List<ChipOutputExpression> outputExpressions) {
+        List<String> functionalInputs = chipPorts.stream()
+                .filter(port -> port.direction() == ComponentDefinition.Direction.IN)
+                .map(ChipPortSpec::name)
+                .filter(port -> !port.equals("VCC") && !port.equals("GND"))
+                .toList();
+        if (functionalInputs.isEmpty() || outputExpressions.isEmpty()) {
+            throw new IllegalArgumentException("chip requires at least one signal input and output");
+        }
+
+        Map<String, String> outputAliases = new LinkedHashMap<>();
+        StringBuilder source = new StringBuilder();
+        for (int index = 0; index < outputExpressions.size(); index++) {
+            ChipOutputExpression output = outputExpressions.get(index);
+            String alias = "O" + index;
+            outputAliases.put(alias, output.portName());
+            source.append(alias).append(" = ").append(output.expression()).append(";\n");
+        }
+        ExpressionCompiler.Compilation compilation =
+                ExpressionCompiler.compile(source.toString(), false, true);
+        if (!compilation.netlist().inputs().equals(functionalInputs)) {
+            throw new IllegalStateException(
+                    name + " expression inputs do not match the physical signal ports");
+        }
+
+        SchematicLayout.LayoutResult layout =
+                new SchematicLayout(gateDefinitions).layout(compilation.netlist());
+        Schematic internal = layout.schematic();
+        for (String input : functionalInputs) {
+            internal.setLabel(layout.inputComponentIds().get(input), input);
+        }
+        outputAliases.forEach((alias, portName) ->
+                internal.setLabel(layout.outputComponentIds().get(alias), portName));
+
+        int bottom = internal.pinPositions().stream()
+                .mapToInt(Connectivity.PinPosition::y).max().orElse(0);
+        internal.add(new PlacedComponent(
+                "chip-vcc", "input", 0, bottom + 80,
+                Facing.EAST, Map.of(), "VCC"));
+        internal.add(new PlacedComponent(
+                "chip-gnd", "input", 0, bottom + 120,
+                Facing.EAST, Map.of(), "GND"));
+
+        List<ComponentDefinition.Port> ports = new ArrayList<>();
+        for (ChipPortSpec port : chipPorts) {
+            ports.add(new ComponentDefinition.Port(
+                    port.name(), port.direction(), false, port.pin()));
+        }
+        return new ComponentDefinition(
+                name, description, "TTL 74xx", ports, null, "DIP16", internal);
     }
 
     private static ComponentDefinition chip(
