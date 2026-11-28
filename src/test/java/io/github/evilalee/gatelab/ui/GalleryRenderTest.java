@@ -46,8 +46,8 @@ class GalleryRenderTest {
     }
 
     @Test
-    void headlessGalleryPaintsAllElevenVisibleDefinitionsAcrossFourFacings() {
-        assertEquals(11, CanvasPanel.galleryDefinitions(GateLibrary.load().all()).size());
+    void headlessGalleryPaintsAllThirtyOneVisibleDefinitionsAcrossFourFacings() {
+        assertEquals(31, CanvasPanel.galleryDefinitions(GateLibrary.load().all()).size());
         assertEquals(4, Facing.values().length);
 
         CanvasPanel canvas = new CanvasPanel(true);
