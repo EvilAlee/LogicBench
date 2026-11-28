@@ -15,6 +15,8 @@ class MultiInputGateChangeTest {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent gate = schematic.add("and", 100, 100, Facing.EAST,
                 java.util.Map.of("inputs", "4"));
+        PlacedComponent output = schematic.add("output", 200, 100, Facing.EAST);
+        schematic.addWire(100, 100, 200, 100);
         for (int index = 0; index < 4; index++) {
             int y = 70 + index * 20;
             PlacedComponent source = new PlacedComponent(
@@ -44,6 +46,14 @@ class MultiInputGateChangeTest {
                             && pin.pinId().equals("in" + index)),
                     "surviving input " + index + " should retain its source");
         }
+        Connectivity.Net outputNet = topology.nets().stream()
+                .filter(candidate -> candidate.pins().stream().anyMatch(pin ->
+                        pin.componentId().equals(gate.id()) && pin.pinId().equals("out")))
+                .findFirst().orElseThrow();
+        assertTrue(outputNet.pins().stream().anyMatch(pin ->
+                pin.componentId().equals(output.id()) && pin.pinId().equals("in0")),
+                "the output wire should follow the resized gate");
+
         for (int index = 2; index < 4; index++) {
             int removedIndex = index;
             assertTrue(topology.nets().stream().noneMatch(candidate ->
