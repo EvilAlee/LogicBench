@@ -23,6 +23,7 @@ import javax.swing.JFrame;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
+import javax.swing.JPopupMenu;
 import javax.swing.KeyStroke;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
@@ -134,6 +135,12 @@ public final class Main {
                 requestClose(frame, canvas, document);
             }
         });
+        List<String> startupLibraryNotices = canvas.componentLibrary().notices();
+        if (!startupLibraryNotices.isEmpty()) {
+            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+                    frame, String.join("\\n", startupLibraryNotices),
+                    "Component library", JOptionPane.INFORMATION_MESSAGE));
+        }
         return frame;
     }
 
@@ -284,6 +291,30 @@ public final class Main {
         createComponent.addActionListener(event ->
                 CreateComponentDialog.showDialog(frame, canvas));
         circuit.add(createComponent);
+
+        JMenu componentsMenu = new JMenu("Components");
+        JMenuItem importComponents = new JMenuItem("Import component file(s)...");
+        importComponents.addActionListener(event ->
+                ComponentLibraryFileActions.importFiles(frame, canvas));
+        JMenuItem exportComponent = new JMenuItem("Export component...");
+        exportComponent.addActionListener(event ->
+                ComponentLibraryFileActions.exportComponent(frame, canvas));
+        JMenuItem loadLibrary = new JMenuItem("Load library file...");
+        loadLibrary.addActionListener(event ->
+                ComponentLibraryFileActions.loadLibraryFile(frame, canvas));
+        JMenuItem revealLibrary = new JMenuItem("Reveal library folder");
+        revealLibrary.addActionListener(event ->
+                ComponentLibraryFileActions.revealFolder(frame, canvas));
+        JMenuItem refreshLibrary = new JMenuItem("Refresh");
+        refreshLibrary.addActionListener(event ->
+                ComponentLibraryFileActions.refresh(frame, canvas));
+        componentsMenu.add(importComponents);
+        componentsMenu.add(exportComponent);
+        componentsMenu.add(loadLibrary);
+        componentsMenu.addSeparator();
+        componentsMenu.add(revealLibrary);
+        componentsMenu.add(refreshLibrary);
+        circuit.add(componentsMenu);
 
         JMenuItem editExpressions = new JMenuItem("Edit as expressions...");
         editExpressions.addActionListener(event -> {
@@ -850,11 +881,8 @@ public final class Main {
         DefaultMutableTreeNode myComponents = new DefaultMutableTreeNode("My components");
 
         for (String family : GateLibrary.load().families()) {
-            if (family.equals("constant")) {
-                continue;
-            }
-            ComponentTreeItem item = new ComponentTreeItem(
-                    family, treeLabel(family));
+            if (family.equals("constant")) continue;
+            ComponentTreeItem item = new ComponentTreeItem(family, treeLabel(family));
             if (family.equals("input") || family.equals("output") || family.equals("clock")) {
                 pins.add(new DefaultMutableTreeNode(item));
             } else {
@@ -872,7 +900,23 @@ public final class Main {
         root.add(builtIn);
         root.add(myComponents);
 
-        JTree tree = new JTree(root);
+        JTree tree = new JTree(root) {
+            @Override
+            public String getToolTipText(MouseEvent event) {
+                TreePath hoverPath = getPathForLocation(event.getX(), event.getY());
+                if (hoverPath == null) return null;
+                Object node = hoverPath.getLastPathComponent();
+                if (node instanceof DefaultMutableTreeNode treeNode
+                        && treeNode.getUserObject() instanceof ComponentTreeItem item
+                        && item.typeId().startsWith("component:")) {
+                    String name = item.typeId().substring("component:".length());
+                    return canvas.componentLibrary().find(name)
+                            .map(definition -> definition.description()).orElse(null);
+                }
+                return null;
+            }
+        };
+        tree.setToolTipText("");
         tree.setRootVisible(true);
         tree.setShowsRootHandles(true);
         tree.setDragEnabled(true);
@@ -891,28 +935,41 @@ public final class Main {
             componentTreeModel.reload(myComponents);
             tree.expandPath(new TreePath(myComponents.getPath()));
         });
-        tree.addTreeSelectionListener(event -> {
-            TreePath path = tree.getSelectionPath();
-            enterAddModeForPath(canvas, path);
-        });
+        tree.addTreeSelectionListener(event ->
+                enterAddModeForPath(canvas, tree.getSelectionPath()));
         tree.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent event) {
-                enterAddModeForPath(canvas, tree.getPathForLocation(event.getX(), event.getY()));
+            private void showDeleteMenu(MouseEvent event) {
+                if (!event.isPopupTrigger()) return;
+                TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+                if (path == null) return;
+                Object node = path.getLastPathComponent();
+                if (!(node instanceof DefaultMutableTreeNode treeNode)
+                        || !(treeNode.getUserObject() instanceof ComponentTreeItem item)
+                        || !item.typeId().startsWith("component:")) return;
+                String name = item.typeId().substring("component:".length());
+                if (canvas.componentLibrary().builtInNames().contains(name)) return;
+                JPopupMenu popup = new JPopupMenu();
+                JMenuItem delete = new JMenuItem("Delete component from My components");
+                delete.addActionListener(action ->
+                        ComponentLibraryFileActions.deleteComponent(
+                                (JFrame) SwingUtilities.getWindowAncestor(tree), canvas, name));
+                popup.add(delete);
+                popup.show(tree, event.getX(), event.getY());
+            }
+
+            @Override public void mousePressed(MouseEvent event) { showDeleteMenu(event); }
+            @Override public void mouseReleased(MouseEvent event) { showDeleteMenu(event); }
+            @Override public void mouseClicked(MouseEvent event) {
+                if (SwingUtilities.isLeftMouseButton(event)) {
+                    enterAddModeForPath(canvas, tree.getPathForLocation(event.getX(), event.getY()));
+                }
             }
         });
         tree.setTransferHandler(new TransferHandler() {
-            @Override
-            public int getSourceActions(javax.swing.JComponent component) {
-                return COPY;
-            }
-
-            @Override
-            protected Transferable createTransferable(javax.swing.JComponent component) {
+            @Override public int getSourceActions(javax.swing.JComponent component) { return COPY; }
+            @Override protected Transferable createTransferable(javax.swing.JComponent component) {
                 TreePath path = tree.getSelectionPath();
-                if (path == null) {
-                    return null;
-                }
+                if (path == null) return null;
                 Object node = path.getLastPathComponent();
                 if (node instanceof DefaultMutableTreeNode treeNode
                         && treeNode.getUserObject() instanceof ComponentTreeItem item) {
@@ -924,11 +981,9 @@ public final class Main {
 
         JScrollPane explorer = new JScrollPane(tree);
         explorer.setBorder(BorderFactory.createTitledBorder("Component Explorer"));
-
         JScrollPane attributeTable = new JScrollPane(attributes);
         attributeTable.setBorder(BorderFactory.createTitledBorder("Attributes"));
         attributeTable.setPreferredSize(new Dimension(240, 180));
-
         JSplitPane splitPane = new JSplitPane(
                 JSplitPane.VERTICAL_SPLIT, explorer, attributeTable);
         splitPane.setContinuousLayout(true);
