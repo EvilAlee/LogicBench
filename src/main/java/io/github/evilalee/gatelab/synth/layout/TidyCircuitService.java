@@ -184,10 +184,17 @@ public final class TidyCircuitService {
             String newId = layout.outputComponentIds().get(name);
             labelsByNewId.put(newId, oldById.get(oldId).label());
         });
-        extraction.constantComponentIds().forEach((literal, oldId) -> {
-            String newId = layout.constantComponentIds().get(literal);
-            labelsByNewId.put(newId, oldById.get(oldId).label());
-        });
+        original.components().stream()
+                .filter(PlacedComponent::isFixedSource)
+                .sorted(Comparator.comparing(PlacedComponent::id))
+                .forEach(source -> {
+                    String literal = source.fixedSourceValue()
+                            == io.github.evilalee.gatelab.model.Value.ONE ? "1" : "0";
+                    String newId = layout.constantComponentIds().get(literal);
+                    if (newId != null) {
+                        labelsByNewId.putIfAbsent(newId, source.label());
+                    }
+                });
 
         List<PlacedComponent> components = new ArrayList<>();
         for (PlacedComponent component : layout.schematic().components()) {
