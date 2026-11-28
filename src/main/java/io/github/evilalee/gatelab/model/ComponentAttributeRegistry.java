@@ -95,7 +95,7 @@ public final class ComponentAttributeRegistry {
         }
         if (key.equals("inputs")) {
             if (!List.of("2", "3", "4", "5").contains(trimmed)) {
-                throw new IllegalArgumentException("unknown Number of Inputs value: " + value);
+                throw new IllegalArgumentException("unknown Inputs value: " + value);
             }
             return trimmed;
         }
