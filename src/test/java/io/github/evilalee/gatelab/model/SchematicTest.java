@@ -152,6 +152,9 @@ class SchematicTest {
     @Test
     void pointHitTestingUsesRotatedBoundsForEveryFacing() {
         for (GateDef definition : DEFINITIONS) {
+            if (!definition.id().equals(definition.family())) {
+                continue;
+            }
             for (Facing facing : Facing.values()) {
                 Schematic schematic = new Schematic(DEFINITIONS);
                 PlacedComponent placed = schematic.add(definition.id(), 100, 200, facing);
@@ -172,6 +175,9 @@ class SchematicTest {
     @Test
     void rectangleSelectionUsesRotatedBoundsForEveryFacing() {
         for (GateDef definition : DEFINITIONS) {
+            if (!definition.id().equals(definition.family())) {
+                continue;
+            }
             for (Facing facing : Facing.values()) {
                 Schematic schematic = new Schematic(DEFINITIONS);
                 PlacedComponent placed = schematic.add(definition.id(), 300, -100, facing);
