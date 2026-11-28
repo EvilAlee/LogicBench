@@ -11,6 +11,34 @@ class MultiInputGateChangeTest {
     private static final List<GateDef> DEFINITIONS = GateLibrary.load().all();
 
     @Test
+    void resizingKeepsSurvivingPinWorldCoordinatesForEveryFacing() {
+        for (Facing facing : Facing.values()) {
+            Schematic schematic = new Schematic(DEFINITIONS);
+            PlacedComponent gate = schematic.add("and", 100, 100, facing,
+                    java.util.Map.of("inputs", "4"));
+            Connectivity.PinPosition first = pin(schematic, gate.id(), "in0");
+            Connectivity.PinPosition second = pin(schematic, gate.id(), "in1");
+            Connectivity.PinPosition output = pin(schematic, gate.id(), "out");
+            int outputShift = schematic.gateDefinitions().stream()
+                    .filter(definition -> definition.family().equals("and")
+                            && definition.size().equals("narrow")
+                            && definition.inputCount() == 2)
+                    .findFirst().orElseThrow().output().y()
+                    - schematic.definitionFor(gate).output().y();
+            GateGeometry.Offset expectedShift = GateGeometry.rotate(
+                    new GateGeometry.Offset(0, outputShift), facing);
+
+            assertTrue(schematic.setAttribute(gate.id(), "inputs", "2"));
+
+            assertEquals(first, pin(schematic, gate.id(), "in0"), facing + " in0");
+            assertEquals(second, pin(schematic, gate.id(), "in1"), facing + " in1");
+            Connectivity.PinPosition resizedOutput = pin(schematic, gate.id(), "out");
+            assertEquals(output.x() + expectedShift.x(), resizedOutput.x(), facing + " out x");
+            assertEquals(output.y() + expectedShift.y(), resizedOutput.y(), facing + " out y");
+        }
+    }
+
+    @Test
     void reducingInputCountFollowsSurvivingPinsRemovesDeletedNetsAndIsOneUndoStep() {
         Schematic schematic = new Schematic(DEFINITIONS);
         PlacedComponent gate = schematic.add("and", 100, 100, Facing.EAST,
@@ -66,5 +94,13 @@ class MultiInputGateChangeTest {
         assertEquals(1, history.undoDepth());
         assertTrue(history.undo(schematic));
         assertEquals(before, SchematicSnapshot.capture(schematic));
+    }
+
+    private static Connectivity.PinPosition pin(
+            Schematic schematic, String componentId, String pinId) {
+        return schematic.pinPositions().stream()
+                .filter(candidate -> candidate.componentId().equals(componentId)
+                        && candidate.pinId().equals(pinId))
+                .findFirst().orElseThrow();
     }
 }
