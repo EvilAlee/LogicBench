@@ -62,7 +62,7 @@ public final class ComponentAttributeRegistry {
                         "unknown attribute '" + key + "' for component type " + family));
     }
 
-    /** Facing is top-level in the file format; only size/inputs are stored in attrs. */
+    /** Facing is top-level; size, inputs and fixed-source Value are stored in attrs. */
     public static List<AttributeSpec> storedAttributesFor(String family) {
         return forFamily(family).stream()
                 .filter(spec -> !spec.key().equals("facing"))
