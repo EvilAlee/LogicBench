@@ -11,6 +11,7 @@ import io.github.evilalee.gatelab.synth.SchematicNetlistExtractor;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
