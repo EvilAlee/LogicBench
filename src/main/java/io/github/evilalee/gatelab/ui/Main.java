@@ -493,9 +493,10 @@ public final class Main {
         simulate.add(tickOnce);
         simulate.add(ticksEnabled);
         simulate.addSeparator();
-        JCheckBoxMenuItem requireChipPower = new JCheckBoxMenuItem("Require power on chips");
+        JCheckBoxMenuItem requireChipPower =
+                new JCheckBoxMenuItem("Chips need power", canvas.chipsNeedPower());
         requireChipPower.addActionListener(event ->
-                canvas.setRequirePowerOnChips(requireChipPower.isSelected()));
+                canvas.setChipsNeedPower(requireChipPower.isSelected()));
         simulate.add(requireChipPower);
 
         JRadioButtonMenuItem ignore =

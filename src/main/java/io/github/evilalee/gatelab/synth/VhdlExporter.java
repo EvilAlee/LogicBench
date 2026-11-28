@@ -479,7 +479,9 @@ public final class VhdlExporter {
     private static String generateTestbench(Schematic schematic, Module top, String entityName) {
         List<Port> inputs = top.ports.stream().filter(port -> port.direction().equals("in")).toList();
         List<Port> outputs = top.ports.stream().filter(port -> port.direction().equals("out")).toList();
-        SchematicCompiler.CompiledCircuit compiled = SchematicCompiler.compileCircuit(schematic.copy());
+        // HDL testbenches describe ideal chip logic, independent of board supply state.
+        SchematicCompiler.CompiledCircuit compiled =
+                SchematicCompiler.compileCircuit(schematic.copy(), false);
         Simulator simulator = new Simulator(compiled.circuit());
 
         String base = sanitize(entityName + "_tb");

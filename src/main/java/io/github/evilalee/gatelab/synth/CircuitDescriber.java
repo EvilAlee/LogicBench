@@ -28,7 +28,10 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Converts a gate schematic or netlist into deterministic named Boolean expressions. */
+/**
+ * Converts schematics into deterministic Boolean expressions. Chip instances
+ * are described as ideal logical functions, assuming valid VCC and GND.
+ */
 public final class CircuitDescriber {
     public static final int MAX_GATES = 400;
 
