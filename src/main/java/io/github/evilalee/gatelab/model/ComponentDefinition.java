@@ -173,7 +173,7 @@ public final class ComponentDefinition {
                 throw new IllegalArgumentException(
                         "definition port component must have a Name: " + component.id());
             }
-            String portName = requireIdentifier(component.label(), "port name");
+            String portName = requirePortIdentifier(component.label(), "port name");
             Port declared = expected.get(portName);
             if (declared == null) {
                 throw new IllegalArgumentException(
