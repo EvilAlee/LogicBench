@@ -689,6 +689,21 @@ public final class ComponentLibrary {
             String description,
             List<ChipPortSpec> chipPorts,
             List<ChipFunction> functions) {
+        try {
+            return buildChip(gateDefinitions, name, description, chipPorts, functions);
+        } catch (RuntimeException exception) {
+            System.err.println("Failed to create TTL chip " + name + ": " + exception);
+            exception.printStackTrace(System.err);
+            throw exception;
+        }
+    }
+
+    private static ComponentDefinition buildChip(
+            List<GateDef> gateDefinitions,
+            String name,
+            String description,
+            List<ChipPortSpec> chipPorts,
+            List<ChipFunction> functions) {
         List<String> functionalInputs = chipPorts.stream()
                 .filter(port -> port.direction() == ComponentDefinition.Direction.IN)
                 .map(ChipPortSpec::name)
