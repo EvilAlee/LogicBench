@@ -42,7 +42,8 @@
 - feature-ai-16-inputs: 16-input combinational AI validation with all-row bit-parallel spec checks and deterministic real-engine cross-checks; sequential limits unchanged.
 - TI 74xx pinout note: implemented verbatim from the owner's supplied mapping; no discrepancy was identified or changed. Datasheet confirmation remains a human check, especially the listed NC positions on 7420 (3, 11) and 7430 (9, 10, 13).
 - feature-component-files: portable one-file-per-component user library, atomic writes, single-file migration, collision-aware import/export, refresh, and explorer delete/tooltip actions.
-- feature-chip-power: three-valued VCC/GND-dependent chip outputs, transient default-on setting, output-X diagnostics, and power-loss state retention
+- PR #67 / feature-chip-power: three-valued VCC/GND-dependent chip outputs, transient default-on setting, output-X diagnostics, and power-loss state retention
+- feature-ti-chips-a: datasheet-audited tier-A combinational TI 74xx additions; implementation follows a per-part TI pin/function-table review.
 
 ## Next
 1. M9a attribute table with editable labels
