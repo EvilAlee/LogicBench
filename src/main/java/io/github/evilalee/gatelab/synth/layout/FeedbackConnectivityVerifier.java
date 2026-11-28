@@ -76,6 +76,64 @@ public final class FeedbackConnectivityVerifier {
         }
     }
 
+    /**
+     * Verifies a feedback rebuild where multi-pin display sinks are represented
+     * by one ordinary Output probe per named display pin.
+     *
+     * The mapping keys and values are "componentId.pinId".
+     */
+    public static void verifyPinProjection(
+            Schematic original, Schematic rebuilt, Map<String, String> rebuiltToOriginalPins) {
+        Objects.requireNonNull(original, "original");
+        Objects.requireNonNull(rebuilt, "rebuilt");
+        Objects.requireNonNull(rebuiltToOriginalPins, "rebuiltToOriginalPins");
+
+        Set<String> originalPins = original.pinPositions().stream()
+                .map(pin -> pin.componentId() + "." + pin.pinId())
+                .collect(Collectors.toCollection(HashSet::new));
+        List<Connectivity.PinPosition> rebuiltPins = rebuilt.pinPositions();
+        Set<String> rebuiltPinKeys = rebuiltPins.stream()
+                .map(pin -> pin.componentId() + "." + pin.pinId())
+                .collect(Collectors.toCollection(HashSet::new));
+        if (!rebuiltPinKeys.equals(rebuiltToOriginalPins.keySet())) {
+            throw new IllegalStateException(
+                    "Feedback connectivity verification failed: projected pin map is incomplete.");
+        }
+
+        Set<String> mappedOriginalPins = new HashSet<>();
+        for (String rebuiltPin : rebuiltPinKeys) {
+            String originalPin = rebuiltToOriginalPins.get(rebuiltPin);
+            if (!originalPins.contains(originalPin) || !mappedOriginalPins.add(originalPin)) {
+                throw new IllegalStateException(
+                        "Feedback connectivity verification failed: projected pin mapping is invalid.");
+            }
+        }
+        if (!mappedOriginalPins.equals(originalPins)) {
+            throw new IllegalStateException(
+                    "Feedback connectivity verification failed: original pins are missing.");
+        }
+
+        Set<Set<String>> originalNets = pinNetPartition(original, Map.of(), false);
+        Set<Set<String>> rebuiltNets = new HashSet<>();
+        Connectivity.Result topology = Connectivity.analyze(
+                rebuilt.pinPositions(), rebuilt.wires());
+        for (Connectivity.Net net : topology.nets()) {
+            if (net.pins().isEmpty()) {
+                throw new IllegalStateException(
+                        "Feedback connectivity verification failed: layout contains an orphan wire net.");
+            }
+            Set<String> members = new TreeSet<>();
+            for (Connectivity.PinPosition pin : net.pins()) {
+                members.add(rebuiltToOriginalPins.get(pin.componentId() + "." + pin.pinId()));
+            }
+            rebuiltNets.add(Set.copyOf(members));
+        }
+        if (!originalNets.equals(rebuiltNets)) {
+            throw new IllegalStateException(
+                    "Feedback connectivity verification failed: projected pin-to-net grouping changed.");
+        }
+    }
+
     private static Map<String, PlacedComponent> index(Schematic schematic) {
         Map<String, PlacedComponent> result = new LinkedHashMap<>();
         for (PlacedComponent component : schematic.components()) {

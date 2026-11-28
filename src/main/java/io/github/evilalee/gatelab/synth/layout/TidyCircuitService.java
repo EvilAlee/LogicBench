@@ -8,6 +8,7 @@ import io.github.evilalee.gatelab.model.Schematic;
 import io.github.evilalee.gatelab.model.SchematicSnapshot;
 import io.github.evilalee.gatelab.model.Value;
 import io.github.evilalee.gatelab.sim.SchematicCompiler;
+import io.github.evilalee.gatelab.sim.PinStateHelper;
 import io.github.evilalee.gatelab.synth.SchematicNetlistExtractor;
 import io.github.evilalee.gatelab.synth.FeedbackCircuitExtractor;
 
@@ -129,12 +130,22 @@ public final class TidyCircuitService {
             newToOldIds.put(newId, oldId);
             labelsByNewId.put(newId, oldById.get(oldId).label());
         });
+        Map<String, String> projectedDisplayPins = new LinkedHashMap<>();
         extraction.outputComponentIds().forEach((signal, oldId) -> {
             String newId = layout.outputComponentIds().get(signal);
-            newToOldIds.put(newId, oldId);
             PlacedComponent old = oldById.get(oldId);
             labelsByNewId.put(newId,
                     DisplayComponent.isDisplay(old.typeId()) ? signal : old.label());
+            if (DisplayComponent.isDisplay(old.typeId())) {
+                String originalPin = DisplayComponent.sinkPins(original).stream()
+                        .filter(sink -> sink.componentId().equals(oldId)
+                                && sink.portName().equals(signal))
+                        .map(DisplayComponent.SinkPin::pinId)
+                        .findFirst().orElseThrow();
+                projectedDisplayPins.put(newId + ".in0", oldId + "." + originalPin);
+            } else {
+                newToOldIds.put(newId, oldId);
+            }
         });
         extraction.gateComponentIds().forEach((signal, oldId) -> {
             String newId = layout.gateComponentIds().get(signal);
@@ -164,7 +175,25 @@ public final class TidyCircuitService {
                 replacement.setClockValue(
                         layout.clockComponentIds().get(signal), original.clockValue(oldId)));
 
-        FeedbackConnectivityVerifier.verify(original, replacement, newToOldIds);
+        if (projectedDisplayPins.isEmpty()) {
+            FeedbackConnectivityVerifier.verify(original, replacement, newToOldIds);
+        } else {
+            Map<String, String> rebuiltToOriginalPins = new LinkedHashMap<>(projectedDisplayPins);
+            for (Connectivity.PinPosition pin : replacement.pinPositions()) {
+                String rebuiltKey = pin.componentId() + "." + pin.pinId();
+                if (rebuiltToOriginalPins.containsKey(rebuiltKey)) {
+                    continue;
+                }
+                String originalId = newToOldIds.get(pin.componentId());
+                if (originalId == null) {
+                    throw new IllegalStateException(
+                            "Feedback display tidy lost component mapping for " + pin.componentId());
+                }
+                rebuiltToOriginalPins.put(rebuiltKey, originalId + "." + pin.pinId());
+            }
+            FeedbackConnectivityVerifier.verifyPinProjection(
+                    original, replacement, rebuiltToOriginalPins);
+        }
         int primarySourceCount = extraction.inputComponentIds().size()
                 + extraction.clockComponentIds().size();
         return new TidyResult(replacement, primarySourceCount, 0, false, true);
@@ -250,8 +279,23 @@ public final class TidyCircuitService {
                 throw new IllegalStateException(
                         "Tidy circuit equivalence check oscillated on input row " + row + ".");
             }
+            PinStateHelper.Result oldPinStates = PinStateHelper.analyze(before, oldResult);
             for (String name : oldOutputIds.keySet()) {
-                Value oldValue = oldResult.outputValues().get(oldOutputIds.get(name));
+                String oldComponentId = oldOutputIds.get(name);
+                PlacedComponent oldComponent = before.components().stream()
+                        .filter(component -> component.id().equals(oldComponentId))
+                        .findFirst().orElseThrow();
+                Value oldValue;
+                if (DisplayComponent.isDisplay(oldComponent.typeId())) {
+                    String pinId = DisplayComponent.sinkPins(before).stream()
+                            .filter(sink -> sink.componentId().equals(oldComponentId)
+                                    && sink.portName().equals(name))
+                            .map(DisplayComponent.SinkPin::pinId)
+                            .findFirst().orElseThrow();
+                    oldValue = oldPinStates.requirePin(oldComponentId, pinId).value();
+                } else {
+                    oldValue = oldResult.outputValues().get(oldComponentId);
+                }
                 Value newValue = newResult.outputValues().get(newOutputIds.get(name));
                 if (oldValue != newValue) {
                     throw new IllegalStateException(
