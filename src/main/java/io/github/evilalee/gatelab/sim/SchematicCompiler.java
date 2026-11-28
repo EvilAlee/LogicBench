@@ -59,15 +59,25 @@ public final class SchematicCompiler {
     }
 
     public static CompiledCircuit compileCircuit(Schematic schematic) {
+        return compileCircuit(schematic, true);
+    }
+
+    /** Compiles a fresh engine graph, optionally enforcing DIP chip supplies. */
+    public static CompiledCircuit compileCircuit(Schematic schematic, boolean chipsNeedPower) {
         Objects.requireNonNull(schematic, "schematic");
-        Flattened flattened = flatten(schematic);
+        Flattened flattened = flatten(schematic, chipsNeedPower);
         return new CompiledCircuit(
                 flattened.circuit(), flattened.inputs(),
                 flattened.clockIds(), flattened.outputs(), flattened.fixedInputs());
     }
 
     public static SimulationResult compileAndSettle(Schematic schematic) {
-        return compileAndSettle(schematic, null);
+        return compileAndSettle(schematic, null, true);
+    }
+
+    public static SimulationResult compileAndSettle(
+            Schematic schematic, boolean chipsNeedPower) {
+        return compileAndSettle(schematic, null, chipsNeedPower);
     }
 
     /**
@@ -76,8 +86,13 @@ public final class SchematicCompiler {
      */
     public static SimulationResult compileAndSettle(
             Schematic schematic, SimulationResult previous) {
+        return compileAndSettle(schematic, previous, true);
+    }
+
+    public static SimulationResult compileAndSettle(
+            Schematic schematic, SimulationResult previous, boolean chipsNeedPower) {
         Objects.requireNonNull(schematic, "schematic");
-        Flattened flattened = flatten(schematic);
+        Flattened flattened = flatten(schematic, chipsNeedPower);
         Simulator simulator = new Simulator(flattened.circuit());
         simulator.setInitialGateOutputValues(
                 previous == null ? Map.of() : previous.gateOutputValues());
@@ -140,9 +155,9 @@ public final class SchematicCompiler {
         }
     }
 
-    private static Flattened flatten(Schematic root) {
-        Flattener flattener = new Flattener(root);
-        flattener.compileScope(root, "", true, Map.of(), 0, List.of());
+    private static Flattened flatten(Schematic root, boolean chipsNeedPower) {
+        Flattener flattener = new Flattener(root, chipsNeedPower);
+        flattener.compileScope(root, "", true, Map.of(), null, 0, List.of());
         flattener.connectNets();
         return flattener.result();
     }
@@ -185,6 +200,9 @@ public final class SchematicCompiler {
     private record PendingPin(NetRef net, Pin pin) {
     }
 
+    private record PowerGuard(NetRef poweredNet, NetRef unpoweredNet, NetRef unknownNet) {
+    }
+
     private record ScopeTopology(
             String path,
             Connectivity.Result topology,
@@ -225,10 +243,14 @@ public final class SchematicCompiler {
         private final List<PendingPin> pendingPins = new ArrayList<>();
         private final UnionFind<NetRef> unionFind = new UnionFind<>();
         private final Map<NetRef, Pin> representativePins = new LinkedHashMap<>();
+        private final boolean chipsNeedPower;
         private ScopeTopology rootScope;
+        private NetRef unknownSourceNet;
+        private int nextSyntheticNetIndex = -1;
 
-        private Flattener(Schematic root) {
+        private Flattener(Schematic root, boolean chipsNeedPower) {
             Objects.requireNonNull(root, "root");
+            this.chipsNeedPower = chipsNeedPower;
         }
 
         private void compileScope(
@@ -236,13 +258,14 @@ public final class SchematicCompiler {
                 String scopePath,
                 boolean topLevel,
                 Map<String, NetRef> boundaryBindings,
+                PowerGuard powerGuard,
                 int nestingDepth,
                 List<String> activeDefinitions) {
             ScopeTopology scope = buildScopeTopology(schematic, scopePath);
             if (topLevel) {
                 rootScope = scope;
             } else {
-                bindBoundaryPorts(schematic, scope, boundaryBindings);
+                bindBoundaryPorts(schematic, scope, boundaryBindings, powerGuard);
             }
 
             boolean ignoreBareInputs =
@@ -303,11 +326,17 @@ public final class SchematicCompiler {
                     childBindings.put(port.name(),
                             scope.requireNet(instance.id(), port.name()));
                 }
+                PowerGuard childPowerGuard = null;
+                if (chipsNeedPower && definition.isChipStyle()) {
+                    childPowerGuard = buildPowerGuard(
+                            scopePath + instance.id() + "/",
+                            childBindings.get("VCC"), childBindings.get("GND"));
+                }
                 List<String> nextStack = new ArrayList<>(activeDefinitions);
                 nextStack.add(definition.name());
                 String childPath = scopePath + instance.id() + "/";
                 Schematic internal = definition.internalCircuit();
-                compileScope(internal, childPath, false, childBindings,
+                compileScope(internal, childPath, false, childBindings, childPowerGuard,
                         childDepth, List.copyOf(nextStack));
             }
         }
@@ -338,7 +367,8 @@ public final class SchematicCompiler {
         private void bindBoundaryPorts(
                 Schematic internal,
                 ScopeTopology childScope,
-                Map<String, NetRef> parentBindings) {
+                Map<String, NetRef> parentBindings,
+                PowerGuard powerGuard) {
             Map<String, PlacedComponent> componentByPortName = new HashMap<>();
             for (PlacedComponent component : internal.components()) {
                 if (!isBoundaryPort(component)) {
@@ -369,8 +399,89 @@ public final class SchematicCompiler {
                     pinId = "out";
                 }
                 NetRef internalNet = childScope.requireNet(portComponent.id(), pinId);
-                unionFind.union(internalNet, binding.getValue());
+                if (portComponent.typeId().equals("output") && powerGuard != null) {
+                    gateOutputWithPower(
+                            childScope.path(), binding.getKey(),
+                            internalNet, binding.getValue(), powerGuard);
+                } else {
+                    unionFind.union(internalNet, binding.getValue());
+                }
             }
+        }
+
+        private PowerGuard buildPowerGuard(
+                String instancePath, NetRef vccNet, NetRef gndNet) {
+            if (vccNet == null || gndNet == null) {
+                throw new IllegalStateException("chip power ports are missing at " + instancePath);
+            }
+            String prefix = instancePath + "$chipPower/";
+            Gate notGround = addSyntheticGate(prefix + "notGnd", GateType.NOT);
+            NetRef notGroundNet = newSyntheticNetRef(instancePath);
+            addPending(gndNet, notGround.input(0));
+            addPending(notGroundNet, notGround.output());
+
+            Gate powerGood = addSyntheticGate(prefix + "powerGood", GateType.AND);
+            NetRef powerGoodNet = newSyntheticNetRef(instancePath);
+            addPending(vccNet, powerGood.input(0));
+            addPending(notGroundNet, powerGood.input(1));
+            addPending(powerGoodNet, powerGood.output());
+
+            Gate notPowerGood = addSyntheticGate(prefix + "notPowerGood", GateType.NOT);
+            NetRef notPowerGoodNet = newSyntheticNetRef(instancePath);
+            addPending(powerGoodNet, notPowerGood.input(0));
+            addPending(notPowerGoodNet, notPowerGood.output());
+
+            return new PowerGuard(powerGoodNet, notPowerGoodNet, ensureUnknownSource());
+        }
+
+        /** Masks a public output as (powerGood AND value) OR (NOT powerGood AND X). */
+        private void gateOutputWithPower(
+                String scopePath,
+                String portName,
+                NetRef internalNet,
+                NetRef externalNet,
+                PowerGuard powerGuard) {
+            String prefix = scopePath + "$chipPower/" + portName + "/";
+            NetRef poweredValueNet = newSyntheticNetRef(scopePath);
+            Gate poweredValue = addSyntheticGate(prefix + "powered", GateType.AND);
+            addPending(powerGuard.poweredNet(), poweredValue.input(0));
+            addPending(internalNet, poweredValue.input(1));
+            addPending(poweredValueNet, poweredValue.output());
+
+            NetRef unknownValueNet = newSyntheticNetRef(scopePath);
+            Gate unknownValue = addSyntheticGate(prefix + "unknown", GateType.AND);
+            addPending(powerGuard.unpoweredNet(), unknownValue.input(0));
+            addPending(powerGuard.unknownNet(), unknownValue.input(1));
+            addPending(unknownValueNet, unknownValue.output());
+
+            Gate outputMask = addSyntheticGate(prefix + "output", GateType.OR);
+            addPending(poweredValueNet, outputMask.input(0));
+            addPending(unknownValueNet, outputMask.input(1));
+            addPending(externalNet, outputMask.output());
+        }
+
+        private NetRef ensureUnknownSource() {
+            if (unknownSourceNet == null) {
+                unknownSourceNet = newSyntheticNetRef("$chipPower");
+                InputPin source = new InputPin("$logicbench-chip-power-x");
+                circuit.addComponent(source);
+                addPending(unknownSourceNet, source.output());
+            }
+            return unknownSourceNet;
+        }
+
+        private NetRef newSyntheticNetRef(String scopePath) {
+            NetRef ref = new NetRef(scopePath, nextSyntheticNetIndex--);
+            unionFind.add(ref);
+            return ref;
+        }
+
+        private Gate addSyntheticGate(String id, GateType type) {
+            Gate gate = new Gate(id, type, type.minimumInputs());
+            circuit.addComponent(gate);
+            gates.put(id, gate);
+            allGateIds.add(id);
+            return gate;
         }
 
         private void compileGate(
@@ -418,7 +529,11 @@ public final class SchematicCompiler {
         }
 
         private void addPending(ScopeTopology scope, String componentId, String pinId, Pin pin) {
-            pendingPins.add(new PendingPin(scope.requireNet(componentId, pinId), pin));
+            addPending(scope.requireNet(componentId, pinId), pin);
+        }
+
+        private void addPending(NetRef net, Pin pin) {
+            pendingPins.add(new PendingPin(net, pin));
         }
 
         private void connectNets() {

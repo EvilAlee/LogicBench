@@ -173,7 +173,7 @@ public final class CanvasPanel extends JPanel {
     private Tool activeTool = Tool.EDIT;
     private boolean showGateNames = true;
     private boolean showPinDots = true;
-    private boolean requirePowerOnChips;
+    private boolean chipsNeedPower = true;
     private String previewTypeId;
     private String previewComponentName;
     private Facing previewFacing = Facing.EAST;
@@ -356,27 +356,42 @@ public final class CanvasPanel extends JPanel {
         return showPinDots;
     }
 
-    /** Enables the transient, non-persisted DIP power diagnostic. */
-    public void setRequirePowerOnChips(boolean required) {
-        if (requirePowerOnChips == required) return;
-        requirePowerOnChips = required;
-        repaint();
-        statusMessageListener.accept(statusBarText());
+    /** Enables the transient, non-persisted DIP supply requirement. */
+    public void setChipsNeedPower(boolean required) {
+        if (chipsNeedPower == required) return;
+        chipsNeedPower = required;
+        recomputeSimulation();
+        recordSignalSample();
     }
 
+    public boolean chipsNeedPower() {
+        return chipsNeedPower;
+    }
+
+    /** Compatibility alias for callers using the former diagnostic name. */
+    @Deprecated
+    public void setRequirePowerOnChips(boolean required) {
+        setChipsNeedPower(required);
+    }
+
+    /** Compatibility alias for callers using the former diagnostic name. */
+    @Deprecated
     public boolean requirePowerOnChips() {
-        return requirePowerOnChips;
+        return chipsNeedPower();
     }
 
     public List<ChipPowerChecker.PowerIssue> chipPowerIssues() {
         if (simulationResult == null) return List.of();
-        return ChipPowerChecker.check(schematic, simulationResult, requirePowerOnChips);
+        return ChipPowerChecker.check(schematic, simulationResult, chipsNeedPower);
     }
 
     private String statusBarText() {
-        if (requirePowerOnChips && simulationResult != null) {
+        if (chipsNeedPower && simulationResult != null) {
             String powerText = ChipPowerChecker.statusText(schematic, simulationResult, true);
-            if (!powerText.isBlank()) return powerText;
+            if (!powerText.isBlank()) {
+                return powerText + " — chip outputs are X; turn off Simulate > Chips need power "
+                        + "to use ideal logic.";
+            }
         }
         return simulationStatusText();
     }
@@ -453,13 +468,13 @@ public final class CanvasPanel extends JPanel {
         }
         schematic.removeChangeListener(schematicSimulationListener);
         try {
-            simulationResult = clockStepper.step(schematic, simulationResult);
+            simulationResult = clockStepper.step(schematic, simulationResult, chipsNeedPower);
         } finally {
             schematic.addChangeListener(schematicSimulationListener);
         }
         simulationRecomputeCount++;
         repaint();
-        statusMessageListener.accept(simulationStatusText());
+        statusMessageListener.accept(statusBarText());
         recordSignalSample();
     }
 
@@ -471,7 +486,7 @@ public final class CanvasPanel extends JPanel {
         clearSignalHistory();
         schematic.removeChangeListener(schematicSimulationListener);
         try {
-            simulationResult = clockStepper.reset(schematic);
+            simulationResult = clockStepper.reset(schematic, chipsNeedPower);
         } finally {
             schematic.addChangeListener(schematicSimulationListener);
         }
@@ -660,12 +675,11 @@ public final class CanvasPanel extends JPanel {
     long simulationRecomputeCount() { return simulationRecomputeCount; }
 
     private void recomputeSimulation() {
-        simulationResult = SchematicCompiler.compileAndSettle(schematic, simulationResult);
+        simulationResult = SchematicCompiler.compileAndSettle(
+                schematic, simulationResult, chipsNeedPower);
         simulationRecomputeCount++;
         repaint();
-        if (requirePowerOnChips) {
-            statusMessageListener.accept(statusBarText());
-        }
+        statusMessageListener.accept(statusBarText());
     }
 
     public void resetInputs() {
@@ -2300,7 +2314,7 @@ public final class CanvasPanel extends JPanel {
             Set<String> unpoweredChipIds = simulationResult == null
                     ? Set.of()
                     : ChipPowerChecker.unpoweredInstanceIds(
-                            schematic, simulationResult, requirePowerOnChips);
+                            schematic, simulationResult, chipsNeedPower);
             for (ComponentInstance instance : schematic.componentInstances()) {
                 ComponentDefinition definition = schematic.componentDefinitionFor(instance);
                 boolean selected = selectedIds.contains(instance.id());

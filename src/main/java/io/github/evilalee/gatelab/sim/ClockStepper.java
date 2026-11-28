@@ -26,10 +26,16 @@ public final class ClockStepper {
      */
     public SchematicCompiler.SimulationResult step(
             Schematic schematic, SchematicCompiler.SimulationResult previous) {
+        return step(schematic, previous, true);
+    }
+
+    public SchematicCompiler.SimulationResult step(
+            Schematic schematic, SchematicCompiler.SimulationResult previous,
+            boolean chipsNeedPower) {
         Objects.requireNonNull(schematic, "schematic");
         schematic.toggleClocks();
         SchematicCompiler.SimulationResult result =
-                SchematicCompiler.compileAndSettle(schematic, previous);
+                SchematicCompiler.compileAndSettle(schematic, previous, chipsNeedPower);
         stepCount = Math.incrementExact(stepCount);
         return result;
     }
@@ -39,9 +45,14 @@ public final class ClockStepper {
      * performs a fresh settle. Feedback circuits therefore return to X.
      */
     public SchematicCompiler.SimulationResult reset(Schematic schematic) {
+        return reset(schematic, true);
+    }
+
+    public SchematicCompiler.SimulationResult reset(
+            Schematic schematic, boolean chipsNeedPower) {
         Objects.requireNonNull(schematic, "schematic");
         schematic.resetSimulationSources();
         stepCount = 0;
-        return SchematicCompiler.compileAndSettle(schematic);
+        return SchematicCompiler.compileAndSettle(schematic, null, chipsNeedPower);
     }
 }
