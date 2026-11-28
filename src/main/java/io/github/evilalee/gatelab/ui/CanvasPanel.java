@@ -1630,10 +1630,10 @@ public final class CanvasPanel extends JPanel {
         pendingAutoWireTargetPin = null;
     }
 
-    private void completeAutoWire(Connectivity.PinPosition targetPin) {
+    private Rectangle completeAutoWire(Connectivity.PinPosition targetPin) {
         Connectivity.PinPosition sourcePin = pendingAutoWireStartPin;
         if (sourcePin == null || targetPin == null) {
-            return;
+            return null;
         }
         AutoWireRouter.Endpoint sourceEndpoint = endpointForPin(sourcePin);
         AutoWireRouter.Endpoint targetEndpoint = endpointForPin(targetPin);
@@ -1647,16 +1647,16 @@ public final class CanvasPanel extends JPanel {
                 .filter(net -> net.pins().contains(clickedTargetPin)).findFirst().orElse(null);
         if (sourceNet == null || targetNet == null) {
             statusMessageListener.accept("Could not identify one of the selected pin nets");
-            return;
+            return null;
         }
         if (sourceNet.equals(targetNet)) {
             statusMessageListener.accept("These pins are already connected");
-            return;
+            return null;
         }
 
         if (sourceEndpoint.output() && targetEndpoint.output()) {
             statusMessageListener.accept("Cannot connect two output pins (two drivers)");
-            return;
+            return null;
         }
         int sourceDrivers = outputDriverCount(sourceNet);
         int targetDrivers = outputDriverCount(targetNet);
@@ -1664,11 +1664,11 @@ public final class CanvasPanel extends JPanel {
                 && (sourceDrivers > 0 || targetDrivers > 0)) {
             statusMessageListener.accept(
                     "Cannot connect two input pins when either net is already driven");
-            return;
+            return null;
         }
         if (sourceDrivers > 0 && targetDrivers > 0) {
             statusMessageListener.accept("Cannot connect nets with multiple output drivers");
-            return;
+            return null;
         }
 
         if (!sourceEndpoint.output() && targetEndpoint.output()) {
@@ -1704,16 +1704,20 @@ public final class CanvasPanel extends JPanel {
         AutoWireRouter.Route route = AutoWireRouter.route(request);
         if (route.segments().isEmpty()) {
             statusMessageListener.accept("Could not create a wire between these pins");
-            return;
+            return null;
         }
 
         beginHistoryGesture();
+        Rectangle routeBounds = null;
         for (WireSegment segment : route.segments()) {
             schematic.addWire(segment);
+            routeBounds = union(routeBounds,
+                    wireSegmentScreenBounds(segment, DIRTY_REGION_MARGIN + 3));
         }
         commitHistoryGesture();
         statusMessageListener.accept(route.usedFallback()
                 ? "Could not find a clean route; drew a direct wire" : "");
+        return routeBounds;
     }
 
     private int outputDriverCount(Connectivity.Net net) {
@@ -1882,10 +1886,11 @@ public final class CanvasPanel extends JPanel {
                 gestureVisualScreenBounds(), autoWirePreviewScreenBounds());
         pointerFromScreen(event.getPoint());
         if (gesture == Gesture.PENDING_AUTO_WIRE_TARGET) {
-            completeAutoWire(pendingAutoWireTargetPin);
+            Rectangle addedWireBounds = completeAutoWire(pendingAutoWireTargetPin);
             resetGesture();
             clearAutoWirePending();
-            repaintUnion(oldGestureBounds, selectionScreenBounds());
+            repaintUnion(oldGestureBounds,
+                    union(addedWireBounds, selectionScreenBounds()));
             return;
         }
         if (gesture == Gesture.PENDING_WIRE_START || gesture == Gesture.DRAW_WIRE) {

@@ -74,15 +74,10 @@ class AutoWireRouterTest {
     @Test
     void routeDoesNotEndOnTheInteriorOfAnExistingWire() {
         WireSegment obstacle = new WireSegment(40, 50, 60, 50);
-        AutoWireRouter.Route route = new AutoWireRouter.Route(
-                AutoWireRouter.route(new AutoWireRouter.Request(
-                        endpoint(0, 0, Facing.EAST, true),
-                        endpoint(50, 50, Facing.EAST, false),
-                        List.of(), List.of(), List.of(obstacle), Set.of())).segments(),
-                AutoWireRouter.route(new AutoWireRouter.Request(
-                        endpoint(0, 0, Facing.EAST, true),
-                        endpoint(50, 50, Facing.EAST, false),
-                        List.of(), List.of(), List.of(obstacle), Set.of())).usedFallback());
+        AutoWireRouter.Route route = AutoWireRouter.route(new AutoWireRouter.Request(
+                endpoint(0, 0, Facing.EAST, true),
+                endpoint(50, 50, Facing.EAST, false),
+                List.of(), List.of(), List.of(obstacle), Set.of()));
 
         assertTrue(route.usedFallback(),
                 "a clean A* route cannot terminate on an existing wire interior");
